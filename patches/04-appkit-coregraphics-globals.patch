@@ -1,0 +1,1095 @@
+diff --git a/crates/appkit/src/capcut_globals.rs b/crates/appkit/src/capcut_globals.rs
+new file mode 100644
+index 0000000..f589a64
+--- /dev/null
++++ b/crates/appkit/src/capcut_globals.rs
+@@ -0,0 +1,500 @@
++//! Additional Apple framework constant globals needed by CEF and CapCut.
++
++pub const STRING_GLOBALS: &[(&str, &str)] = &[
++    ("_kUTTagClassOSType", "com.apple.ostype"),
++    ("_kUTTypeInkText", "com.apple.ink.inktext"),
++    ("_kUTTypeVCard", "public.vcard"),
++    ("_AVAssetExportPreset1280x720", "AVAssetExportPreset1280x720"),
++    ("_AVAssetExportPreset960x540", "AVAssetExportPreset960x540"),
++    ("_AVAssetExportPresetAppleM4A", "AVAssetExportPresetAppleM4A"),
++    ("_AVAssetExportPresetHighestQuality", "AVAssetExportPresetHighestQuality"),
++    ("_AVAssetExportPresetMediumQuality", "AVAssetExportPresetMediumQuality"),
++    ("_AVAssetExportPresetPassthrough", "AVAssetExportPresetPassthrough"),
++    ("_AVCaptureSessionPresetiFrame1280x720", "AVCaptureSessionPresetiFrame1280x720"),
++    ("_AVCaptureSessionPresetiFrame960x540", "AVCaptureSessionPresetiFrame960x540"),
++    ("_AVFileTypeAppleM4A", "AVFileTypeAppleM4A"),
++    ("_AVFileTypeWAVE", "AVFileTypeWAVE"),
++    ("_AVLayerVideoGravityResize", "AVLayerVideoGravityResize"),
++    ("_AVMediaTypeMetadata", "AVMediaTypeMetadata"),
++    ("_AVMediaTypeMuxed", "AVMediaTypeMuxed"),
++    ("_AVMetadataCommonKeyArtwork", "AVMetadataCommonKeyArtwork"),
++    ("_AVMetadataCommonKeyCopyrights", "AVMetadataCommonKeyCopyrights"),
++    ("_AVMetadataCommonKeyDescription", "AVMetadataCommonKeyDescription"),
++    ("_AVMetadataCommonKeySoftware", "AVMetadataCommonKeySoftware"),
++    ("_AVMetadataCommonKeyType", "AVMetadataCommonKeyType"),
++    ("_AVMetadataKeySpaceCommon", "AVMetadataKeySpaceCommon"),
++    ("_AVMetadataKeySpaceQuickTimeMetadata", "AVMetadataKeySpaceQuickTimeMetadata"),
++    ("_AVMetadataQuickTimeMetadataKeyArtwork", "AVMetadataQuickTimeMetadataKeyArtwork"),
++    ("_AVMetadataQuickTimeMetadataKeyComment", "AVMetadataQuickTimeMetadataKeyComment"),
++    ("_AVMetadataQuickTimeMetadataKeyCopyright", "AVMetadataQuickTimeMetadataKeyCopyright"),
++    ("_AVMetadataQuickTimeMetadataKeyDescription", "AVMetadataQuickTimeMetadataKeyDescription"),
++    ("_AVMetadataQuickTimeMetadataKeyInformation", "AVMetadataQuickTimeMetadataKeyInformation"),
++    ("_AVMetadataQuickTimeMetadataKeySoftware", "AVMetadataQuickTimeMetadataKeySoftware"),
++    ("_AVVideoAllowFrameReorderingKey", "AVVideoAllowFrameReorderingKey"),
++    ("_AVVideoCleanApertureHeightKey", "AVVideoCleanApertureHeightKey"),
++    ("_AVVideoCleanApertureHorizontalOffsetKey", "AVVideoCleanApertureHorizontalOffsetKey"),
++    ("_AVVideoCleanApertureKey", "AVVideoCleanApertureKey"),
++    ("_AVVideoCleanApertureVerticalOffsetKey", "AVVideoCleanApertureVerticalOffsetKey"),
++    ("_AVVideoCleanApertureWidthKey", "AVVideoCleanApertureWidthKey"),
++    ("_AVVideoCodecH264", "AVVideoCodecH264"),
++    ("_AVVideoCodecHEVC", "AVVideoCodecHEVC"),
++    ("_AVVideoCodecTypeHEVC", "AVVideoCodecTypeHEVC"),
++    ("_AVVideoCodecTypeJPEG", "AVVideoCodecTypeJPEG"),
++    ("_AVVideoColorPrimariesKey", "AVVideoColorPrimariesKey"),
++    ("_AVVideoColorPrimaries_ITU_R_2020", "AVVideoColorPrimaries_ITU_R_2020"),
++    ("_AVVideoColorPrimaries_ITU_R_709_2", "AVVideoColorPrimaries_ITU_R_709_2"),
++    ("_AVVideoColorPrimaries_P3_D65", "AVVideoColorPrimaries_P3_D65"),
++    ("_AVVideoColorPrimaries_SMPTE_C", "AVVideoColorPrimaries_SMPTE_C"),
++    ("_AVVideoColorPropertiesKey", "AVVideoColorPropertiesKey"),
++    ("_AVVideoH264EntropyModeCABAC", "AVVideoH264EntropyModeCABAC"),
++    ("_AVVideoMaxKeyFrameIntervalKey", "AVVideoMaxKeyFrameIntervalKey"),
++    ("_AVVideoPixelAspectRatioHorizontalSpacingKey", "AVVideoPixelAspectRatioHorizontalSpacingKey"),
++    ("_AVVideoPixelAspectRatioKey", "AVVideoPixelAspectRatioKey"),
++    ("_AVVideoPixelAspectRatioVerticalSpacingKey", "AVVideoPixelAspectRatioVerticalSpacingKey"),
++    ("_AVVideoProfileLevelH264Baseline30", "AVVideoProfileLevelH264Baseline30"),
++    ("_AVVideoProfileLevelH264Baseline31", "AVVideoProfileLevelH264Baseline31"),
++    ("_AVVideoProfileLevelH264Baseline41", "AVVideoProfileLevelH264Baseline41"),
++    ("_AVVideoProfileLevelH264BaselineAutoLevel", "AVVideoProfileLevelH264BaselineAutoLevel"),
++    ("_AVVideoProfileLevelH264High40", "AVVideoProfileLevelH264High40"),
++    ("_AVVideoProfileLevelH264High41", "AVVideoProfileLevelH264High41"),
++    ("_AVVideoProfileLevelH264HighAutoLevel", "AVVideoProfileLevelH264HighAutoLevel"),
++    ("_AVVideoProfileLevelH264Main30", "AVVideoProfileLevelH264Main30"),
++    ("_AVVideoProfileLevelH264Main31", "AVVideoProfileLevelH264Main31"),
++    ("_AVVideoProfileLevelH264Main32", "AVVideoProfileLevelH264Main32"),
++    ("_AVVideoProfileLevelH264Main41", "AVVideoProfileLevelH264Main41"),
++    ("_AVVideoProfileLevelH264MainAutoLevel", "AVVideoProfileLevelH264MainAutoLevel"),
++    ("_AVVideoProfileLevelKey", "AVVideoProfileLevelKey"),
++    ("_AVVideoScalingModeResizeAspectFill", "AVVideoScalingModeResizeAspectFill"),
++    ("_AVVideoTransferFunctionKey", "AVVideoTransferFunctionKey"),
++    ("_AVVideoTransferFunction_ITU_R_2100_HLG", "AVVideoTransferFunction_ITU_R_2100_HLG"),
++    ("_AVVideoTransferFunction_ITU_R_709_2", "AVVideoTransferFunction_ITU_R_709_2"),
++    ("_AVVideoTransferFunction_SMPTE_ST_2084_PQ", "AVVideoTransferFunction_SMPTE_ST_2084_PQ"),
++    ("_AVVideoYCbCrMatrixKey", "AVVideoYCbCrMatrixKey"),
++    ("_AVVideoYCbCrMatrix_ITU_R_2020", "AVVideoYCbCrMatrix_ITU_R_2020"),
++    ("_AVVideoYCbCrMatrix_ITU_R_601_4", "AVVideoYCbCrMatrix_ITU_R_601_4"),
++    ("_AVVideoYCbCrMatrix_ITU_R_709_2", "AVVideoYCbCrMatrix_ITU_R_709_2"),
++    ("_CBAdvertisementDataLocalNameKey", "CBAdvertisementDataLocalNameKey"),
++    ("_CBAdvertisementDataManufacturerDataKey", "CBAdvertisementDataManufacturerDataKey"),
++    ("_CBAdvertisementDataOverflowServiceUUIDsKey", "CBAdvertisementDataOverflowServiceUUIDsKey"),
++    ("_CBAdvertisementDataServiceDataKey", "CBAdvertisementDataServiceDataKey"),
++    ("_CBAdvertisementDataServiceUUIDsKey", "CBAdvertisementDataServiceUUIDsKey"),
++    ("_CBAdvertisementDataTxPowerLevelKey", "CBAdvertisementDataTxPowerLevelKey"),
++    ("_CBCentralManagerScanOptionAllowDuplicatesKey", "CBCentralManagerScanOptionAllowDuplicatesKey"),
++    ("_CIDetectorAccuracy", "CIDetectorAccuracy"),
++    ("_CIDetectorAccuracyHigh", "CIDetectorAccuracyHigh"),
++    ("_CIDetectorAccuracyLow", "CIDetectorAccuracyLow"),
++    ("_CIDetectorTypeFace", "CIDetectorTypeFace"),
++    ("_CIDetectorTypeQRCode", "CIDetectorTypeQRCode"),
++    ("_CIDetectorTypeText", "CIDetectorTypeText"),
++    ("_ICDownloadsDirectoryURL", "ICDownloadsDirectoryURL"),
++    ("_ICOverwrite", "ICOverwrite"),
++    ("_ICSaveAsFilename", "ICSaveAsFilename"),
++    ("_ICSavedFilename", "ICSavedFilename"),
++    ("_ICTransportTypeMassStorage", "ICTransportTypeMassStorage"),
++    ("_NSAccessibilityApplicationActivatedNotification", "NSAccessibilityApplicationActivatedNotification"),
++    ("_NSAccessibilityApplicationDeactivatedNotification", "NSAccessibilityApplicationDeactivatedNotification"),
++    ("_NSAccessibilityApplicationHiddenNotification", "NSAccessibilityApplicationHiddenNotification"),
++    ("_NSAccessibilityApplicationShownNotification", "NSAccessibilityApplicationShownNotification"),
++    ("_NSAccessibilityAscendingSortDirectionValue", "NSAccessibilityAscendingSortDirectionValue"),
++    ("_NSAccessibilityCancelAction", "NSAccessibilityCancelAction"),
++    ("_NSAccessibilityCellForColumnAndRowParameterizedAttribute", "NSAccessibilityCellForColumnAndRowParameterizedAttribute"),
++    ("_NSAccessibilityColumnHeaderUIElementsAttribute", "NSAccessibilityColumnHeaderUIElementsAttribute"),
++    ("_NSAccessibilityColumnIndexRangeAttribute", "NSAccessibilityColumnIndexRangeAttribute"),
++    ("_NSAccessibilityColumnsAttribute", "NSAccessibilityColumnsAttribute"),
++    ("_NSAccessibilityContentListSubrole", "NSAccessibilityContentListSubrole"),
++    ("_NSAccessibilityContentsAttribute", "NSAccessibilityContentsAttribute"),
++    ("_NSAccessibilityDefinitionListSubrole", "NSAccessibilityDefinitionListSubrole"),
++    ("_NSAccessibilityDescendingSortDirectionValue", "NSAccessibilityDescendingSortDirectionValue"),
++    ("_NSAccessibilityDisclosedByRowAttribute", "NSAccessibilityDisclosedByRowAttribute"),
++    ("_NSAccessibilityDisclosedRowsAttribute", "NSAccessibilityDisclosedRowsAttribute"),
++    ("_NSAccessibilityDisclosingAttribute", "NSAccessibilityDisclosingAttribute"),
++    ("_NSAccessibilityDisclosureLevelAttribute", "NSAccessibilityDisclosureLevelAttribute"),
++    ("_NSAccessibilityDrawerCreatedNotification", "NSAccessibilityDrawerCreatedNotification"),
++    ("_NSAccessibilityEnabledAttribute", "NSAccessibilityEnabledAttribute"),
++    ("_NSAccessibilityExpandedAttribute", "NSAccessibilityExpandedAttribute"),
++    ("_NSAccessibilityFocusedWindowChangedNotification", "NSAccessibilityFocusedWindowChangedNotification"),
++    ("_NSAccessibilityGridRole", "NSAccessibilityGridRole"),
++    ("_NSAccessibilityHeaderAttribute", "NSAccessibilityHeaderAttribute"),
++    ("_NSAccessibilityHelpTagCreatedNotification", "NSAccessibilityHelpTagCreatedNotification"),
++    ("_NSAccessibilityHelpTagRole", "NSAccessibilityHelpTagRole"),
++    ("_NSAccessibilityHorizontalOrientationValue", "NSAccessibilityHorizontalOrientationValue"),
++    ("_NSAccessibilityIndexAttribute", "NSAccessibilityIndexAttribute"),
++    ("_NSAccessibilityInsertionPointLineNumberAttribute", "NSAccessibilityInsertionPointLineNumberAttribute"),
++    ("_NSAccessibilityLinkedUIElementsAttribute", "NSAccessibilityLinkedUIElementsAttribute"),
++    ("_NSAccessibilityMainWindowChangedNotification", "NSAccessibilityMainWindowChangedNotification"),
++    ("_NSAccessibilityMarkedMisspelledTextAttribute", "NSAccessibilityMarkedMisspelledTextAttribute"),
++    ("_NSAccessibilityMaxValueAttribute", "NSAccessibilityMaxValueAttribute"),
++    ("_NSAccessibilityMinValueAttribute", "NSAccessibilityMinValueAttribute"),
++    ("_NSAccessibilityMovedNotification", "NSAccessibilityMovedNotification"),
++    ("_NSAccessibilityOrientationAttribute", "NSAccessibilityOrientationAttribute"),
++    ("_NSAccessibilityPlaceholderValueAttribute", "NSAccessibilityPlaceholderValueAttribute"),
++    ("_NSAccessibilityRequiredAttribute", "NSAccessibilityRequiredAttribute"),
++    ("_NSAccessibilityResizedNotification", "NSAccessibilityResizedNotification"),
++    ("_NSAccessibilityRowHeaderUIElementsAttribute", "NSAccessibilityRowHeaderUIElementsAttribute"),
++    ("_NSAccessibilityRowIndexRangeAttribute", "NSAccessibilityRowIndexRangeAttribute"),
++    ("_NSAccessibilityRowsAttribute", "NSAccessibilityRowsAttribute"),
++    ("_NSAccessibilityScrollAreaRole", "NSAccessibilityScrollAreaRole"),
++    ("_NSAccessibilitySelectedAttribute", "NSAccessibilitySelectedAttribute"),
++    ("_NSAccessibilitySelectedCellsChangedNotification", "NSAccessibilitySelectedCellsChangedNotification"),
++    ("_NSAccessibilitySelectedChildrenAttribute", "NSAccessibilitySelectedChildrenAttribute"),
++    ("_NSAccessibilitySelectedChildrenChangedNotification", "NSAccessibilitySelectedChildrenChangedNotification"),
++    ("_NSAccessibilitySelectedChildrenMovedNotification", "NSAccessibilitySelectedChildrenMovedNotification"),
++    ("_NSAccessibilitySelectedColumnsChangedNotification", "NSAccessibilitySelectedColumnsChangedNotification"),
++    ("_NSAccessibilitySelectedRowsAttribute", "NSAccessibilitySelectedRowsAttribute"),
++    ("_NSAccessibilitySheetCreatedNotification", "NSAccessibilitySheetCreatedNotification"),
++    ("_NSAccessibilitySortDirectionAttribute", "NSAccessibilitySortDirectionAttribute"),
++    ("_NSAccessibilityTabsAttribute", "NSAccessibilityTabsAttribute"),
++    ("_NSAccessibilityTitleUIElementAttribute", "NSAccessibilityTitleUIElementAttribute"),
++    ("_NSAccessibilityUnitsChangedNotification", "NSAccessibilityUnitsChangedNotification"),
++    ("_NSAccessibilityUnknownSortDirectionValue", "NSAccessibilityUnknownSortDirectionValue"),
++    ("_NSAccessibilityValueDescriptionAttribute", "NSAccessibilityValueDescriptionAttribute"),
++    ("_NSAccessibilityVerticalOrientationValue", "NSAccessibilityVerticalOrientationValue"),
++    ("_NSAccessibilityVisibleCellsAttribute", "NSAccessibilityVisibleCellsAttribute"),
++    ("_NSAccessibilityVisibleChildrenAttribute", "NSAccessibilityVisibleChildrenAttribute"),
++    ("_NSAccessibilityVisibleColumnsAttribute", "NSAccessibilityVisibleColumnsAttribute"),
++    ("_NSAccessibilityVisibleRowsAttribute", "NSAccessibilityVisibleRowsAttribute"),
++    ("_NSAccessibilityWindowDeminiaturizedNotification", "NSAccessibilityWindowDeminiaturizedNotification"),
++    ("_NSAccessibilityWindowMiniaturizedNotification", "NSAccessibilityWindowMiniaturizedNotification"),
++    ("_NSAccessibilityWindowMovedNotification", "NSAccessibilityWindowMovedNotification"),
++    ("_NSAccessibilityWindowResizedNotification", "NSAccessibilityWindowResizedNotification"),
++    ("_NSApplicationDidHideNotification", "NSApplicationDidHideNotification"),
++    ("_NSDebugDescriptionErrorKey", "NSDebugDescriptionErrorKey"),
++    ("_NSDisplayNameBindingOption", "NSDisplayNameBindingOption"),
++    ("_NSDisplayPatternBindingOption", "NSDisplayPatternBindingOption"),
++    ("_NSFileCreationDate", "NSFileCreationDate"),
++    ("_NSFileGroupOwnerAccountID", "NSFileGroupOwnerAccountID"),
++    ("_NSFileModificationDate", "NSFileModificationDate"),
++    ("_NSFileOwnerAccountID", "NSFileOwnerAccountID"),
++    ("_NSFileSize", "NSFileSize"),
++    ("_NSFileType", "NSFileType"),
++    ("_NSFontNameAttribute", "NSFontNameAttribute"),
++    ("_NSFontSymbolicTrait", "NSFontSymbolicTrait"),
++    ("_NSFontTraitsAttribute", "NSFontTraitsAttribute"),
++    ("_NSImageHintCTM", "NSImageHintCTM"),
++    ("_NSImageNameFolder", "NSImageNameFolder"),
++    ("_NSInternalInconsistencyException", "NSInternalInconsistencyException"),
++    ("_NSMallocException", "NSMallocException"),
++    ("_NSMarkedClauseSegmentAttributeName", "NSMarkedClauseSegmentAttributeName"),
++    ("_NSMultipleValuesPlaceholderBindingOption", "NSMultipleValuesPlaceholderBindingOption"),
++    ("_NSNoSelectionPlaceholderBindingOption", "NSNoSelectionPlaceholderBindingOption"),
++    ("_NSNotApplicablePlaceholderBindingOption", "NSNotApplicablePlaceholderBindingOption"),
++    ("_NSPasteboardTypePNG", "NSPasteboardTypePNG"),
++    ("_NSPrintAllPages", "NSPrintAllPages"),
++    ("_NSPrintFirstPage", "NSPrintFirstPage"),
++    ("_NSPrintLastPage", "NSPrintLastPage"),
++    ("_NSRangeException", "NSRangeException"),
++    ("_NSRegistrationDomain", "NSRegistrationDomain"),
++    ("_NSScreenColorSpaceDidChangeNotification", "NSScreenColorSpaceDidChangeNotification"),
++    ("_NSSharingServiceNameAddToSafariReadingList", "NSSharingServiceNameAddToSafariReadingList"),
++    ("_NSSharingServiceNameComposeEmail", "NSSharingServiceNameComposeEmail"),
++    ("_NSSharingServiceNamePostOnTwitter", "NSSharingServiceNamePostOnTwitter"),
++    ("_NSSystemTimeZoneDidChangeNotification", "NSSystemTimeZoneDidChangeNotification"),
++    ("_NSTouchBarItemIdentifierCandidateList", "NSTouchBarItemIdentifierCandidateList"),
++    ("_NSTouchBarItemIdentifierCharacterPicker", "NSTouchBarItemIdentifierCharacterPicker"),
++    ("_NSTouchBarItemIdentifierFlexibleSpace", "NSTouchBarItemIdentifierFlexibleSpace"),
++    ("_NSURLIsExcludedFromBackupKey", "NSURLIsExcludedFromBackupKey"),
++    ("_NSURLVolumeIsEjectableKey", "NSURLVolumeIsEjectableKey"),
++    ("_NSURLVolumeIsRemovableKey", "NSURLVolumeIsRemovableKey"),
++    ("_NSUndefinedKeyException", "NSUndefinedKeyException"),
++    ("_NSUserActivityTypeBrowsingWeb", "NSUserActivityTypeBrowsingWeb"),
++    ("_NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification", "NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification"),
++    ("_NSWorkspaceApplicationKey", "NSWorkspaceApplicationKey"),
++    ("_NSWorkspaceWillPowerOffNotification", "NSWorkspaceWillPowerOffNotification"),
++    ("_NSWritingDirectionAttributeName", "NSWritingDirectionAttributeName"),
++    ("_kCGDisplayStreamColorSpace", "kCGDisplayStreamColorSpace"),
++    ("_kCGDisplayStreamDestinationRect", "kCGDisplayStreamDestinationRect"),
++    ("_kCGDisplayStreamMinimumFrameTime", "kCGDisplayStreamMinimumFrameTime"),
++    ("_kCGDisplayStreamPreserveAspectRatio", "kCGDisplayStreamPreserveAspectRatio"),
++    ("_kCGDisplayStreamShowCursor", "kCGDisplayStreamShowCursor"),
++    ("_kCGImageDestinationLossyCompressionQuality", "kCGImageDestinationLossyCompressionQuality"),
++    ("_kCGImagePropertyDPIHeight", "kCGImagePropertyDPIHeight"),
++    ("_kCGImagePropertyDPIWidth", "kCGImagePropertyDPIWidth"),
++    ("_kCGImagePropertyDepth", "kCGImagePropertyDepth"),
++    ("_kCGImagePropertyExifDateTimeOriginal", "kCGImagePropertyExifDateTimeOriginal"),
++    ("_kCGImagePropertyExifDictionary", "kCGImagePropertyExifDictionary"),
++    ("_kCGImagePropertyExifUserComment", "kCGImagePropertyExifUserComment"),
++    ("_kCGImagePropertyGIFDelayTime", "kCGImagePropertyGIFDelayTime"),
++    ("_kCGImagePropertyGIFDictionary", "kCGImagePropertyGIFDictionary"),
++    ("_kCGImagePropertyGIFHasGlobalColorMap", "kCGImagePropertyGIFHasGlobalColorMap"),
++    ("_kCGImagePropertyGIFLoopCount", "kCGImagePropertyGIFLoopCount"),
++    ("_kCGImagePropertyGIFUnclampedDelayTime", "kCGImagePropertyGIFUnclampedDelayTime"),
++    ("_kCGImagePropertyGPSDictionary", "kCGImagePropertyGPSDictionary"),
++    ("_kCGImagePropertyGPSLatitude", "kCGImagePropertyGPSLatitude"),
++    ("_kCGImagePropertyGPSLatitudeRef", "kCGImagePropertyGPSLatitudeRef"),
++    ("_kCGImagePropertyGPSLongitude", "kCGImagePropertyGPSLongitude"),
++    ("_kCGImagePropertyGPSLongitudeRef", "kCGImagePropertyGPSLongitudeRef"),
++    ("_kCGImagePropertyHasAlpha", "kCGImagePropertyHasAlpha"),
++    ("_kCGImagePropertyOrientation", "kCGImagePropertyOrientation"),
++    ("_kCGImagePropertyPixelHeight", "kCGImagePropertyPixelHeight"),
++    ("_kCGImagePropertyPixelWidth", "kCGImagePropertyPixelWidth"),
++    ("_kCGImagePropertyTIFFDateTime", "kCGImagePropertyTIFFDateTime"),
++    ("_kCGImagePropertyTIFFDictionary", "kCGImagePropertyTIFFDictionary"),
++    ("_kCGImageSourceCreateThumbnailFromImageAlways", "kCGImageSourceCreateThumbnailFromImageAlways"),
++    ("_kCGImageSourceCreateThumbnailWithTransform", "kCGImageSourceCreateThumbnailWithTransform"),
++    ("_kCGImageSourceThumbnailMaxPixelSize", "kCGImageSourceThumbnailMaxPixelSize"),
++    ("_kCIAttributeClass", "kCIAttributeClass"),
++    ("_kCIAttributeDefault", "kCIAttributeDefault"),
++    ("_kCIAttributeSliderMax", "kCIAttributeSliderMax"),
++    ("_kCIAttributeSliderMin", "kCIAttributeSliderMin"),
++    ("_kCIAttributeType", "kCIAttributeType"),
++    ("_kCICategoryGenerator", "kCICategoryGenerator"),
++    ("_kCIContextHighQualityDownsample", "kCIContextHighQualityDownsample"),
++    ("_kCIContextOutputPremultiplied", "kCIContextOutputPremultiplied"),
++    ("_kCIContextWorkingColorSpace", "kCIContextWorkingColorSpace"),
++    ("_kCIImageApplyOrientationProperty", "kCIImageApplyOrientationProperty"),
++    ("_kCIImageColorSpace", "kCIImageColorSpace"),
++    ("_kCIInputExtentKey", "kCIInputExtentKey"),
++    ("_kCIInputImageKey", "kCIInputImageKey"),
++    ("_kCIOutputImageKey", "kCIOutputImageKey"),
++    ("_kCMFormatDescriptionColorPrimaries_DCI_P3", "kCMFormatDescriptionColorPrimaries_DCI_P3"),
++    ("_kCMFormatDescriptionColorPrimaries_P3_D65", "kCMFormatDescriptionColorPrimaries_P3_D65"),
++    ("_kCMFormatDescriptionExtension_ContentLightLevelInfo", "kCMFormatDescriptionExtension_ContentLightLevelInfo"),
++    ("_kCMFormatDescriptionExtension_MasteringDisplayColorVolume", "kCMFormatDescriptionExtension_MasteringDisplayColorVolume"),
++    ("_kCMFormatDescriptionExtension_VerbatimSampleDescription", "kCMFormatDescriptionExtension_VerbatimSampleDescription"),
++    ("_kCMFormatDescriptionTransferFunction_Linear", "kCMFormatDescriptionTransferFunction_Linear"),
++    ("_kCMFormatDescriptionTransferFunction_SMPTE_ST_428_1", "kCMFormatDescriptionTransferFunction_SMPTE_ST_428_1"),
++    ("_kCMMetadataFormatDescriptionMetadataSpecificationKey_DataType", "kCMMetadataFormatDescriptionMetadataSpecificationKey_DataType"),
++    ("_kCMMetadataFormatDescriptionMetadataSpecificationKey_Identifier", "kCMMetadataFormatDescriptionMetadataSpecificationKey_Identifier"),
++    ("_kCTFontCollectionRemoveDuplicatesOption", "kCTFontCollectionRemoveDuplicatesOption"),
++    ("_kCTFontDisplayNameAttribute", "kCTFontDisplayNameAttribute"),
++    ("_kCTFontFamilyNameKey", "kCTFontFamilyNameKey"),
++    ("_kCTFontFormatAttribute", "kCTFontFormatAttribute"),
++    ("_kCTFontManagerRegisteredFontsChangedNotification", "kCTFontManagerRegisteredFontsChangedNotification"),
++    ("_kCTFontOpenTypeFeatureTag", "kCTFontOpenTypeFeatureTag"),
++    ("_kCTFontOpenTypeFeatureValue", "kCTFontOpenTypeFeatureValue"),
++    ("_kCTFontPriorityAttribute", "kCTFontPriorityAttribute"),
++    ("_kCTFontStyleNameKey", "kCTFontStyleNameKey"),
++    ("_kCTFontWidthTrait", "kCTFontWidthTrait"),
++    ("_kCVImageBufferCleanApertureHeightKey", "kCVImageBufferCleanApertureHeightKey"),
++    ("_kCVImageBufferCleanApertureHorizontalOffsetKey", "kCVImageBufferCleanApertureHorizontalOffsetKey"),
++    ("_kCVImageBufferCleanApertureVerticalOffsetKey", "kCVImageBufferCleanApertureVerticalOffsetKey"),
++    ("_kCVImageBufferCleanApertureWidthKey", "kCVImageBufferCleanApertureWidthKey"),
++    ("_kCVImageBufferColorPrimaries_DCI_P3", "kCVImageBufferColorPrimaries_DCI_P3"),
++    ("_kCVImageBufferColorPrimaries_P22", "kCVImageBufferColorPrimaries_P22"),
++    ("_kCVImageBufferColorPrimaries_P3_D65", "kCVImageBufferColorPrimaries_P3_D65"),
++    ("_kCVImageBufferContentLightLevelInfoKey", "kCVImageBufferContentLightLevelInfoKey"),
++    ("_kCVImageBufferGammaLevelKey", "kCVImageBufferGammaLevelKey"),
++    ("_kCVImageBufferMasteringDisplayColorVolumeKey", "kCVImageBufferMasteringDisplayColorVolumeKey"),
++    ("_kCVImageBufferTransferFunction_ITU_R_2100_HLG", "kCVImageBufferTransferFunction_ITU_R_2100_HLG"),
++    ("_kCVImageBufferTransferFunction_Linear", "kCVImageBufferTransferFunction_Linear"),
++    ("_kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ", "kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ"),
++    ("_kCVImageBufferTransferFunction_SMPTE_ST_428_1", "kCVImageBufferTransferFunction_SMPTE_ST_428_1"),
++    ("_kCVImageBufferTransferFunction_UseGamma", "kCVImageBufferTransferFunction_UseGamma"),
++    ("_kCVImageBufferTransferFunction_sRGB", "kCVImageBufferTransferFunction_sRGB"),
++    ("_kCVMetalTextureCacheMaximumTextureAgeKey", "kCVMetalTextureCacheMaximumTextureAgeKey"),
++    ("_kDADiskDescriptionDeviceInternalKey", "kDADiskDescriptionDeviceInternalKey"),
++    ("_kDADiskDescriptionDeviceRevisionKey", "kDADiskDescriptionDeviceRevisionKey"),
++    ("_kDADiskDescriptionDeviceVendorKey", "kDADiskDescriptionDeviceVendorKey"),
++    ("_kDADiskDescriptionMatchVolumeMountable", "kDADiskDescriptionMatchVolumeMountable"),
++    ("_kDADiskDescriptionMediaBSDNameKey", "kDADiskDescriptionMediaBSDNameKey"),
++    ("_kDADiskDescriptionMediaNameKey", "kDADiskDescriptionMediaNameKey"),
++    ("_kDADiskDescriptionMediaRemovableKey", "kDADiskDescriptionMediaRemovableKey"),
++    ("_kDADiskDescriptionMediaSizeKey", "kDADiskDescriptionMediaSizeKey"),
++    ("_kDADiskDescriptionVolumeKindKey", "kDADiskDescriptionVolumeKindKey"),
++    ("_kDADiskDescriptionVolumeNameKey", "kDADiskDescriptionVolumeNameKey"),
++    ("_kDADiskDescriptionVolumePathKey", "kDADiskDescriptionVolumePathKey"),
++    ("_kDADiskDescriptionVolumeUUIDKey", "kDADiskDescriptionVolumeUUIDKey"),
++    ("_kDADiskDescriptionWatchVolumePath", "kDADiskDescriptionWatchVolumePath"),
++    ("_kIOSurfaceColorSpace", "kIOSurfaceColorSpace"),
++    ("_kIOSurfacePlaneBytesPerElement", "kIOSurfacePlaneBytesPerElement"),
++    ("_kIOSurfacePlaneBytesPerRow", "kIOSurfacePlaneBytesPerRow"),
++    ("_kIOSurfacePlaneHeight", "kIOSurfacePlaneHeight"),
++    ("_kIOSurfacePlaneOffset", "kIOSurfacePlaneOffset"),
++    ("_kIOSurfacePlaneSize", "kIOSurfacePlaneSize"),
++    ("_kIOSurfacePlaneWidth", "kIOSurfacePlaneWidth"),
++    ("_kLSSharedFileListItemLast", "kLSSharedFileListItemLast"),
++    ("_kLSSharedFileListLoginItemHidden", "kLSSharedFileListLoginItemHidden"),
++    ("_kLSSharedFileListSessionLoginItems", "kLSSharedFileListSessionLoginItems"),
++    ("_kMACaptionAppearanceSettingsChangedNotification", "kMACaptionAppearanceSettingsChangedNotification"),
++    ("_kMDItemWhereFroms", "kMDItemWhereFroms"),
++    ("_kMIDIPropertyDriverVersion", "kMIDIPropertyDriverVersion"),
++    ("_kMIDIPropertyManufacturer", "kMIDIPropertyManufacturer"),
++    ("_kODAttributeTypeAllAttributes", "kODAttributeTypeAllAttributes"),
++    ("_kODAttributeTypeAltSecurityIdentities", "kODAttributeTypeAltSecurityIdentities"),
++    ("_kODAttributeTypeMetaRecordName", "kODAttributeTypeMetaRecordName"),
++    ("_kODAttributeTypeRecordName", "kODAttributeTypeRecordName"),
++    ("_kODRecordTypeUsers", "kODRecordTypeUsers"),
++    ("_kSMDomainSystemLaunchd", "kSMDomainSystemLaunchd"),
++    ("_kSMDomainUserLaunchd", "kSMDomainUserLaunchd"),
++    ("_kSecAttrAccessControl", "kSecAttrAccessControl"),
++    ("_kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly", "kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly"),
++    ("_kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly", "kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly"),
++    ("_kSecAttrAccessibleWhenUnlockedThisDeviceOnly", "kSecAttrAccessibleWhenUnlockedThisDeviceOnly"),
++    ("_kSecAttrApplicationLabel", "kSecAttrApplicationLabel"),
++    ("_kSecAttrApplicationTag", "kSecAttrApplicationTag"),
++    ("_kSecAttrCanSign", "kSecAttrCanSign"),
++    ("_kSecAttrCreationDate", "kSecAttrCreationDate"),
++    ("_kSecAttrGeneric", "kSecAttrGeneric"),
++    ("_kSecAttrIsPermanent", "kSecAttrIsPermanent"),
++    ("_kSecAttrKeyClass", "kSecAttrKeyClass"),
++    ("_kSecAttrKeyClassPublic", "kSecAttrKeyClassPublic"),
++    ("_kSecAttrKeySizeInBits", "kSecAttrKeySizeInBits"),
++    ("_kSecAttrKeyType", "kSecAttrKeyType"),
++    ("_kSecAttrKeyTypeECSECPrimeRandom", "kSecAttrKeyTypeECSECPrimeRandom"),
++    ("_kSecAttrKeyTypeRSA", "kSecAttrKeyTypeRSA"),
++    ("_kSecAttrSynchronizable", "kSecAttrSynchronizable"),
++    ("_kSecAttrTokenID", "kSecAttrTokenID"),
++    ("_kSecAttrTokenIDSecureEnclave", "kSecAttrTokenIDSecureEnclave"),
++    ("_kSecCFErrorResourceAltered", "kSecCFErrorResourceAltered"),
++    ("_kSecCFErrorResourceMissing", "kSecCFErrorResourceMissing"),
++    ("_kSecClassIdentity", "kSecClassIdentity"),
++    ("_kSecClassKey", "kSecClassKey"),
++    ("_kSecCodeInfoCertificates", "kSecCodeInfoCertificates"),
++    ("_kSecCodeInfoMainExecutable", "kSecCodeInfoMainExecutable"),
++    ("_kSecCodeInfoPList", "kSecCodeInfoPList"),
++    ("_kSecCodeInfoUnique", "kSecCodeInfoUnique"),
++    ("_kSecCodeSignerEntitlements", "kSecCodeSignerEntitlements"),
++    ("_kSecCodeSignerFlags", "kSecCodeSignerFlags"),
++    ("_kSecCodeSignerIdentity", "kSecCodeSignerIdentity"),
++    ("_kSecGuestAttributePid", "kSecGuestAttributePid"),
++    ("_kSecKeyAlgorithmECDSASignatureDigestX962SHA1", "kSecKeyAlgorithmECDSASignatureDigestX962SHA1"),
++    ("_kSecKeyAlgorithmECDSASignatureDigestX962SHA256", "kSecKeyAlgorithmECDSASignatureDigestX962SHA256"),
++    ("_kSecKeyAlgorithmECDSASignatureDigestX962SHA384", "kSecKeyAlgorithmECDSASignatureDigestX962SHA384"),
++    ("_kSecKeyAlgorithmECDSASignatureDigestX962SHA512", "kSecKeyAlgorithmECDSASignatureDigestX962SHA512"),
++    ("_kSecKeyAlgorithmECDSASignatureMessageX962SHA256", "kSecKeyAlgorithmECDSASignatureMessageX962SHA256"),
++    ("_kSecKeyAlgorithmRSAEncryptionPKCS1", "kSecKeyAlgorithmRSAEncryptionPKCS1"),
++    ("_kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA1", "kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA1"),
++    ("_kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA256", "kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA256"),
++    ("_kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA384", "kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA384"),
++    ("_kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA512", "kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA512"),
++    ("_kSecKeyAlgorithmRSASignatureDigestPSSSHA256", "kSecKeyAlgorithmRSASignatureDigestPSSSHA256"),
++    ("_kSecKeyAlgorithmRSASignatureDigestPSSSHA384", "kSecKeyAlgorithmRSASignatureDigestPSSSHA384"),
++    ("_kSecKeyAlgorithmRSASignatureDigestPSSSHA512", "kSecKeyAlgorithmRSASignatureDigestPSSSHA512"),
++    ("_kSecKeyAlgorithmRSASignatureRaw", "kSecKeyAlgorithmRSASignatureRaw"),
++    ("_kSecPrivateKeyAttrs", "kSecPrivateKeyAttrs"),
++    ("_kSecUseAuthenticationContext", "kSecUseAuthenticationContext"),
++    ("_kSecValueRef", "kSecValueRef"),
++    ("_kUTTypeApplication", "kUTTypeApplication"),
++    ("_kUTTypeBMP", "kUTTypeBMP"),
++    ("_kUTTypeBundle", "kUTTypeBundle"),
++    ("_kUTTypeContent", "kUTTypeContent"),
++    ("_kUTTypeGIF", "kUTTypeGIF"),
++    ("_kUTTypeHTML", "kUTTypeHTML"),
++    ("_kUTTypeICO", "kUTTypeICO"),
++    ("_kUTTypeInternetLocation", "kUTTypeInternetLocation"),
++    ("_kUTTypeJPEG", "kUTTypeJPEG"),
++    ("_kUTTypeScalableVectorGraphics", "kUTTypeScalableVectorGraphics"),
++    ("_kUTTypeTIFF", "kUTTypeTIFF"),
++    ("_kVTCompressionPropertyKey_ColorPrimaries", "kVTCompressionPropertyKey_ColorPrimaries"),
++    ("_kVTCompressionPropertyKey_DataRateLimits", "kVTCompressionPropertyKey_DataRateLimits"),
++    ("_kVTCompressionPropertyKey_EncoderID", "kVTCompressionPropertyKey_EncoderID"),
++    ("_kVTCompressionPropertyKey_ExpectedFrameRate", "kVTCompressionPropertyKey_ExpectedFrameRate"),
++    ("_kVTCompressionPropertyKey_MaxFrameDelayCount", "kVTCompressionPropertyKey_MaxFrameDelayCount"),
++    ("_kVTCompressionPropertyKey_MaxH264SliceBytes", "kVTCompressionPropertyKey_MaxH264SliceBytes"),
++    ("_kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration", "kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration"),
++    ("_kVTCompressionPropertyKey_MoreFramesAfterEnd", "kVTCompressionPropertyKey_MoreFramesAfterEnd"),
++    ("_kVTCompressionPropertyKey_MoreFramesBeforeStart", "kVTCompressionPropertyKey_MoreFramesBeforeStart"),
++    ("_kVTCompressionPropertyKey_PixelAspectRatio", "kVTCompressionPropertyKey_PixelAspectRatio"),
++    ("_kVTCompressionPropertyKey_ProfileLevel", "kVTCompressionPropertyKey_ProfileLevel"),
++    ("_kVTCompressionPropertyKey_Quality", "kVTCompressionPropertyKey_Quality"),
++    ("_kVTCompressionPropertyKey_TransferFunction", "kVTCompressionPropertyKey_TransferFunction"),
++    ("_kVTCompressionPropertyKey_YCbCrMatrix", "kVTCompressionPropertyKey_YCbCrMatrix"),
++    ("_kVTDecompressionPropertyKey_ReducedResolutionDecode", "kVTDecompressionPropertyKey_ReducedResolutionDecode"),
++    ("_kVTDecompressionResolutionKey_Height", "kVTDecompressionResolutionKey_Height"),
++    ("_kVTDecompressionResolutionKey_Width", "kVTDecompressionResolutionKey_Width"),
++    ("_kVTEncodeFrameOptionKey_ForceKeyFrame", "kVTEncodeFrameOptionKey_ForceKeyFrame"),
++    ("_kVTPixelTransferPropertyKey_DestinationColorPrimaries", "kVTPixelTransferPropertyKey_DestinationColorPrimaries"),
++    ("_kVTPixelTransferPropertyKey_DestinationTransferFunction", "kVTPixelTransferPropertyKey_DestinationTransferFunction"),
++    ("_kVTPixelTransferPropertyKey_DestinationYCbCrMatrix", "kVTPixelTransferPropertyKey_DestinationYCbCrMatrix"),
++    ("_kVTProfileLevel_H264_Baseline_1_3", "kVTProfileLevel_H264_Baseline_1_3"),
++    ("_kVTProfileLevel_H264_Baseline_3_0", "kVTProfileLevel_H264_Baseline_3_0"),
++    ("_kVTProfileLevel_H264_Baseline_3_1", "kVTProfileLevel_H264_Baseline_3_1"),
++    ("_kVTProfileLevel_H264_Baseline_3_2", "kVTProfileLevel_H264_Baseline_3_2"),
++    ("_kVTProfileLevel_H264_Baseline_4_0", "kVTProfileLevel_H264_Baseline_4_0"),
++    ("_kVTProfileLevel_H264_Baseline_4_1", "kVTProfileLevel_H264_Baseline_4_1"),
++    ("_kVTProfileLevel_H264_Baseline_4_2", "kVTProfileLevel_H264_Baseline_4_2"),
++    ("_kVTProfileLevel_H264_Baseline_5_0", "kVTProfileLevel_H264_Baseline_5_0"),
++    ("_kVTProfileLevel_H264_Baseline_5_1", "kVTProfileLevel_H264_Baseline_5_1"),
++    ("_kVTProfileLevel_H264_Baseline_5_2", "kVTProfileLevel_H264_Baseline_5_2"),
++    ("_kVTProfileLevel_H264_Baseline_AutoLevel", "kVTProfileLevel_H264_Baseline_AutoLevel"),
++    ("_kVTProfileLevel_H264_Extended_5_0", "kVTProfileLevel_H264_Extended_5_0"),
++    ("_kVTProfileLevel_H264_Extended_AutoLevel", "kVTProfileLevel_H264_Extended_AutoLevel"),
++    ("_kVTProfileLevel_H264_High_3_0", "kVTProfileLevel_H264_High_3_0"),
++    ("_kVTProfileLevel_H264_High_3_1", "kVTProfileLevel_H264_High_3_1"),
++    ("_kVTProfileLevel_H264_High_3_2", "kVTProfileLevel_H264_High_3_2"),
++    ("_kVTProfileLevel_H264_High_4_0", "kVTProfileLevel_H264_High_4_0"),
++    ("_kVTProfileLevel_H264_High_4_1", "kVTProfileLevel_H264_High_4_1"),
++    ("_kVTProfileLevel_H264_High_4_2", "kVTProfileLevel_H264_High_4_2"),
++    ("_kVTProfileLevel_H264_High_5_0", "kVTProfileLevel_H264_High_5_0"),
++    ("_kVTProfileLevel_H264_High_5_1", "kVTProfileLevel_H264_High_5_1"),
++    ("_kVTProfileLevel_H264_High_5_2", "kVTProfileLevel_H264_High_5_2"),
++    ("_kVTProfileLevel_H264_High_AutoLevel", "kVTProfileLevel_H264_High_AutoLevel"),
++    ("_kVTProfileLevel_H264_Main_3_0", "kVTProfileLevel_H264_Main_3_0"),
++    ("_kVTProfileLevel_H264_Main_3_1", "kVTProfileLevel_H264_Main_3_1"),
++    ("_kVTProfileLevel_H264_Main_3_2", "kVTProfileLevel_H264_Main_3_2"),
++    ("_kVTProfileLevel_H264_Main_4_0", "kVTProfileLevel_H264_Main_4_0"),
++    ("_kVTProfileLevel_H264_Main_4_1", "kVTProfileLevel_H264_Main_4_1"),
++    ("_kVTProfileLevel_H264_Main_4_2", "kVTProfileLevel_H264_Main_4_2"),
++    ("_kVTProfileLevel_H264_Main_5_0", "kVTProfileLevel_H264_Main_5_0"),
++    ("_kVTProfileLevel_H264_Main_5_1", "kVTProfileLevel_H264_Main_5_1"),
++    ("_kVTProfileLevel_H264_Main_5_2", "kVTProfileLevel_H264_Main_5_2"),
++    ("_kVTProfileLevel_H264_Main_AutoLevel", "kVTProfileLevel_H264_Main_AutoLevel"),
++    ("_kVTProfileLevel_HEVC_Main10_AutoLevel", "kVTProfileLevel_HEVC_Main10_AutoLevel"),
++    ("_kVTProfileLevel_HEVC_Main_AutoLevel", "kVTProfileLevel_HEVC_Main_AutoLevel"),
++    ("_kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder", "kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder"),
++    ("_kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder", "kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder"),
++];
++
++#[repr(C)]
++struct CMTime {
++    value: i64,
++    timescale: i32,
++    flags: u32,
++    epoch: i64,
++}
++
++#[repr(C)]
++struct CMTimeRange {
++    start: CMTime,
++    duration: CMTime,
++}
++
++#[repr(C)]
++struct CMSampleTimingInfo {
++    duration: CMTime,
++    pts: CMTime,
++    dts: CMTime,
++}
++
++static CM_TIME_INDEFINITE: CMTime = CMTime { value: 0, timescale: 0, flags: 17, epoch: 0 };
++static CM_TIME_INVALID: CMTime = CMTime { value: 0, timescale: 0, flags: 0, epoch: 0 };
++static CM_TIME_ZERO: CMTime = CMTime { value: 0, timescale: 1, flags: 1, epoch: 0 };
++static CM_TIME_RANGE_INVALID: CMTimeRange = CMTimeRange {
++    start: CMTime { value: 0, timescale: 0, flags: 0, epoch: 0 },
++    duration: CMTime { value: 0, timescale: 0, flags: 0, epoch: 0 },
++};
++static CM_TIME_RANGE_ZERO: CMTimeRange = CMTimeRange {
++    start: CMTime { value: 0, timescale: 1, flags: 1, epoch: 0 },
++    duration: CMTime { value: 0, timescale: 1, flags: 1, epoch: 0 },
++};
++static CM_TIMING_INFO_INVALID: CMSampleTimingInfo = CMSampleTimingInfo {
++    duration: CMTime { value: 0, timescale: 0, flags: 0, epoch: 0 },
++    pts: CMTime { value: 0, timescale: 0, flags: 0, epoch: 0 },
++    dts: CMTime { value: 0, timescale: 0, flags: 0, epoch: 0 },
++};
++static TASK_PRIORITY_HIGH: f32 = 1.0;
++static CI_FORMAT_ARGB8: i32 = 264;
++static CI_FORMAT_RGBA8: i32 = 266;
++static LOC_ACC_BEST: f64 = -1.0;
++static LOC_ACC_100M: f64 = 100.0;
++static DISPATCH_SOURCE_MEMORYPRESSURE: u64 = 0;
++
++pub fn extra_data_symbols() -> Vec<(String, u64)> {
++    let mut out = corefoundation::base::string_globals(STRING_GLOBALS);
++    out.push(("_kCMTimeIndefinite".to_string(), &CM_TIME_INDEFINITE as *const _ as usize as u64));
++    out.push(("_kCMTimeRangeInvalid".to_string(), &CM_TIME_RANGE_INVALID as *const _ as usize as u64));
++    out.push(("_kCMTimeRangeZero".to_string(), &CM_TIME_RANGE_ZERO as *const _ as usize as u64));
++    out.push(("_kCMTimingInfoInvalid".to_string(), &CM_TIMING_INFO_INVALID as *const _ as usize as u64));
++    let _ = &CM_TIME_INVALID;
++    let _ = &CM_TIME_ZERO;
++    out.push(("_NSURLSessionTaskPriorityHigh".to_string(), &TASK_PRIORITY_HIGH as *const _ as usize as u64));
++    out.push(("_kCIFormatARGB8".to_string(), &CI_FORMAT_ARGB8 as *const _ as usize as u64));
++    out.push(("_kCIFormatRGBA8".to_string(), &CI_FORMAT_RGBA8 as *const _ as usize as u64));
++    out.push(("_kCLLocationAccuracyBest".to_string(), &LOC_ACC_BEST as *const _ as usize as u64));
++    out.push(("_kCLLocationAccuracyHundredMeters".to_string(), &LOC_ACC_100M as *const _ as usize as u64));
++    out.push(("__dispatch_source_type_memorypressure".to_string(), &DISPATCH_SOURCE_MEMORYPRESSURE as *const _ as usize as u64));
++    out.push(("_APP_SANDBOX_READ".to_string(), corefoundation::base::global_cell("_APP_SANDBOX_READ", c"com.apple.app-sandbox.read".as_ptr() as usize as u64)));
++    out.push(("_APP_SANDBOX_READ_WRITE".to_string(), corefoundation::base::global_cell("_APP_SANDBOX_READ_WRITE", c"com.apple.app-sandbox.read-write".as_ptr() as usize as u64)));
++    out.push(("_malloc_logger".to_string(), corefoundation::base::global_cell("_malloc_logger", 0)));
++    out
++}
+diff --git a/crates/appkit/src/color.rs b/crates/appkit/src/color.rs
+index 2f1f6db..3ab4e59 100644
+--- a/crates/appkit/src/color.rs
++++ b/crates/appkit/src/color.rs
+@@ -618,6 +618,80 @@ pub extern "C" fn NSRectFill(rect: NSRect) {
+     );
+ }
+ 
++unsafe extern "C" fn color_with_catalog_name(
++    _class: Id,
++    _sel: Sel,
++    _catalog: Id,
++    color_name: Id,
++) -> Id {
++    let raw = unsafe { foundation::string::bytes(color_name) };
++    let name = String::from_utf8_lossy(&raw).into_owned();
++    let dark = crate::appearance::is_dark();
++    if let Some((r, g, b, a)) = components_in(&name, dark)
++        .or_else(|| components_in(&format!("{name}Color"), dark))
++    {
++        let key = format!("catalog:{name}:{dark}");
++        return singleton(&key, r, g, b, a);
++    }
++    // Fall back to a valid color for standard macOS system catalog names we don't list explicitly.
++    if name.contains("Background") || name.contains("Window") {
++        let g = if dark { 0.15 } else { 0.94 };
++        return singleton(&format!("catalog:{name}:{dark}"), g, g, g, 1.0);
++    }
++    if name.contains("Text") || name.contains("Label") {
++        let g = if dark { 1.0 } else { 0.0 };
++        return singleton(&format!("catalog:{name}:{dark}"), g, g, g, 1.0);
++    }
++    if name.contains("Selected") || name.contains("Accent") || name.contains("Highlight") {
++        return singleton(&format!("catalog:{name}:{dark}"), 0.0, 0.39, 0.88, 1.0);
++    }
++    singleton(&format!("catalog:{name}:{dark}"), 0.5, 0.5, 0.5, 1.0)
++}
++
++unsafe extern "C" fn color_with_hsba(
++    _class: Id,
++    _sel: Sel,
++    h: f64,
++    s: f64,
++    v: f64,
++    a: f64,
++) -> Id {
++    let h = (h.rem_euclid(1.0)) * 6.0;
++    let i = h.floor() as i32;
++    let f = h - i as f64;
++    let p = v * (1.0 - s);
++    let q = v * (1.0 - s * f);
++    let t = v * (1.0 - s * (1.0 - f));
++    let (r, g, b) = match i % 6 {
++        0 => (v, t, p),
++        1 => (q, v, p),
++        2 => (p, v, t),
++        3 => (p, q, v),
++        4 => (t, p, v),
++        _ => (v, p, q),
++    };
++    make(r, g, b, a)
++}
++
++unsafe extern "C" fn color_with_color_space_components(
++    _class: Id,
++    _sel: Sel,
++    _space: Id,
++    components: *const f64,
++    count: isize,
++) -> Id {
++    if components.is_null() || count <= 0 {
++        return make(0.0, 0.0, 0.0, 1.0);
++    }
++    let slice = unsafe { std::slice::from_raw_parts(components, count as usize) };
++    match slice.len() {
++        1 => make(slice[0], slice[0], slice[0], 1.0),
++        2 => make(slice[0], slice[0], slice[0], slice[1]),
++        3 => make(slice[0], slice[1], slice[2], 1.0),
++        _ => make(slice[0], slice[1], slice[2], slice[3]),
++    }
++}
++
+ pub(crate) fn install() {
+     let class = objc::class::lookup(c"NSColor").expect("declared before its methods");
+     let meta = class.metaclass();
+@@ -628,15 +702,22 @@ pub(crate) fn install() {
+         "currentControlTint" => current_control_tint, c"Q16@0:8";
+         "colorNamed:" => color_named, c"@24@0:8@16";
+         "colorNamed:bundle:" => color_named_bundle, c"@32@0:8@16@24";
++        "colorWithCatalogName:colorName:" => color_with_catalog_name, c"@32@0:8@16@24";
+         "controlAlternatingRowBackgroundColors" => alternating_row_colors, c"@16@0:8";
+         "alternatingContentBackgroundColors" => alternating_row_colors, c"@16@0:8";
+         "colorWithCalibratedRed:green:blue:alpha:" => color_with_rgba, c"@48@0:8d16d24d32d40";
+         "colorWithDeviceRed:green:blue:alpha:" => color_with_rgba, c"@48@0:8d16d24d32d40";
+         "colorWithSRGBRed:green:blue:alpha:" => color_with_rgba, c"@48@0:8d16d24d32d40";
++        "colorWithDisplayP3Red:green:blue:alpha:" => color_with_rgba, c"@48@0:8d16d24d32d40";
+         "colorWithRed:green:blue:alpha:" => color_with_rgba, c"@48@0:8d16d24d32d40";
++        "colorWithHue:saturation:brightness:alpha:" => color_with_hsba, c"@48@0:8d16d24d32d40";
++        "colorWithCalibratedHue:saturation:brightness:alpha:" => color_with_hsba, c"@48@0:8d16d24d32d40";
++        "colorWithDeviceHue:saturation:brightness:alpha:" => color_with_hsba, c"@48@0:8d16d24d32d40";
++        "colorWithColorSpace:components:count:" => color_with_color_space_components, c"@40@0:8@16r^d24q32";
+         "colorWithCGColor:" => color_with_cg_color, c"@24@0:8^{CGColor=}16";
+         "colorWithCalibratedWhite:alpha:" => color_with_white, c"@32@0:8d16d24";
+         "colorWithDeviceWhite:alpha:" => color_with_white, c"@32@0:8d16d24";
++        "colorWithGenericGamma22White:alpha:" => color_with_white, c"@32@0:8d16d24";
+         "colorWithWhite:alpha:" => color_with_white, c"@32@0:8d16d24";
+     });
+     methods!(class, {
+diff --git a/crates/appkit/src/graphics.rs b/crates/appkit/src/graphics.rs
+index 77c23d3..223535f 100644
+--- a/crates/appkit/src/graphics.rs
++++ b/crates/appkit/src/graphics.rs
+@@ -783,6 +783,308 @@ pub unsafe extern "C" fn CGColorSpaceRelease(space: CFTypeRef) {
+     }
+ }
+ 
++/// `CFDataRef CGColorSpaceCopyICCData(CGColorSpaceRef)` / `CGColorSpaceCopyICCProfile`.
++pub unsafe extern "C" fn CGColorSpaceCopyICCData(_space: CFTypeRef) -> CFTypeRef {
++    corefoundation::collections::new_data(crate::icc::srgb_profile())
++}
++
++pub unsafe extern "C" fn CGColorSpaceIsWideGamutRGB(_space: CFTypeRef) -> u8 {
++    0
++}
++
++pub unsafe extern "C" fn CGDisplayCopyColorSpace(_display: u32) -> CFTypeRef {
++    unsafe { CGColorSpaceCreateDeviceRGB() }
++}
++
++pub unsafe extern "C" fn CGColorCreateCopyByMatchingToColorSpace(
++    _space: CFTypeRef,
++    _intent: i32,
++    color: CFTypeRef,
++    _options: CFTypeRef,
++) -> CFTypeRef {
++    if color.is_null() {
++        return std::ptr::null();
++    }
++    unsafe { corefoundation::api::CFRetain(color) }
++}
++
++unsafe extern "C" fn release_cf_data(info: *mut c_void, _data: *const c_void, _size: usize) {
++    if !info.is_null() {
++        unsafe { corefoundation::api::CFRelease(info as CFTypeRef) };
++    }
++}
++
++pub unsafe extern "C" fn CGDataProviderCreateWithCFData(data: CFTypeRef) -> CFTypeRef {
++    if data.is_null() {
++        return std::ptr::null();
++    }
++    let retained = unsafe { corefoundation::api::CFRetain(data) };
++    let ptr = unsafe { corefoundation::api::CFDataGetBytePtr(retained) };
++    let len = unsafe { corefoundation::api::CFDataGetLength(retained) }.max(0) as usize;
++    unsafe {
++        CGDataProviderCreateWithData(
++            retained as *mut c_void,
++            ptr as *const c_void,
++            len,
++            Some(release_cf_data),
++        )
++    }
++}
++
++pub unsafe extern "C" fn CGDataProviderCopyData(provider: CFTypeRef) -> CFTypeRef {
++    match provider_bytes(provider) {
++        Some(bytes) => corefoundation::collections::new_data(bytes.to_vec()),
++        None => std::ptr::null(),
++    }
++}
++
++pub unsafe extern "C" fn CGImageGetBitmapInfo(image: CFTypeRef) -> u32 {
++    image_of(image).map_or(0, |img| img.bitmap_info)
++}
++
++pub unsafe extern "C" fn CGImageGetBitsPerPixel(image: CFTypeRef) -> usize {
++    image_of(image).map_or(0, |img| img.bits_per_pixel)
++}
++
++pub unsafe extern "C" fn CGImageGetBytesPerRow(image: CFTypeRef) -> usize {
++    image_of(image).map_or(0, |img| img.bytes_per_row)
++}
++
++pub unsafe extern "C" fn CGImageGetDataProvider(image: CFTypeRef) -> CFTypeRef {
++    image_of(image).map_or(std::ptr::null(), |img| img.provider)
++}
++
++pub unsafe extern "C" fn CGImageGetRenderingIntent(_image: CFTypeRef) -> i32 {
++    0
++}
++
++pub unsafe extern "C" fn CGWindowListCopyWindowInfo(_option: u32, _relative_to: u32) -> CFTypeRef {
++    corefoundation::collections::new_array(
++        &[],
++        corefoundation::callbacks::Policy::from_type_callbacks(),
++        false,
++    )
++}
++
++pub unsafe extern "C" fn CGEventSourceSecondsSinceLastEventType(_state: i32, _kind: u32) -> f64 {
++    0.0
++}
++
++pub unsafe extern "C" fn CGRectIsNull(rect: foundation::geometry::NSRect) -> u8 {
++    u8::from(rect.origin.x.is_infinite() || rect.origin.y.is_infinite())
++}
++
++pub unsafe extern "C" fn CGRectStandardize(
++    mut rect: foundation::geometry::NSRect,
++) -> foundation::geometry::NSRect {
++    if rect.origin.x.is_infinite() || rect.origin.y.is_infinite() {
++        return rect;
++    }
++    if rect.size.width < 0.0 {
++        rect.origin.x += rect.size.width;
++        rect.size.width = -rect.size.width;
++    }
++    if rect.size.height < 0.0 {
++        rect.origin.y += rect.size.height;
++        rect.size.height = -rect.size.height;
++    }
++    rect
++}
++
++pub unsafe extern "C" fn CGRectUnion(
++    a: foundation::geometry::NSRect,
++    b: foundation::geometry::NSRect,
++) -> foundation::geometry::NSRect {
++    if a.origin.x.is_infinite() || a.origin.y.is_infinite() {
++        return unsafe { CGRectStandardize(b) };
++    }
++    if b.origin.x.is_infinite() || b.origin.y.is_infinite() {
++        return unsafe { CGRectStandardize(a) };
++    }
++    let a = unsafe { CGRectStandardize(a) };
++    let b = unsafe { CGRectStandardize(b) };
++    let min_x = a.origin.x.min(b.origin.x);
++    let min_y = a.origin.y.min(b.origin.y);
++    let max_x = (a.origin.x + a.size.width).max(b.origin.x + b.size.width);
++    let max_y = (a.origin.y + a.size.height).max(b.origin.y + b.size.height);
++    foundation::geometry::NSRect {
++        origin: foundation::geometry::NSPoint { x: min_x, y: min_y },
++        size: foundation::geometry::NSSize {
++            width: max_x - min_x,
++            height: max_y - min_y,
++        },
++    }
++}
++
++pub static CG_RECT_NULL: foundation::geometry::NSRect = foundation::geometry::NSRect {
++    origin: foundation::geometry::NSPoint {
++        x: f64::INFINITY,
++        y: f64::INFINITY,
++    },
++    size: foundation::geometry::NSSize {
++        width: 0.0,
++        height: 0.0,
++    },
++};
++
++pub unsafe extern "C" fn CGContextBeginTransparencyLayerWithRect(
++    _ctx: CFTypeRef,
++    _rect: foundation::geometry::NSRect,
++    _aux_info: CFTypeRef,
++) {
++}
++
++pub unsafe extern "C" fn CGContextEndTransparencyLayer(_ctx: CFTypeRef) {}
++
++pub unsafe extern "C" fn CGDisplayCreateImageForRect(
++    _display: u32,
++    _rect: foundation::geometry::NSRect,
++) -> CFTypeRef {
++    std::ptr::null()
++}
++
++pub unsafe extern "C" fn CGEventTapCreateForPid(
++    _pid: i32,
++    _place: u32,
++    _options: u32,
++    _events: u64,
++    _callback: *const c_void,
++    _user_info: *mut c_void,
++) -> CFTypeRef {
++    std::ptr::null()
++}
++
++pub unsafe extern "C" fn CGEventTapEnable(_tap: CFTypeRef, _enable: u8) {}
++
++pub unsafe extern "C" fn CGImageSourceCreateWithURL(
++    url: CFTypeRef,
++    options: CFTypeRef,
++) -> CFTypeRef {
++    let Some(path) = (unsafe { corefoundation::url::as_url(url) }).and_then(|u| u.file_path())
++    else {
++        return std::ptr::null();
++    };
++    let Ok(bytes) = std::fs::read(prefix::ns::existing_host_path(&path)) else {
++        return std::ptr::null();
++    };
++    let data = corefoundation::collections::new_data(bytes);
++    let source = unsafe { CGImageSourceCreateWithData(data, options) };
++    unsafe { corefoundation::api::CFRelease(data) };
++    source
++}
++
++pub unsafe extern "C" fn NSAccessibilityUnignoredChildren(original: objc::object::Id) -> objc::object::Id {
++    if original.is_null() {
++        let empty = corefoundation::collections::new_array(
++            &[],
++            corefoundation::callbacks::Policy::from_type_callbacks(),
++            false,
++        );
++        return unsafe { corefoundation::api::CFAutorelease(empty) as objc::object::Id };
++    }
++    original
++}
++
++pub unsafe extern "C" fn NSAccessibilityUnignoredChildrenForOnlyChild(
++    child: objc::object::Id,
++) -> objc::object::Id {
++    let items: &[CFTypeRef] = if child.is_null() { &[] } else { &[child as CFTypeRef] };
++    let arr = corefoundation::collections::new_array(
++        items,
++        corefoundation::callbacks::Policy::from_type_callbacks(),
++        false,
++    );
++    unsafe { corefoundation::api::CFAutorelease(arr) as objc::object::Id }
++}
++
++pub unsafe extern "C" fn CGEventSourceButtonState(_state_id: i32, _button: u32) -> u8 {
++    0
++}
++
++pub unsafe extern "C" fn CGRectMakeWithDictionaryRepresentation(
++    _dict: CFTypeRef,
++    rect: *mut foundation::geometry::NSRect,
++) -> u8 {
++    if !rect.is_null() {
++        unsafe {
++            *rect = foundation::geometry::NSRect {
++                origin: foundation::geometry::NSPoint { x: 0.0, y: 0.0 },
++                size: foundation::geometry::NSSize {
++                    width: 0.0,
++                    height: 0.0,
++                },
++            };
++        }
++    }
++    0
++}
++
++pub unsafe extern "C" fn CGWindowListCreateImage(
++    _screen_bounds: foundation::geometry::NSRect,
++    _list_option: u32,
++    _window_id: u32,
++    _image_option: u32,
++) -> CFTypeRef {
++    std::ptr::null()
++}
++
++pub unsafe extern "C" fn CGDisplayStreamCreate(
++    _display: u32,
++    _output_width: usize,
++    _output_height: usize,
++    _pixel_format: i32,
++    _properties: CFTypeRef,
++    _handler: *const c_void,
++) -> CFTypeRef {
++    std::ptr::null()
++}
++
++pub unsafe extern "C" fn CGDisplayStreamCreateWithDispatchQueue(
++    _display: u32,
++    _output_width: usize,
++    _output_height: usize,
++    _pixel_format: i32,
++    _properties: CFTypeRef,
++    _queue: *const c_void,
++    _handler: *const c_void,
++) -> CFTypeRef {
++    std::ptr::null()
++}
++
++pub unsafe extern "C" fn RegisterEventHotKey(
++    _in_hot_key_code: u32,
++    _in_hot_key_modifiers: u32,
++    _in_hot_key_id: u64,
++    _in_target: *mut c_void,
++    _in_options: u32,
++    out_ref: *mut *mut c_void,
++) -> i32 {
++    if !out_ref.is_null() {
++        unsafe { out_ref.write(1 as *mut c_void) };
++    }
++    0
++}
++
++pub unsafe extern "C" fn UnregisterEventHotKey(_in_hot_key: *mut c_void) -> i32 {
++    0
++}
++
++pub unsafe extern "C" fn GetEventClass(_in_event: *mut c_void) -> u32 {
++    0
++}
++
++pub unsafe extern "C" fn GetEventParameter(
++    _in_event: *mut c_void,
++    _in_name: u32,
++    _in_desired_type: u32,
++    _out_actual_type: *mut u32,
++    _in_buffer_size: usize,
++    _out_actual_size: *mut usize,
++    _out_data: *mut c_void,
++) -> i32 {
++    -9870 // eventParameterNotFoundErr
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/appkit/src/launchservices.rs b/crates/appkit/src/launchservices.rs
+index 81cb1bc..c10107d 100644
+--- a/crates/appkit/src/launchservices.rs
++++ b/crates/appkit/src/launchservices.rs
+@@ -348,6 +348,16 @@ pub unsafe extern "C" fn LSOpenFromURLSpec(
+     }
+ }
+ 
++pub unsafe extern "C" fn LSCopyApplicationURLsForBundleIdentifier(
++    _bundle_id: CFTypeRef,
++    out_error: *mut CFTypeRef,
++) -> CFTypeRef {
++    if !out_error.is_null() {
++        unsafe { out_error.write(std::ptr::null()) };
++    }
++    std::ptr::null()
++}
++
+ exports::exports! {
+     functions {
+         "LSCopyDefaultHandlerForURLScheme" => LSCopyDefaultHandlerForURLScheme,
+@@ -358,6 +368,7 @@ exports::exports! {
+         "LSFindApplicationForInfo" => LSFindApplicationForInfo,
+         "LSGetApplicationForInfo" => LSGetApplicationForInfo,
+         "LSCopyApplicationForMIMEType" => LSCopyApplicationForMIMEType,
++        "LSCopyApplicationURLsForBundleIdentifier" => LSCopyApplicationURLsForBundleIdentifier,
+         "LSOpenCFURLRef" => LSOpenCFURLRef,
+         "LSOpenFromURLSpec" => LSOpenFromURLSpec,
+     }
+diff --git a/crates/appkit/src/lib.rs b/crates/appkit/src/lib.rs
+index a4137b4..084b3c5 100644
+--- a/crates/appkit/src/lib.rs
++++ b/crates/appkit/src/lib.rs
+@@ -258,6 +258,40 @@ exports::exports! {
+         "CGColorSpaceCreatePattern" => graphics::CGColorSpaceCreatePattern,
+         "CGColorSpaceGetNumberOfComponents" => graphics::CGColorSpaceGetNumberOfComponents,
+         "CGColorSpaceRelease" => graphics::CGColorSpaceRelease,
++        "CGColorSpaceCopyICCData" => graphics::CGColorSpaceCopyICCData,
++        "CGColorSpaceCopyICCProfile" => graphics::CGColorSpaceCopyICCData,
++        "CGColorSpaceIsWideGamutRGB" => graphics::CGColorSpaceIsWideGamutRGB,
++        "CGDisplayCopyColorSpace" => graphics::CGDisplayCopyColorSpace,
++        "CGColorCreateCopyByMatchingToColorSpace" => graphics::CGColorCreateCopyByMatchingToColorSpace,
++        "CGDataProviderCreateWithCFData" => graphics::CGDataProviderCreateWithCFData,
++        "CGDataProviderCopyData" => graphics::CGDataProviderCopyData,
++        "CGImageGetBitmapInfo" => graphics::CGImageGetBitmapInfo,
++        "CGImageGetBitsPerPixel" => graphics::CGImageGetBitsPerPixel,
++        "CGImageGetBytesPerRow" => graphics::CGImageGetBytesPerRow,
++        "CGImageGetDataProvider" => graphics::CGImageGetDataProvider,
++        "CGImageGetRenderingIntent" => graphics::CGImageGetRenderingIntent,
++        "CGWindowListCopyWindowInfo" => graphics::CGWindowListCopyWindowInfo,
++        "CGEventSourceSecondsSinceLastEventType" => graphics::CGEventSourceSecondsSinceLastEventType,
++        "CGRectIsNull" => graphics::CGRectIsNull,
++        "CGRectStandardize" => graphics::CGRectStandardize,
++        "CGRectUnion" => graphics::CGRectUnion,
++        "CGContextBeginTransparencyLayerWithRect" => graphics::CGContextBeginTransparencyLayerWithRect,
++        "CGContextEndTransparencyLayer" => graphics::CGContextEndTransparencyLayer,
++        "CGDisplayCreateImageForRect" => graphics::CGDisplayCreateImageForRect,
++        "CGEventTapCreateForPid" => graphics::CGEventTapCreateForPid,
++        "CGEventTapEnable" => graphics::CGEventTapEnable,
++        "CGImageSourceCreateWithURL" => graphics::CGImageSourceCreateWithURL,
++        "NSAccessibilityUnignoredChildren" => graphics::NSAccessibilityUnignoredChildren,
++        "NSAccessibilityUnignoredChildrenForOnlyChild" => graphics::NSAccessibilityUnignoredChildrenForOnlyChild,
++        "CGEventSourceButtonState" => graphics::CGEventSourceButtonState,
++        "CGRectMakeWithDictionaryRepresentation" => graphics::CGRectMakeWithDictionaryRepresentation,
++        "CGWindowListCreateImage" => graphics::CGWindowListCreateImage,
++        "CGDisplayStreamCreate" => graphics::CGDisplayStreamCreate,
++        "CGDisplayStreamCreateWithDispatchQueue" => graphics::CGDisplayStreamCreateWithDispatchQueue,
++        "RegisterEventHotKey" => graphics::RegisterEventHotKey,
++        "UnregisterEventHotKey" => graphics::UnregisterEventHotKey,
++        "GetEventClass" => graphics::GetEventClass,
++        "GetEventParameter" => graphics::GetEventParameter,
+         "CGColorSpaceGetName" => graphics::CGColorSpaceGetName,
+         "CGColorSpaceCopyName" => graphics::CGColorSpaceCopyName,
+         "CGColorSpaceCopyPropertyList" => graphics::CGColorSpaceCopyPropertyList,
+@@ -378,10 +412,19 @@ pub fn ns_app_cell() -> u64 {
+ static CG_AFFINE_TRANSFORM_IDENTITY: [f64; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+ /// `{{-CGFLOAT_MAX / 2, -CGFLOAT_MAX / 2}, {CGFLOAT_MAX, CGFLOAT_MAX}}`.
+ static CG_RECT_INFINITE: [f64; 4] = [f64::MAX / -2.0, f64::MAX / -2.0, f64::MAX, f64::MAX];
++static CA_TRANSFORM3D_IDENTITY: [f64; 16] = [
++    1.0, 0.0, 0.0, 0.0,
++    0.0, 1.0, 0.0, 0.0,
++    0.0, 0.0, 1.0, 0.0,
++    0.0, 0.0, 0.0, 1.0,
++];
++
++mod capcut_globals;
+ 
+ pub fn data_symbols() -> Vec<(String, u64)> {
+     bootstrap();
+     let mut out = classes::class_data();
++    out.extend(capcut_globals::extra_data_symbols());
+     out.extend(cgcontext::data_symbols());
+     out.push(("_NSApp".to_string(), ns_app_cell()));
+     out.push((
+@@ -392,6 +435,14 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+         "_CGRectInfinite".to_string(),
+         CG_RECT_INFINITE.as_ptr() as usize as u64,
+     ));
++    out.push((
++        "_CGRectNull".to_string(),
++        &graphics::CG_RECT_NULL as *const _ as usize as u64,
++    ));
++    out.push((
++        "_CATransform3DIdentity".to_string(),
++        CA_TRANSFORM3D_IDENTITY.as_ptr() as usize as u64,
++    ));
+     let srgb = foundation::notification::name_object("kCGColorSpaceSRGB");
+     out.push((
+         "_kCGColorSpaceSRGB".to_string(),
+@@ -602,6 +653,22 @@ pub const STRING_GLOBALS: &[(&str, &str)] = &[
+     ),
+     // SDL's GPU swapchain table reads it whenever the OS version says it exists.
+     ("_kCGColorSpaceITUR_2100_PQ", "kCGColorSpaceITUR_2100_PQ"),
++    ("_kCGColorSpaceDisplayP3", "kCGColorSpaceDisplayP3"),
++    ("_kCGColorSpaceExtendedSRGB", "kCGColorSpaceExtendedSRGB"),
++    ("_kCGColorSpaceITUR_2020", "kCGColorSpaceITUR_2020"),
++    ("_kCGColorSpaceITUR_709", "kCGColorSpaceITUR_709"),
++    ("_kCGColorSpaceLinearSRGB", "kCGColorSpaceLinearSRGB"),
++    ("_kCGWindowBounds", "kCGWindowBounds"),
++    ("_kCGWindowIsOnscreen", "kCGWindowIsOnscreen"),
++    ("_kCGWindowLayer", "kCGWindowLayer"),
++    ("_kCGWindowName", "kCGWindowName"),
++    ("_kCGWindowNumber", "kCGWindowNumber"),
++    ("_kCGWindowOwnerName", "kCGWindowOwnerName"),
++    ("_kCGWindowOwnerPID", "kCGWindowOwnerPID"),
++    ("_NSPasteboardURLReadingFileURLsOnlyKey", "NSPasteboardURLReadingFileURLsOnlyKey"),
++    ("_NSWorkspaceActiveSpaceDidChangeNotification", "NSWorkspaceActiveSpaceDidChangeNotification"),
++    ("_NSLigatureAttributeName", "NSLigature"),
++    ("_NSImageEXIFData", "NSImageEXIFData"),
+     (
+         "_kCGDisplayShowDuplicateLowResolutionModes",
+         "kCGDisplayShowDuplicateLowResolutionModes",
+diff --git a/crates/appkit/src/workspace.rs b/crates/appkit/src/workspace.rs
+index f5fe44f..38554e1 100644
+--- a/crates/appkit/src/workspace.rs
++++ b/crates/appkit/src/workspace.rs
+@@ -567,10 +567,17 @@ pub(crate) fn install() {
+             c"@24@0:8@16";
+         "openURL:" => open_url, c"c24@0:8@16";
+         "isVoiceOverEnabled" => voice_over_enabled, c"c16@0:8";
++        "isSwitchControlEnabled" => voice_over_enabled, c"c16@0:8";
++        "accessibilityDisplayShouldReduceTransparency" => voice_over_enabled, c"c16@0:8";
++        "accessibilityDisplayShouldIncreaseContrast" => voice_over_enabled, c"c16@0:8";
++        "accessibilityDisplayShouldDifferentiateWithoutColor" => voice_over_enabled, c"c16@0:8";
++        "accessibilityDisplayShouldReduceMotion" => voice_over_enabled, c"c16@0:8";
++        "accessibilityDisplayShouldInvertColors" => voice_over_enabled, c"c16@0:8";
+         "openFile:" => open_file, c"c24@0:8@16";
+         "openFile:withApplication:" => open_file_with, c"c32@0:8@16@24";
+         "notificationCenter" => notification_center, c"@16@0:8";
+         "frontmostApplication" => frontmost_application, c"@16@0:8";
++        "menuBarOwningApplication" => frontmost_application, c"@16@0:8";
+         "runningApplications" => workspace_running_applications, c"@16@0:8";
+         "launchApplicationAtURL:options:configuration:error:" => launch_application,
+             c"@48@0:8@16Q24@32^@40";
+diff --git a/crates/rosemary/src/fault.rs b/crates/rosemary/src/fault.rs
+index 8d6b8e8..95a0de5 100644
+--- a/crates/rosemary/src/fault.rs
++++ b/crates/rosemary/src/fault.rs
+@@ -630,6 +630,9 @@ extern "C" fn report(signal: i32, info: *mut libc::siginfo_t, context: *mut libc
+         line.hex(host_pc(context).unwrap_or(0));
+         line.str(" - another thread is reporting its own fault first\n");
+         line.flush();
++        // Give the first faulting thread time to finish writing its diagnostic report
++        // before restoring the default signal disposition and terminating the process.
++        unsafe { libc::usleep(500_000) };
+         restore(signal);
+         return;
+     }
