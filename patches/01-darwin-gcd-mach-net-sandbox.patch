@@ -1,0 +1,1068 @@
+diff --git a/crates/darwin/src/asl.rs b/crates/darwin/src/asl.rs
+index c90972a..e680a21 100644
+--- a/crates/darwin/src/asl.rs
++++ b/crates/darwin/src/asl.rs
+@@ -43,9 +43,43 @@ crate::va_list! {
+     darwin_asl_vlog = asl_vlog, 4;
+ }
+ 
++unsafe extern "C" fn asl_open(_ident: *const c_char, _facility: *const c_char, _opts: u32) -> *mut c_void {
++    Box::into_raw(Box::new(0u64)) as *mut c_void
++}
++
++unsafe extern "C" fn asl_close(client: *mut c_void) {
++    if !client.is_null() {
++        let _ = unsafe { Box::from_raw(client as *mut u64) };
++    }
++}
++
++unsafe extern "C" fn asl_new(_kind: u32) -> *mut c_void {
++    Box::into_raw(Box::new(0u64)) as *mut c_void
++}
++
++unsafe extern "C" fn asl_free(msg: *mut c_void) {
++    if !msg.is_null() {
++        let _ = unsafe { Box::from_raw(msg as *mut u64) };
++    }
++}
++
++unsafe extern "C" fn asl_set(_msg: *mut c_void, _key: *const c_char, _value: *const c_char) -> c_int {
++    0
++}
++
++unsafe extern "C" fn asl_send(_client: *mut c_void, _msg: *mut c_void) -> c_int {
++    0
++}
++
+ exports::exports! {
+     functions {
+         "asl_log" => asl_log,
+         "asl_vlog" => darwin_asl_vlog,
++        "asl_open" => asl_open,
++        "asl_close" => asl_close,
++        "asl_new" => asl_new,
++        "asl_free" => asl_free,
++        "asl_set" => asl_set,
++        "asl_send" => asl_send,
+     }
+ }
+diff --git a/crates/darwin/src/atomics.rs b/crates/darwin/src/atomics.rs
+index 9c7386b..863198b 100644
+--- a/crates/darwin/src/atomics.rs
++++ b/crates/darwin/src/atomics.rs
+@@ -59,6 +59,46 @@ pub unsafe extern "C" fn OSAtomicAdd64Barrier(amount: i64, value: *mut c_void) -
+         .wrapping_add(amount)
+ }
+ 
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn OSAtomicIncrement32(value: *mut c_void) -> i32 {
++    unsafe { OSAtomicAdd32(1, value) }
++}
++
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn OSAtomicIncrement32Barrier(value: *mut c_void) -> i32 {
++    unsafe { OSAtomicAdd32Barrier(1, value) }
++}
++
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn OSAtomicDecrement32(value: *mut c_void) -> i32 {
++    unsafe { OSAtomicAdd32(-1, value) }
++}
++
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn OSAtomicDecrement32Barrier(value: *mut c_void) -> i32 {
++    unsafe { OSAtomicAdd32Barrier(-1, value) }
++}
++
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn OSAtomicIncrement64(value: *mut c_void) -> i64 {
++    unsafe { OSAtomicAdd64(1, value) }
++}
++
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn OSAtomicIncrement64Barrier(value: *mut c_void) -> i64 {
++    unsafe { OSAtomicAdd64Barrier(1, value) }
++}
++
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn OSAtomicDecrement64(value: *mut c_void) -> i64 {
++    unsafe { OSAtomicAdd64(-1, value) }
++}
++
++#[allow(non_snake_case)]
++pub unsafe extern "C" fn OSAtomicDecrement64Barrier(value: *mut c_void) -> i64 {
++    unsafe { OSAtomicAdd64Barrier(-1, value) }
++}
++
+ #[inline]
+ unsafe fn compare_and_swap32(old: i32, new: i32, value: *mut c_void, ordering: Ordering) -> bool {
+     let failure = match ordering {
+@@ -213,6 +253,14 @@ exports::exports! {
+         "OSAtomicAdd32Barrier" => OSAtomicAdd32Barrier,
+         "OSAtomicAdd64" => OSAtomicAdd64,
+         "OSAtomicAdd64Barrier" => OSAtomicAdd64Barrier,
++        "OSAtomicIncrement32" => OSAtomicIncrement32,
++        "OSAtomicIncrement32Barrier" => OSAtomicIncrement32Barrier,
++        "OSAtomicDecrement32" => OSAtomicDecrement32,
++        "OSAtomicDecrement32Barrier" => OSAtomicDecrement32Barrier,
++        "OSAtomicIncrement64" => OSAtomicIncrement64,
++        "OSAtomicIncrement64Barrier" => OSAtomicIncrement64Barrier,
++        "OSAtomicDecrement64" => OSAtomicDecrement64,
++        "OSAtomicDecrement64Barrier" => OSAtomicDecrement64Barrier,
+         "OSAtomicCompareAndSwap32" => OSAtomicCompareAndSwap32,
+         "OSAtomicCompareAndSwap32Barrier" => OSAtomicCompareAndSwap32Barrier,
+         "OSAtomicCompareAndSwap64" => OSAtomicCompareAndSwap64,
+diff --git a/crates/darwin/src/bsd/posix.rs b/crates/darwin/src/bsd/posix.rs
+index e23f11d..b866e97 100644
+--- a/crates/darwin/src/bsd/posix.rs
++++ b/crates/darwin/src/bsd/posix.rs
+@@ -377,6 +377,73 @@ pub extern "C" fn mac_syscall(_policy: *const c_char, _call: c_int, _arg: *mut c
+     -1
+ }
+ 
++pub extern "C" fn sandbox_extension_issue_file(
++    _extension_class: *const c_char,
++    _path: *const c_char,
++    _flags: u32,
++) -> *mut c_char {
++    std::ptr::null_mut()
++}
++
++pub extern "C" fn sandbox_extension_consume(_token: *const c_char) -> i64 {
++    0
++}
++
++pub extern "C" fn sandbox_extension_release(_handle: i64) -> c_int {
++    0
++}
++
++pub extern "C" fn change_fdguard_np(
++    _fd: c_int,
++    _guard: *const u64,
++    _guardflags: u32,
++    _nguard: *const u64,
++    _nguardflags: u32,
++    _fdflagsp: *mut c_int,
++) -> c_int {
++    0
++}
++
++pub unsafe extern "C" fn guarded_close_np(fd: c_int, _guard: *const u64) -> c_int {
++    unsafe { libc::close(fd) }
++}
++
++pub extern "C" fn coalition_info_resource_usage(
++    _cid: u64,
++    _buffer: *mut c_void,
++    _bufsize: *mut usize,
++) -> c_int {
++    crate::errno::set_guest(libc::ENOSYS);
++    -1
++}
++
++pub unsafe extern "C" fn pthread_chdir_np(path: *const c_char) -> c_int {
++    if path.is_null() {
++        return -1;
++    }
++    unsafe { libc::chdir(path) }
++}
++
++pub extern "C" fn kdebug_signpost_end(
++    _code: u32,
++    _arg1: usize,
++    _arg2: usize,
++    _arg3: usize,
++    _arg4: usize,
++) -> c_int {
++    0
++}
++
++pub extern "C" fn fclonefileat(
++    _srcfd: c_int,
++    _dst_dirfd: c_int,
++    _dst: *const c_char,
++    _flags: u32,
++) -> c_int {
++    crate::errno::set_guest(libc::ENOTSUP);
++    -1
++}
++
+ /// `void _cthread_init(void)`
+ ///
+ /// libSystem's start-up hook for the Mach cthreads package, which `pthread`
+@@ -409,7 +476,16 @@ exports::exports! {
+         #[cfg(any(target_os = "linux", all(target_os = "freebsd", target_arch = "x86_64")))]
+         "sigsetjmp" => sigsetjmp,
+         "csops" => csops,
+-        "__mac_syscall" => mac_syscall,
++        "__mac_syscall" | "__sandbox_ms" => mac_syscall,
++        "sandbox_extension_issue_file" => sandbox_extension_issue_file,
++        "sandbox_extension_consume" => sandbox_extension_consume,
++        "sandbox_extension_release" => sandbox_extension_release,
++        "change_fdguard_np" => change_fdguard_np,
++        "guarded_close_np" => guarded_close_np,
++        "coalition_info_resource_usage" => coalition_info_resource_usage,
++        "pthread_chdir_np" => pthread_chdir_np,
++        "kdebug_signpost_end" => kdebug_signpost_end,
++        "fclonefileat" => fclonefileat,
+         "_cthread_init" => cthread_init,
+         "__keymgr_dwarf2_register_sections" => keymgr_dwarf2_register_sections,
+         "__atomic_load" => atomic_load,
+diff --git a/crates/darwin/src/dispatch/block.rs b/crates/darwin/src/dispatch/block.rs
+index 966a22c..1bbae6e 100644
+--- a/crates/darwin/src/dispatch/block.rs
++++ b/crates/darwin/src/dispatch/block.rs
+@@ -64,6 +64,18 @@ pub unsafe fn invoke(block: u64) {
+     unsafe { std::mem::transmute::<u64, extern "C" fn(u64)>(entry)(block) };
+ }
+ 
++/// Call a block taking a single `size_t` argument (used by `dispatch_apply`).
++pub unsafe fn invoke_usize(block: u64, index: usize) {
++    if block == 0 {
++        return;
++    }
++    let entry = unsafe { ((block + INVOKE_OFFSET) as *const u64).read() };
++    if entry == 0 {
++        return;
++    }
++    unsafe { std::mem::transmute::<u64, extern "C" fn(u64, usize)>(entry)(block, index) };
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/darwin/src/dispatch/mod.rs b/crates/darwin/src/dispatch/mod.rs
+index da6e949..04ebb32 100644
+--- a/crates/darwin/src/dispatch/mod.rs
++++ b/crates/darwin/src/dispatch/mod.rs
+@@ -87,12 +87,23 @@ exports::exports! {
+     functions {
+         "dispatch_queue_create" => queue::queue_create,
+         "dispatch_queue_create_with_target" => queue::queue_create_with_target,
++        "dispatch_set_target_queue" => queue::set_target_queue,
++        "dispatch_queue_attr_make_with_autorelease_frequency" => queue::queue_attr_make_with_autorelease_frequency,
++        "dispatch_queue_attr_make_with_qos_class" => queue::queue_attr_make_with_qos_class,
++        "dispatch_get_current_queue" => queue::get_current_queue,
++        "dispatch_queue_set_specific" => queue::queue_set_specific,
++        "dispatch_queue_get_specific" => queue::queue_get_specific,
++        "dispatch_get_specific" => queue::get_specific,
+         "dispatch_queue_get_label" => queue::queue_get_label,
+         "dispatch_get_global_queue" => queue::get_global_queue,
+         "dispatch_async" => queue::async_,
+         "dispatch_async_f" => queue::async_f,
++        "dispatch_barrier_async" => queue::async_,
++        "dispatch_barrier_async_f" => queue::async_f,
+         "dispatch_sync" => queue::sync,
+         "dispatch_sync_f" => queue::sync_f,
++        "dispatch_barrier_sync" => queue::sync,
++        "dispatch_barrier_sync_f" => queue::sync_f,
+         "dispatch_after" => queue::after,
+         "dispatch_after_f" => queue::after_f,
+         "dispatch_once" => once,
+@@ -104,6 +115,7 @@ exports::exports! {
+         "dispatch_group_notify_f" => sync::group_notify_f,
+         "dispatch_group_async_f" => sync::group_async_f,
+         "dispatch_group_async" => sync::group_async,
++        "dispatch_apply" => sync::apply,
+         "dispatch_apply_f" => sync::apply_f,
+         "dispatch_group_wait" => sync::group_wait,
+         "dispatch_semaphore_create" => sync::semaphore_create,
+@@ -144,6 +156,8 @@ exports::exports! {
+         "__dispatch_source_type_signal" => source::type_signal(),
+         "__dispatch_source_type_vnode" => source::type_vnode(),
+         "__dispatch_source_type_timer" => source::type_timer(),
++        "__dispatch_source_type_mach_recv" => source::type_mach_recv(),
++        "__dispatch_source_type_proc" => source::type_proc(),
+     }
+ }
+ 
+diff --git a/crates/darwin/src/dispatch/queue.rs b/crates/darwin/src/dispatch/queue.rs
+index 34fbd14..f324609 100644
+--- a/crates/darwin/src/dispatch/queue.rs
++++ b/crates/darwin/src/dispatch/queue.rs
+@@ -1,6 +1,6 @@
+-use std::collections::VecDeque;
++use std::collections::{HashMap, VecDeque};
+ use std::ffi::{CString, c_char, c_void};
+-use std::sync::atomic::{AtomicUsize, Ordering};
++use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+ use std::sync::{Arc, Condvar, Mutex, OnceLock};
+ 
+ use super::block;
+@@ -99,7 +99,7 @@ pub struct Queue {
+     label: CString,
+     concurrent: bool,
+     main: bool,
+-    target: u64,
++    target: AtomicU64,
+     state: Mutex<State>,
+ }
+ 
+@@ -114,6 +114,8 @@ struct State {
+     enqueued: bool,
+     /// `dispatch_suspend`s not yet balanced by a resume. Work stays queued.
+     suspended: u32,
++    /// Queue-specific data set via `dispatch_queue_set_specific`.
++    specific: HashMap<u64, (u64, Option<Function>)>,
+ }
+ 
+ /// The queue a handle names, if it names a live one.
+@@ -135,12 +137,13 @@ fn new(label: &str, concurrent: bool, main: bool) -> u64 {
+         label: CString::new(label).unwrap_or_default(),
+         concurrent,
+         main,
+-        target: 0,
++        target: AtomicU64::new(0),
+         state: Mutex::new(State {
+             pending: VecDeque::new(),
+             draining: false,
+             enqueued: false,
+             suspended: 0,
++            specific: HashMap::new(),
+         }),
+     });
+     Box::into_raw(queue) as u64
+@@ -566,23 +569,109 @@ pub unsafe extern "C" fn queue_create_with_target(
+     target: u64,
+ ) -> u64 {
+     let handle = unsafe { queue_create(label, attr) };
+-    object::retain(target);
+-    unsafe {
+-        (*(handle as *mut Queue)).target = target;
++    if target != 0 {
++        object::retain(target);
++        unsafe {
++            (*(handle as *const Queue)).target.store(target, Ordering::Release);
++        }
+     }
+     handle
+ }
+ 
++pub unsafe extern "C" fn set_target_queue(handle: u64, new_target: u64) {
++    let Some(q) = (unsafe { queue(handle) }) else {
++        return;
++    };
++    if new_target != 0 {
++        object::retain(new_target);
++    }
++    let old = q.target.swap(new_target, Ordering::AcqRel);
++    if old != 0 {
++        unsafe { object::release(old) };
++    }
++}
++
++pub unsafe extern "C" fn queue_attr_make_with_autorelease_frequency(attr: u64, _frequency: u64) -> u64 {
++    attr
++}
++
++pub unsafe extern "C" fn queue_attr_make_with_qos_class(attr: u64, _qos_class: u32, _relative_priority: i32) -> u64 {
++    attr
++}
++
++pub unsafe extern "C" fn get_current_queue() -> u64 {
++    CURRENT
++        .with(|c| c.borrow().last().copied())
++        .unwrap_or_else(main_queue)
++}
++
++pub unsafe extern "C" fn queue_set_specific(handle: u64, key: u64, context: u64, destructor: u64) {
++    let Some(q) = (unsafe { queue(handle) }) else {
++        return;
++    };
++    let dtor = if destructor != 0 {
++        Some(unsafe { std::mem::transmute::<u64, Function>(destructor) })
++    } else {
++        None
++    };
++    let old = {
++        let mut state = q.state.lock().unwrap_or_else(|e| e.into_inner());
++        if context == 0 {
++            state.specific.remove(&key)
++        } else {
++            state.specific.insert(key, (context, dtor))
++        }
++    };
++    if let Some((old_ctx, Some(old_dtor))) = old {
++        unsafe { old_dtor(old_ctx as *mut c_void) };
++    }
++}
++
++pub unsafe extern "C" fn queue_get_specific(handle: u64, key: u64) -> u64 {
++    let Some(q) = (unsafe { queue(handle) }) else {
++        return 0;
++    };
++    let state = q.state.lock().unwrap_or_else(|e| e.into_inner());
++    state.specific.get(&key).map_or(0, |&(ctx, _)| ctx)
++}
++
++pub unsafe extern "C" fn get_specific(key: u64) -> u64 {
++    let stack: Vec<u64> = CURRENT.with(|c| c.borrow().clone());
++    for &h in stack.iter().rev() {
++        let mut cur = h;
++        let mut depth = 0;
++        while cur != 0 && depth < 16 {
++            if let Some(q) = unsafe { queue(cur) } {
++                let found = {
++                    let state = q.state.lock().unwrap_or_else(|e| e.into_inner());
++                    state.specific.get(&key).map(|&(ctx, _)| ctx)
++                };
++                if let Some(ctx) = found {
++                    return ctx;
++                }
++                cur = q.target.load(Ordering::Acquire);
++            } else {
++                break;
++            }
++            depth += 1;
++        }
++    }
++    0
++}
++
+ impl Drop for Queue {
+     fn drop(&mut self) {
+-        unsafe {
+-            object::release(self.target);
++        let t = self.target.swap(0, Ordering::AcqRel);
++        if t != 0 {
++            unsafe {
++                object::release(t);
++            }
+         }
+     }
+ }
+ 
+ pub(crate) fn target(handle: u64) -> u64 {
+-    unsafe { queue(handle) }.map_or(0, |q| q.target)
++    unsafe { queue(handle) }.map_or(0, |q| q.target.load(Ordering::Acquire))
+ }
+ 
+ unsafe extern "C" fn run_targeted(context: *mut c_void) {
+diff --git a/crates/darwin/src/dispatch/source.rs b/crates/darwin/src/dispatch/source.rs
+index 08e77ef..5bcf0e8 100644
+--- a/crates/darwin/src/dispatch/source.rs
++++ b/crates/darwin/src/dispatch/source.rs
+@@ -42,9 +42,11 @@ enum Type {
+     Signal,
+     Vnode,
+     Timer,
++    MachRecv,
++    Proc,
+ }
+ 
+-const TYPES: [Type; 8] = [
++const TYPES: [Type; 10] = [
+     Type::DataAdd,
+     Type::DataOr,
+     Type::DataReplace,
+@@ -53,10 +55,12 @@ const TYPES: [Type; 8] = [
+     Type::Signal,
+     Type::Vnode,
+     Type::Timer,
++    Type::MachRecv,
++    Type::Proc,
+ ];
+ 
+ /// One word per type; only the addresses matter.
+-static TYPE_OBJECTS: [u64; 8] = [0; 8];
++static TYPE_OBJECTS: [u64; 10] = [0; 10];
+ 
+ fn type_object(t: Type) -> u64 {
+     &TYPE_OBJECTS[t as usize] as *const u64 as u64
+@@ -90,6 +94,12 @@ pub fn type_vnode() -> u64 {
+ pub fn type_timer() -> u64 {
+     type_object(Type::Timer)
+ }
++pub fn type_mach_recv() -> u64 {
++    type_object(Type::MachRecv)
++}
++pub fn type_proc() -> u64 {
++    type_object(Type::Proc)
++}
+ 
+ enum Handler {
+     /// A copy this source owns.
+@@ -204,9 +214,9 @@ impl Source {
+         let mut state = self.lock();
+         state.pending = match self.kind {
+             Type::DataAdd | Type::Signal | Type::Timer => state.pending.wrapping_add(value),
+-            Type::DataOr | Type::Vnode => state.pending | value,
++            Type::DataOr | Type::Vnode | Type::Proc => state.pending | value,
+             // Readiness reports the current amount, not a sum.
+-            Type::DataReplace | Type::Read | Type::Write => value,
++            Type::DataReplace | Type::Read | Type::Write | Type::MachRecv => value,
+         };
+         self.schedule(&mut state);
+     }
+diff --git a/crates/darwin/src/dispatch/sync.rs b/crates/darwin/src/dispatch/sync.rs
+index a117644..0733993 100644
+--- a/crates/darwin/src/dispatch/sync.rs
++++ b/crates/darwin/src/dispatch/sync.rs
+@@ -247,6 +247,16 @@ pub unsafe extern "C" fn apply_f(iterations: usize, _queue: u64, context: u64, w
+     }
+ }
+ 
++/// `void dispatch_apply(size_t iterations, dispatch_queue_t, void (^work)(size_t))`.
++pub unsafe extern "C" fn apply(iterations: usize, _queue: u64, block: u64) {
++    if block == 0 {
++        return;
++    }
++    for index in 0..iterations {
++        unsafe { super::block::invoke_usize(block, index) };
++    }
++}
++
+ /// `void dispatch_group_async(dispatch_group_t, dispatch_queue_t, dispatch_block_t)`.
+ ///
+ /// The block is copied, as `dispatch_async` copies one, and run through the
+diff --git a/crates/darwin/src/kqueue.rs b/crates/darwin/src/kqueue.rs
+index d641e34..633dce4 100644
+--- a/crates/darwin/src/kqueue.rs
++++ b/crates/darwin/src/kqueue.rs
+@@ -2069,13 +2069,98 @@ fn signals_pending<B: ReadinessBackend>(state: &Queue<B>) -> bool {
+         .any(|r| r.enabled && state.backend.signals(r.ident as i32) > r.seen)
+ }
+ 
+-/// `kevent64` and the filters `poll` cannot answer; see the module note.
+-pub const REFUSED: &[&str] = &["kevent64", "kevent_qos"];
++/// `struct kevent64_s`, which extends `struct kevent` with `ext[2]`.
++#[repr(C)]
++#[derive(Clone, Copy, Default)]
++pub struct Kevent64 {
++    pub ident: u64,
++    pub filter: i16,
++    pub flags: u16,
++    pub fflags: u32,
++    pub data: i64,
++    pub udata: u64,
++    pub ext: [u64; 2],
++}
++
++/// `int kevent64(int kq, const struct kevent64_s *changelist, int nchanges,
++/// struct kevent64_s *eventlist, int nevents, unsigned int flags,
++/// const struct timespec *timeout)`
++pub unsafe extern "C" fn kevent64(
++    queue: c_int,
++    changes: *const Kevent64,
++    nchanges: c_int,
++    events: *mut Kevent64,
++    nevents: c_int,
++    _flags: u32,
++    timeout: *const libc::timespec,
++) -> c_int {
++    if nchanges < 0
++        || nevents < 0
++        || (nchanges != 0 && changes.is_null())
++        || (nevents != 0 && events.is_null())
++    {
++        crate::errno::set(libc::EINVAL);
++        return -1;
++    }
++    let ch_vec: Vec<Kevent> = if nchanges == 0 {
++        Vec::new()
++    } else {
++        unsafe { std::slice::from_raw_parts(changes, nchanges as usize) }
++            .iter()
++            .map(|c| Kevent {
++                ident: c.ident as usize,
++                filter: c.filter,
++                flags: c.flags,
++                fflags: c.fflags & !MACH_RCV_MSG,
++                data: c.data as isize,
++                udata: c.udata as usize,
++            })
++            .collect()
++    };
++    let mut ev_vec = vec![Kevent::default(); nevents as usize];
++    let rc = unsafe {
++        kevent(
++            queue,
++            if ch_vec.is_empty() {
++                std::ptr::null()
++            } else {
++                ch_vec.as_ptr()
++            },
++            nchanges,
++            if ev_vec.is_empty() {
++                std::ptr::null_mut()
++            } else {
++                ev_vec.as_mut_ptr()
++            },
++            nevents,
++            timeout,
++        )
++    };
++    if rc > 0 {
++        let out_slice = unsafe { std::slice::from_raw_parts_mut(events, rc as usize) };
++        for (dst, src) in out_slice.iter_mut().zip(ev_vec.iter().take(rc as usize)) {
++            *dst = Kevent64 {
++                ident: src.ident as u64,
++                filter: src.filter,
++                flags: src.flags,
++                fflags: src.fflags,
++                data: src.data as i64,
++                udata: src.udata as u64,
++                ext: [0, 0],
++            };
++        }
++    }
++    rc
++}
++
++/// `kevent_qos` and the filters `poll` cannot answer; see the module note.
++pub const REFUSED: &[&str] = &["kevent_qos"];
+ 
+ exports::exports! {
+     functions {
+         "kqueue" => kqueue,
+         "kevent" => kevent,
++        "kevent64" => kevent64,
+     }
+ }
+ 
+diff --git a/crates/darwin/src/mach/mod.rs b/crates/darwin/src/mach/mod.rs
+index 38dc8bc..a111771 100644
+--- a/crates/darwin/src/mach/mod.rs
++++ b/crates/darwin/src/mach/mod.rs
+@@ -149,6 +149,8 @@ exports::exports! {
+         "thread_policy_get" => thread::thread_policy_get,
+         "mach_port_space_basic_info" => tasks::mach_port_space_basic_info,
+         "task_policy_get" => tasks::task_policy_get,
++        "task_policy_set" => tasks::task_policy_set,
++        "thread_switch" => tasks::thread_switch,
+         "task_suspend" => tasks::task_suspend,
+         "task_resume" => tasks::task_resume,
+         "task_set_special_port" => task::task_set_special_port,
+@@ -166,34 +168,41 @@ exports::exports! {
+             | "host_swap_exception_ports"
+             | "thread_swap_exception_ports" => task::task_swap_exception_ports,
+ 
+-        "mach_port_allocate" => space::mach_port_allocate,
+-        "mach_port_deallocate" => space::mach_port_deallocate,
+-        "mach_port_destroy" => space::mach_port_destroy,
+-        "mach_port_mod_refs" => space::mach_port_mod_refs,
++        "mach_port_allocate" | "_kernelrpc_mach_port_allocate_trap" => space::mach_port_allocate,
++        "task_self_trap" => task_self_trap,
++        "mach_port_construct" | "_kernelrpc_mach_port_construct_trap" => space::mach_port_construct,
++        "mach_port_destruct" | "_kernelrpc_mach_port_destruct_trap" => space::mach_port_destruct,
++        "mach_port_deallocate" | "_kernelrpc_mach_port_deallocate_trap" => space::mach_port_deallocate,
++        "mach_port_destroy" | "_kernelrpc_mach_port_destroy_trap" => space::mach_port_destroy,
++        "mach_port_mod_refs" | "_kernelrpc_mach_port_mod_refs_trap" => space::mach_port_mod_refs,
+         "mach_port_get_refs" => space::mach_port_get_refs,
+-        "mach_port_insert_right" => space::mach_port_insert_right,
++        "mach_port_insert_right" | "_kernelrpc_mach_port_insert_right_trap" => space::mach_port_insert_right,
+         "mach_port_extract_right" => space::mach_port_extract_right,
+         "mach_port_type" => space::mach_port_type,
+-        "mach_port_insert_member" => space::mach_port_insert_member,
++        "mach_port_insert_member" | "_kernelrpc_mach_port_insert_member_trap" => space::mach_port_insert_member,
++        "mach_port_extract_member" | "_kernelrpc_mach_port_extract_member_trap" => space::mach_port_extract_member,
+         "mach_port_move_member" => space::mach_port_move_member,
++        "mach_port_peek" => space::mach_port_peek,
+         "mach_port_set_attributes" => space::mach_port_set_attributes,
+         "mach_port_request_notification" => space::mach_port_request_notification,
+ 
+         "vm_region_64" => vm::vm_region_64,
+         "vm_region_recurse_64" | "mach_vm_region_recurse" => vm::vm_region_recurse_64,
+-        "vm_allocate" | "mach_vm_allocate" => vm::vm_allocate,
+-        "vm_deallocate" | "mach_vm_deallocate" => vm::vm_deallocate,
++        "vm_allocate" | "mach_vm_allocate" | "_kernelrpc_mach_vm_allocate_trap" => vm::vm_allocate,
++        "vm_deallocate" | "mach_vm_deallocate" | "_kernelrpc_mach_vm_deallocate_trap" => vm::vm_deallocate,
+         "mach_vm_region" => vm::vm_region_64,
+         "vm_read_overwrite" | "mach_vm_read_overwrite" => vm::vm_read_overwrite,
+         "vm_read" | "mach_vm_read" => vm::vm_read,
+         "vm_write" | "mach_vm_write" => vm::vm_write,
+-        "vm_protect" | "mach_vm_protect" => vm::vm_protect,
+-        "vm_map" | "vm_map_64" | "mach_vm_map" => vm::mach_vm_map,
++        "vm_protect" | "mach_vm_protect" | "_kernelrpc_mach_vm_protect_trap" => vm::vm_protect,
++        "vm_map" | "vm_map_64" | "mach_vm_map" | "_kernelrpc_mach_vm_map_trap" => vm::mach_vm_map,
+         "vm_remap" | "mach_vm_remap" => vm::mach_vm_remap,
+         "mach_make_memory_entry" | "mach_make_memory_entry_64" => entry::mach_make_memory_entry_64,
+         "vm_copy" | "mach_vm_copy" => vm::vm_copy,
+ 
+         "mach_msg" => msg::mach_msg,
++        "mach_msg_send" => msg::mach_msg_send,
++        "mach_msg_receive" => msg::mach_msg_receive,
+         "mach_msg_overwrite" => msg::mach_msg_overwrite,
+         "mach_msg_destroy" => msg::mach_msg_destroy,
+         "mig_get_reply_port" => msg::mig_get_reply_port,
+@@ -253,6 +262,10 @@ fn vm_page_shift() -> u64 {
+     &raw const info::VM_PAGE_SHIFT as usize as u64
+ }
+ 
++pub extern "C" fn task_self_trap() -> u32 {
++    task::TASK_SELF_PORT
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/darwin/src/mach/msg.rs b/crates/darwin/src/mach/msg.rs
+index 353bd7c..9feaab6 100644
+--- a/crates/darwin/src/mach/msg.rs
++++ b/crates/darwin/src/mach/msg.rs
+@@ -693,6 +693,25 @@ unsafe fn write_header(msg: *mut u8, bits: u32, size: u32, remote: Name, local:
+     }
+ }
+ 
++/// `mach_msg_return_t mach_msg_send(mach_msg_header_t *)`
++pub unsafe extern "C" fn mach_msg_send(msg: *mut c_void) -> i32 {
++    if msg.is_null() {
++        return MACH_SEND_INVALID_DATA;
++    }
++    let send_size = unsafe { *(msg as *const u32).add(1) };
++    unsafe { mach_msg(msg, SEND_MSG, send_size, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL) }
++}
++
++/// `mach_msg_return_t mach_msg_receive(mach_msg_header_t *)`
++pub unsafe extern "C" fn mach_msg_receive(msg: *mut c_void) -> i32 {
++    if msg.is_null() {
++        return MACH_SEND_INVALID_DATA;
++    }
++    let rcv_size = unsafe { *(msg as *const u32).add(1) };
++    let rcv_name = unsafe { *(msg as *const u32).add(3) };
++    unsafe { mach_msg(msg, RCV_MSG, 0, rcv_size, rcv_name, 0, MACH_PORT_NULL) }
++}
++
+ /// `mach_msg_return_t mach_msg(mach_msg_header_t *msg, mach_msg_option_t option,
+ /// mach_msg_size_t send_size, mach_msg_size_t rcv_size, mach_port_name_t
+ /// rcv_name, mach_msg_timeout_t timeout, mach_port_name_t notify)`
+diff --git a/crates/darwin/src/mach/space.rs b/crates/darwin/src/mach/space.rs
+index 97bf519..8d6c200 100644
+--- a/crates/darwin/src/mach/space.rs
++++ b/crates/darwin/src/mach/space.rs
+@@ -510,6 +510,69 @@ pub unsafe extern "C" fn mach_port_allocate(task: Name, right: u32, out: *mut Na
+     KERN_SUCCESS
+ }
+ 
++/// `kern_return_t mach_port_construct(ipc_space_t, mach_port_options_ptr_t, mach_port_context_t, mach_port_name_t *)`
++pub unsafe extern "C" fn mach_port_construct(
++    task: Name,
++    _options: *mut std::ffi::c_void,
++    _context: u64,
++    out: *mut Name,
++) -> i32 {
++    unsafe { mach_port_allocate(task, RIGHT_RECEIVE, out) }
++}
++
++/// `kern_return_t mach_port_destruct(ipc_space_t, mach_port_name_t, mach_port_delta_t, mach_port_context_t)`
++pub extern "C" fn mach_port_destruct(
++    task: Name,
++    name: Name,
++    _srdelta: i32,
++    _guard: u64,
++) -> i32 {
++    if task != TASK_SELF {
++        return KERN_INVALID_TASK;
++    }
++    destroy(name)
++}
++
++/// `kern_return_t mach_port_extract_member(ipc_space_t, mach_port_name_t, mach_port_name_t pset)`
++pub extern "C" fn mach_port_extract_member(task: Name, name: Name, pset: Name) -> i32 {
++    if task != TASK_SELF {
++        return KERN_INVALID_TASK;
++    }
++    with(|space| match space.names.get_mut(&pset) {
++        Some(Right::Set(members)) => {
++            if let Some(pos) = members.iter().position(|m| *m == name) {
++                members.remove(pos);
++                KERN_SUCCESS
++            } else {
++                KERN_NOT_IN_SET
++            }
++        }
++        Some(_) => KERN_INVALID_RIGHT,
++        None => KERN_INVALID_NAME,
++    })
++}
++
++/// `kern_return_t mach_port_peek(...)`
++pub unsafe extern "C" fn mach_port_peek(
++    task: Name,
++    name: Name,
++    _trailer_type: u32,
++    _request_seqnop: *mut u32,
++    _msg_sizep: *mut u32,
++    _msg_idp: *mut i32,
++    _trailer_infop: *mut u8,
++    _trailer_sizep: *mut u32,
++) -> i32 {
++    if task != TASK_SELF {
++        return KERN_INVALID_TASK;
++    }
++    match receiver(name) {
++        Some(port) if port.ready() => KERN_SUCCESS,
++        Some(_) => KERN_FAILURE,
++        None => KERN_INVALID_NAME,
++    }
++}
++
+ /// `kern_return_t mach_port_deallocate(ipc_space_t, mach_port_name_t)`
+ pub extern "C" fn mach_port_deallocate(task: Name, name: Name) -> i32 {
+     if task != TASK_SELF {
+diff --git a/crates/darwin/src/mach/task.rs b/crates/darwin/src/mach/task.rs
+index 8c9745c..66fff89 100644
+--- a/crates/darwin/src/mach/task.rs
++++ b/crates/darwin/src/mach/task.rs
+@@ -146,6 +146,29 @@ unsafe fn answer_registrations(
+         .take(capacity)
+         .collect();
+ 
++    if matching.is_empty() && capacity >= 1 && mask != 0 {
++        // XNU's `task_get_exception_ports` always returns at least one entry
++        // (with `MACH_PORT_NULL`) for a non-zero mask when no custom handler is
++        // installed; callers like Crashpad/Parfait index `ports[count - 1]`
++        // unconditionally on `KERN_SUCCESS`.
++        unsafe {
++            if !masks.is_null() {
++                masks.write(mask);
++            }
++            if !ports.is_null() {
++                ports.write(MACH_PORT_NULL);
++            }
++            if !behaviors.is_null() {
++                behaviors.write(0);
++            }
++            if !flavors.is_null() {
++                flavors.write(0);
++            }
++            count.write(1);
++        }
++        return KERN_SUCCESS;
++    }
++
+     for (i, entry) in matching.iter().enumerate() {
+         // SAFETY: `i` is below `capacity`, which the caller declared each array
+         // holds; a null array is skipped.
+diff --git a/crates/darwin/src/mach/tasks.rs b/crates/darwin/src/mach/tasks.rs
+index 8b30b91..7814024 100644
+--- a/crates/darwin/src/mach/tasks.rs
++++ b/crates/darwin/src/mach/tasks.rs
+@@ -437,6 +437,20 @@ pub extern "C" fn task_policy_get(
+     KERN_INVALID_ARGUMENT
+ }
+ 
++pub extern "C" fn task_policy_set(
++    _task: Name,
++    _flavor: u32,
++    _info: *mut c_void,
++    _count: u32,
++) -> i32 {
++    KERN_SUCCESS
++}
++
++pub extern "C" fn thread_switch(_new_thread: Name, _option: i32, _time: u32) -> i32 {
++    std::thread::yield_now();
++    KERN_SUCCESS
++}
++
+ /// `kern_return_t task_suspend(task_t)`
+ ///
+ /// The task's threads park where they are, and it answers for its memory
+diff --git a/crates/darwin/src/net/resolve.rs b/crates/darwin/src/net/resolve.rs
+index 2afb73c..b6847ee 100644
+--- a/crates/darwin/src/net/resolve.rs
++++ b/crates/darwin/src/net/resolve.rs
+@@ -481,6 +481,153 @@ unsafe extern "C" fn gethostbyaddr(addr: *const c_void, len: u32, af: i32) -> *m
+     unsafe { in_darwins_shape(host_gethostbyaddr(addr, len, af)) }
+ }
+ 
++/// `int res_9_ninit(res_state statp)`
++unsafe extern "C" fn res_9_ninit(_statp: *mut c_void) -> i32 {
++    0
++}
++
++/// `void res_9_ndestroy(res_state statp)` / `res_9_nclose`
++unsafe extern "C" fn res_9_ndestroy(_statp: *mut c_void) {}
++
++/// `int res_9_getservers(res_state statp, union res_sockaddr_union *set, int cnt)`
++/// Each `res_sockaddr_union` is 128 bytes on Darwin (`char pad[128]`).
++unsafe extern "C" fn res_9_getservers(_statp: *mut c_void, set: *mut c_void, cnt: i32) -> i32 {
++    if set.is_null() || cnt <= 0 {
++        return 0;
++    }
++    let content = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
++    let mut written = 0i32;
++    let base = set as *mut u8;
++    for line in content.lines() {
++        if written >= cnt {
++            break;
++        }
++        let line = line.trim();
++        let Some(rest) = line.strip_prefix("nameserver") else {
++            continue;
++        };
++        let ip_str = rest.trim().split_whitespace().next().unwrap_or("");
++        if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
++            let slot = unsafe { base.add((written as usize) * 128) };
++            unsafe {
++                std::ptr::write_bytes(slot, 0, 128);
++                // Darwin struct sockaddr_in: sin_len (16), sin_family (AF_INET=2), sin_port (53 BE), sin_addr
++                *slot.add(0) = 16;
++                *slot.add(1) = 2;
++                let port = 53u16.to_be_bytes();
++                *slot.add(2) = port[0];
++                *slot.add(3) = port[1];
++                let octets = ip.octets();
++                std::ptr::copy_nonoverlapping(octets.as_ptr(), slot.add(4), 4);
++            }
++            written += 1;
++        }
++    }
++    written
++}
++
++/// `dns_config_t *dns_configuration_copy(void)`
++/// Returning NULL tells Apple's `libresolv` to fall back to `/etc/resolv.conf`.
++unsafe extern "C" fn dns_configuration_copy() -> *mut c_void {
++    core::ptr::null_mut()
++}
++
++/// `void dns_configuration_free(dns_config_t *)`
++unsafe extern "C" fn dns_configuration_free(_config: *mut c_void) {}
++
++/// `const char *dns_configuration_notify_key(void)`
++unsafe extern "C" fn dns_configuration_notify_key() -> *const c_char {
++    c"com.apple.system.config.network_change".as_ptr()
++}
++
++/// Darwin `<notify.h>` stubs (`NOTIFY_STATUS_OK = 0`, `NOTIFY_STATUS_FAILED = 1000000`).
++static NEXT_NOTIFY_TOKEN: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
++
++fn notify_pipes() -> &'static std::sync::Mutex<std::collections::HashMap<i32, i32>> {
++    static PIPES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<i32, i32>>> =
++        std::sync::OnceLock::new();
++    PIPES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
++}
++
++unsafe extern "C" fn notify_register_check(_name: *const c_char, out_token: *mut i32) -> u32 {
++    if !out_token.is_null() {
++        unsafe { *out_token = NEXT_NOTIFY_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) };
++    }
++    0
++}
++
++unsafe extern "C" fn notify_register_file_descriptor(
++    _name: *const c_char,
++    notify_fd: *mut i32,
++    flags: i32,
++    out_token: *mut i32,
++) -> u32 {
++    let token = NEXT_NOTIFY_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++    // If NOTIFY_REUSE (1) is not set, create a pipe and keep the write end open
++    // until `notify_cancel` so the read end does not immediately report EOF.
++    if !notify_fd.is_null() && (flags & 1) == 0 {
++        let mut fds = [0i32; 2];
++        if unsafe { libc::pipe(fds.as_mut_ptr()) } == 0 {
++            notify_pipes()
++                .lock()
++                .unwrap_or_else(|e| e.into_inner())
++                .insert(token, fds[1]);
++            unsafe { *notify_fd = fds[0] };
++        } else {
++            return 1_000_000;
++        }
++    }
++    if !out_token.is_null() {
++        unsafe { *out_token = token };
++    }
++    0
++}
++
++unsafe extern "C" fn notify_register_dispatch(
++    _name: *const c_char,
++    out_token: *mut i32,
++    _queue: u64,
++    _handler: u64,
++) -> u32 {
++    if !out_token.is_null() {
++        unsafe { *out_token = NEXT_NOTIFY_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) };
++    }
++    0
++}
++
++unsafe extern "C" fn notify_check(_token: i32, check: *mut i32) -> u32 {
++    if !check.is_null() {
++        unsafe { *check = 0 };
++    }
++    0
++}
++
++unsafe extern "C" fn notify_get_state(_token: i32, state64: *mut u64) -> u32 {
++    if !state64.is_null() {
++        unsafe { *state64 = 0 };
++    }
++    0
++}
++
++unsafe extern "C" fn notify_set_state(_token: i32, _state64: u64) -> u32 {
++    0
++}
++
++unsafe extern "C" fn notify_cancel(token: i32) -> u32 {
++    if let Some(wfd) = notify_pipes()
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .remove(&token)
++    {
++        let _ = unsafe { libc::close(wfd) };
++    }
++    0
++}
++
++unsafe extern "C" fn notify_post(_name: *const c_char) -> u32 {
++    0
++}
++
+ exports::exports! {
+     functions {
+         "getaddrinfo" => getaddrinfo,
+@@ -490,6 +637,21 @@ exports::exports! {
+         "gethostbyname" => gethostbyname,
+         "gethostbyname2" => gethostbyname2,
+         "gethostbyaddr" => gethostbyaddr,
++        "res_9_ninit" => res_9_ninit,
++        "res_9_ndestroy" => res_9_ndestroy,
++        "res_9_nclose" => res_9_ndestroy,
++        "res_9_getservers" => res_9_getservers,
++        "dns_configuration_copy" => dns_configuration_copy,
++        "dns_configuration_free" => dns_configuration_free,
++        "dns_configuration_notify_key" => dns_configuration_notify_key,
++        "notify_register_check" => notify_register_check,
++        "notify_register_file_descriptor" => notify_register_file_descriptor,
++        "notify_register_dispatch" => notify_register_dispatch,
++        "notify_check" => notify_check,
++        "notify_get_state" => notify_get_state,
++        "notify_set_state" => notify_set_state,
++        "notify_cancel" => notify_cancel,
++        "notify_post" => notify_post,
+     }
+     constants {
+         "h_errno" => H_ERRNO.as_ptr() as usize as u64,
+diff --git a/crates/darwin/src/oslog.rs b/crates/darwin/src/oslog.rs
+index 187134e..5ee70aa 100644
+--- a/crates/darwin/src/oslog.rs
++++ b/crates/darwin/src/oslog.rs
+@@ -391,6 +391,14 @@ unsafe extern "C" fn os_activity_scope_enter(_activity: *mut c_void, state: *mut
+ 
+ unsafe extern "C" fn os_activity_scope_leave(_state: *mut u64) {}
+ 
++unsafe extern "C" fn _os_log_internal(
++    _dso: *const c_void,
++    _log: *const c_void,
++    _kind: u8,
++    _message: *const c_char,
++) {
++}
++
+ exports::exports! {
+     functions {
+         "os_log_create" => os_log_create,
+@@ -398,6 +406,7 @@ exports::exports! {
+         // `_os_log_impl` and `_os_activity_create` begin with an underscore of
+         // their own, in addition to Mach-O's.
+         "_os_log_impl" => _os_log_impl,
++        "_os_log_internal" => _os_log_internal,
+         // The level-specific entry points take the same arguments, the level
+         // included, and differ only in what Apple records alongside.
+         "_os_log_debug_impl" => _os_log_impl,
