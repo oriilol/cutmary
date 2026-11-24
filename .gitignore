@@ -1,0 +1,14 @@
+# Proprietary CapCut assets and build artifacts (never commit)
+*.dmg
+*.AppImage
+*.app/
+extracted/
+build/
+dist/
+rosemary-src/
+tools/
+*.log
+*.core
+__pycache__/
+*.pyc
+.DS_Store
