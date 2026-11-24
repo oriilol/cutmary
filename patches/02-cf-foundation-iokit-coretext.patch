@@ -1,0 +1,1147 @@
+diff --git a/crates/corefoundation/src/api.rs b/crates/corefoundation/src/api.rs
+index 7d2c5e9..01010b6 100644
+--- a/crates/corefoundation/src/api.rs
++++ b/crates/corefoundation/src/api.rs
+@@ -2293,6 +2293,197 @@ pub unsafe extern "C" fn CFStringConvertIANACharSetNameToEncoding(name: CFTypeRe
+     encoding_for_charset_name(&name).unwrap_or(INVALID_ENCODING)
+ }
+ 
++/// `NSStringEncoding CFStringConvertEncodingToNSStringEncoding(CFStringEncoding)`.
++pub unsafe extern "C" fn CFStringConvertEncodingToNSStringEncoding(encoding: u32) -> usize {
++    match encoding {
++        0x0600 => 1,          // kCFStringEncodingASCII -> NSASCIIStringEncoding
++        0x0B01 => 2,          // kCFStringEncodingNextStepLatin -> NSNEXTSTEPStringEncoding
++        0x0920 => 3,          // kCFStringEncodingEUC_JP -> NSJapaneseEUCStringEncoding
++        0x0800_0100 => 4,     // kCFStringEncodingUTF8 -> NSUTF8StringEncoding
++        0x0201 => 5,          // kCFStringEncodingISOLatin1 -> NSISOLatin1StringEncoding
++        0x0006 => 6,          // kCFStringEncodingMacSymbol -> NSSymbolStringEncoding
++        0x0BFF => 7,          // kCFStringEncodingNonLossyASCII -> NSNonLossyASCIIStringEncoding
++        0x0A01 => 8,          // kCFStringEncodingShiftJIS -> NSShiftJISStringEncoding
++        0x0202 => 9,          // kCFStringEncodingISOLatin2 -> NSISOLatin2StringEncoding
++        0x0100 => 10,         // kCFStringEncodingUTF16 -> NSUnicodeStringEncoding
++        0x0502 => 11,         // kCFStringEncodingWindowsCyrillic -> NSWindowsCP1251StringEncoding
++        0x0500 => 12,         // kCFStringEncodingWindowsLatin1 -> NSWindowsCP1252StringEncoding
++        0x0503 => 13,         // kCFStringEncodingWindowsGreek -> NSWindowsCP1253StringEncoding
++        0x0504 => 14,         // kCFStringEncodingWindowsLatin5 -> NSWindowsCP1254StringEncoding
++        0x0501 => 15,         // kCFStringEncodingWindowsLatin2 -> NSWindowsCP1250StringEncoding
++        0x0820 => 21,         // kCFStringEncodingISO_2022_JP -> NSISO2022JPStringEncoding
++        0x0000 => 30,         // kCFStringEncodingMacRoman -> NSMacOSRomanStringEncoding
++        0xFFFF_FFFF => 0,     // kCFStringEncodingInvalidId -> 0
++        other => 0x8000_0000 | (other as usize),
++    }
++}
++
++/// `CFStringEncoding CFStringConvertNSStringEncodingToEncoding(NSStringEncoding)`.
++pub unsafe extern "C" fn CFStringConvertNSStringEncodingToEncoding(encoding: usize) -> u32 {
++    match encoding {
++        1 => 0x0600,
++        2 => 0x0B01,
++        3 => 0x0920,
++        4 => 0x0800_0100,
++        5 => 0x0201,
++        6 => 0x0006,
++        7 => 0x0BFF,
++        8 => 0x0A01,
++        9 => 0x0202,
++        10 => 0x0100,
++        11 => 0x0502,
++        12 => 0x0500,
++        13 => 0x0503,
++        14 => 0x0504,
++        15 => 0x0501,
++        21 => 0x0820,
++        30 => 0x0000,
++        other if (other & 0x8000_0000) != 0 => (other & !0x8000_0000) as u32,
++        _ => INVALID_ENCODING,
++    }
++}
++
++/// `CFStringRef __CFStringMakeConstantString(const char *cStr)`.
++pub unsafe extern "C" fn __CFStringMakeConstantString(cstr: *const c_char) -> CFTypeRef {
++    if cstr.is_null() {
++        return string::from_bytes(&[], false);
++    }
++    let bytes = unsafe { std::ffi::CStr::from_ptr(cstr) }.to_bytes();
++    string::from_bytes(bytes, false)
++}
++
++/// `CFMutableArrayRef CFArrayCreateMutableCopy(CFAllocatorRef, CFIndex, CFArrayRef)`.
++pub unsafe extern "C" fn CFArrayCreateMutableCopy(
++    _allocator: CFAllocatorRef,
++    _capacity: CFIndex,
++    array: CFTypeRef,
++) -> CFTypeRef {
++    let Some(a) = (unsafe { collections::array(array) }) else {
++        return std::ptr::null();
++    };
++    let values = a.values.clone();
++    collections::new_array(&values, a.policy, true)
++}
++
++/// `void CFArrayReplaceValues(CFMutableArrayRef, CFRange, const void **, CFIndex)`.
++pub unsafe extern "C" fn CFArrayReplaceValues(
++    array: CFTypeRef,
++    range_location: CFIndex,
++    range_length: CFIndex,
++    new_values: *const CFTypeRef,
++    new_count: CFIndex,
++) {
++    let Some(a) = (unsafe { collections::array(array) }) else {
++        return;
++    };
++    if !a.mutable || range_location < 0 || range_length < 0 || new_count < 0 {
++        return;
++    }
++    let start = (range_location as usize).min(a.values.len());
++    let end = start.saturating_add(range_length as usize).min(a.values.len());
++    let mut retained = Vec::with_capacity(new_count as usize);
++    if new_count > 0 && !new_values.is_null() {
++        let slice = unsafe { std::slice::from_raw_parts(new_values, new_count as usize) };
++        for &v in slice {
++            retained.push(a.policy.retain(v));
++        }
++    }
++    let removed: Vec<CFTypeRef> = a.values.splice(start..end, retained).collect();
++    for v in removed {
++        a.policy.release(v);
++    }
++}
++
++/// `void CFDictionaryRemoveValue(CFMutableDictionaryRef, const void *key)`.
++pub unsafe extern "C" fn CFDictionaryRemoveValue(dictionary: CFTypeRef, key: CFTypeRef) {
++    let Some(d) = (unsafe { collections::dictionary(dictionary) }) else {
++        return;
++    };
++    if !d.mutable {
++        return;
++    }
++    d.discard(key);
++}
++
++/// `void CFDictionaryReplaceValue(CFMutableDictionaryRef, const void *key, const void *value)`.
++pub unsafe extern "C" fn CFDictionaryReplaceValue(
++    dictionary: CFTypeRef,
++    key: CFTypeRef,
++    value: CFTypeRef,
++) {
++    let Some(d) = (unsafe { collections::dictionary(dictionary) }) else {
++        return;
++    };
++    if !d.mutable || d.get(key).is_none() {
++        return;
++    }
++    d.set(key, value);
++}
++
++/// `void CFRunLoopTimerSetTolerance(CFRunLoopTimerRef, CFTimeInterval)`.
++pub unsafe extern "C" fn CFRunLoopTimerSetTolerance(_timer: CFTypeRef, _tolerance: f64) {}
++
++static LOCAL_NOTIFICATION_CENTER: std::sync::atomic::AtomicUsize =
++    std::sync::atomic::AtomicUsize::new(1);
++static DISTRIBUTED_NOTIFICATION_CENTER: std::sync::atomic::AtomicUsize =
++    std::sync::atomic::AtomicUsize::new(2);
++static DARWIN_NOTIFICATION_CENTER: std::sync::atomic::AtomicUsize =
++    std::sync::atomic::AtomicUsize::new(3);
++
++pub unsafe extern "C" fn CFNotificationCenterGetLocalCenter() -> CFTypeRef {
++    &LOCAL_NOTIFICATION_CENTER as *const _ as CFTypeRef
++}
++
++pub unsafe extern "C" fn CFNotificationCenterGetDistributedCenter() -> CFTypeRef {
++    &DISTRIBUTED_NOTIFICATION_CENTER as *const _ as CFTypeRef
++}
++
++pub unsafe extern "C" fn CFNotificationCenterGetDarwinNotifyCenter() -> CFTypeRef {
++    &DARWIN_NOTIFICATION_CENTER as *const _ as CFTypeRef
++}
++
++pub unsafe extern "C" fn CFNotificationCenterAddObserver(
++    _center: CFTypeRef,
++    _observer: *const c_void,
++    _callback: *const c_void,
++    _name: CFTypeRef,
++    _object: *const c_void,
++    _suspension_behavior: CFIndex,
++) {
++}
++
++pub unsafe extern "C" fn CFNotificationCenterRemoveObserver(
++    _center: CFTypeRef,
++    _observer: *const c_void,
++    _name: CFTypeRef,
++    _object: *const c_void,
++) {
++}
++
++pub unsafe extern "C" fn CFNotificationCenterRemoveEveryObserver(
++    _center: CFTypeRef,
++    _observer: *const c_void,
++) {
++}
++
++pub unsafe extern "C" fn CFNotificationCenterPostNotification(
++    _center: CFTypeRef,
++    _name: CFTypeRef,
++    _object: *const c_void,
++    _user_info: CFTypeRef,
++    _deliver_immediately: Boolean,
++) {
++}
++
++pub unsafe extern "C" fn CFNotificationCenterPostNotificationWithOptions(
++    _center: CFTypeRef,
++    _name: CFTypeRef,
++    _object: *const c_void,
++    _user_info: CFTypeRef,
++    _options: usize,
++) {
++}
++
+ /// `Boolean CFArrayContainsValue(CFArrayRef, CFRange, const void *)`, with the
+ /// range flattened.
+ ///
+diff --git a/crates/corefoundation/src/diskarbitration.rs b/crates/corefoundation/src/diskarbitration.rs
+index 779f97a..52cc9c1 100644
+--- a/crates/corefoundation/src/diskarbitration.rs
++++ b/crates/corefoundation/src/diskarbitration.rs
+@@ -51,11 +51,60 @@ pub unsafe extern "C" fn disk_copy_description(disk: CFTypeRef) -> CFTypeRef {
+     dictionary
+ }
+ 
++pub unsafe extern "C" fn disk_get_bsd_name(_disk: CFTypeRef) -> *const std::ffi::c_char {
++    std::ptr::null()
++}
++
++pub unsafe extern "C" fn register_disk_appeared_callback(
++    _session: CFTypeRef,
++    _match_dict: CFTypeRef,
++    _callback: *const std::ffi::c_void,
++    _context: *mut std::ffi::c_void,
++) {
++}
++
++pub unsafe extern "C" fn register_disk_disappeared_callback(
++    _session: CFTypeRef,
++    _match_dict: CFTypeRef,
++    _callback: *const std::ffi::c_void,
++    _context: *mut std::ffi::c_void,
++) {
++}
++
++pub unsafe extern "C" fn register_disk_description_changed_callback(
++    _session: CFTypeRef,
++    _match_dict: CFTypeRef,
++    _watch: CFTypeRef,
++    _callback: *const std::ffi::c_void,
++    _context: *mut std::ffi::c_void,
++) {
++}
++
++pub unsafe extern "C" fn session_schedule_with_run_loop(
++    _session: CFTypeRef,
++    _run_loop: CFTypeRef,
++    _mode: CFTypeRef,
++) {
++}
++
++pub unsafe extern "C" fn session_unschedule_from_run_loop(
++    _session: CFTypeRef,
++    _run_loop: CFTypeRef,
++    _mode: CFTypeRef,
++) {
++}
++
+ exports::exports! {
+     functions {
+         "DASessionCreate" => session_create,
+         "DADiskCreateFromVolumePath" => disk_create_from_volume_path,
+         "DADiskCopyDescription" => disk_copy_description,
++        "DADiskGetBSDName" => disk_get_bsd_name,
++        "DARegisterDiskAppearedCallback" => register_disk_appeared_callback,
++        "DARegisterDiskDisappearedCallback" => register_disk_disappeared_callback,
++        "DARegisterDiskDescriptionChangedCallback" => register_disk_description_changed_callback,
++        "DASessionScheduleWithRunLoop" => session_schedule_with_run_loop,
++        "DASessionUnscheduleFromRunLoop" => session_unschedule_from_run_loop,
+     }
+ }
+ 
+diff --git a/crates/corefoundation/src/lib.rs b/crates/corefoundation/src/lib.rs
+index 5613a60..c2e6b8b 100644
+--- a/crates/corefoundation/src/lib.rs
++++ b/crates/corefoundation/src/lib.rs
+@@ -211,6 +211,22 @@ exports::exports! {
+         "CFStringGetSystemEncoding" => api::CFStringGetSystemEncoding,
+         "CFStringConvertWindowsCodepageToEncoding" => api::CFStringConvertWindowsCodepageToEncoding,
+         "CFStringConvertIANACharSetNameToEncoding" => api::CFStringConvertIANACharSetNameToEncoding,
++        "CFStringConvertEncodingToNSStringEncoding" => api::CFStringConvertEncodingToNSStringEncoding,
++        "CFStringConvertNSStringEncodingToEncoding" => api::CFStringConvertNSStringEncodingToEncoding,
++        "__CFStringMakeConstantString" => api::__CFStringMakeConstantString,
++        "CFArrayCreateMutableCopy" => api::CFArrayCreateMutableCopy,
++        "CFArrayReplaceValues" => api::CFArrayReplaceValues,
++        "CFDictionaryRemoveValue" => api::CFDictionaryRemoveValue,
++        "CFDictionaryReplaceValue" => api::CFDictionaryReplaceValue,
++        "CFRunLoopTimerSetTolerance" => api::CFRunLoopTimerSetTolerance,
++        "CFNotificationCenterGetLocalCenter" => api::CFNotificationCenterGetLocalCenter,
++        "CFNotificationCenterGetDistributedCenter" => api::CFNotificationCenterGetDistributedCenter,
++        "CFNotificationCenterGetDarwinNotifyCenter" => api::CFNotificationCenterGetDarwinNotifyCenter,
++        "CFNotificationCenterAddObserver" => api::CFNotificationCenterAddObserver,
++        "CFNotificationCenterRemoveObserver" => api::CFNotificationCenterRemoveObserver,
++        "CFNotificationCenterRemoveEveryObserver" => api::CFNotificationCenterRemoveEveryObserver,
++        "CFNotificationCenterPostNotification" => api::CFNotificationCenterPostNotification,
++        "CFNotificationCenterPostNotificationWithOptions" => api::CFNotificationCenterPostNotificationWithOptions,
+         "CFArrayContainsValue" => api::CFArrayContainsValue,
+         "CFArrayAppendArray" => api::CFArrayAppendArray,
+         "CFRunLoopRemoveSource" => api::CFRunLoopRemoveSource,
+diff --git a/crates/corefoundation/src/sysconfig.rs b/crates/corefoundation/src/sysconfig.rs
+index 295160a..cc95229 100644
+--- a/crates/corefoundation/src/sysconfig.rs
++++ b/crates/corefoundation/src/sysconfig.rs
+@@ -832,9 +832,18 @@ const KEY_STRINGS: &[(&str, &str)] = &[
+         "_kSCPropNetProxiesProxyAutoConfigURLString",
+         "ProxyAutoConfigURLString",
+     ),
++    (
++        "_kSCPropNetProxiesProxyAutoDiscoveryEnable",
++        "ProxyAutoDiscoveryEnable",
++    ),
+     ("_kSCPropNetProxiesSOCKSEnable", "SOCKSEnable"),
+     ("_kSCPropNetProxiesSOCKSPort", "SOCKSPort"),
+     ("_kSCPropNetProxiesSOCKSProxy", "SOCKSProxy"),
++    ("_kCFProxyTypeNone", "kCFProxyTypeNone"),
++    ("_kCFProxyTypeHTTP", "kCFProxyTypeHTTP"),
++    ("_kCFProxyTypeHTTPS", "kCFProxyTypeHTTPS"),
++    ("_kCFProxyTypeSOCKS", "kCFProxyTypeSOCKS"),
++    ("_kCFProxyTypeFTP", "kCFProxyTypeFTP"),
+ ];
+ 
+ /// The `kSC*` globals, as `(Mach-O name, address)`.
+@@ -854,8 +863,28 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+         .collect()
+ }
+ 
++pub unsafe extern "C" fn SCError() -> i32 {
++    0
++}
++
++pub unsafe extern "C" fn SCErrorString(_status: i32) -> *const std::ffi::c_char {
++    c"Success!".as_ptr()
++}
++
++pub unsafe extern "C" fn CFNetworkExecuteProxyAutoConfigurationURL(
++    _proxy_auto_config_url: CFTypeRef,
++    _target_url: CFTypeRef,
++    _cb: *const std::ffi::c_void,
++    _client_context: *const std::ffi::c_void,
++) -> CFTypeRef {
++    std::ptr::null()
++}
++
+ exports::exports! {
+     functions {
++        "SCError" => SCError,
++        "SCErrorString" => SCErrorString,
++        "CFNetworkExecuteProxyAutoConfigurationURL" => CFNetworkExecuteProxyAutoConfigurationURL,
+         "SCNetworkReachabilityCreateWithAddress" => SCNetworkReachabilityCreateWithAddress,
+         "SCNetworkReachabilityCreateWithName" => SCNetworkReachabilityCreateWithName,
+         "SCNetworkReachabilityCreateWithAddressPair" => SCNetworkReachabilityCreateWithAddressPair,
+diff --git a/crates/coretext/src/lib.rs b/crates/coretext/src/lib.rs
+index 6877de8..2473c74 100644
+--- a/crates/coretext/src/lib.rs
++++ b/crates/coretext/src/lib.rs
+@@ -1112,6 +1112,33 @@ pub unsafe extern "C" fn CTFontManagerCreateFontDescriptorFromData(data: CFTypeR
+     face_attributes(first, 0.0)
+ }
+ 
++pub unsafe extern "C" fn CTFontManagerRegisterFontsForURL(
++    font_url: CFTypeRef,
++    _scope: u32,
++    error: *mut CFTypeRef,
++) -> u8 {
++    if !error.is_null() {
++        unsafe { error.write(std::ptr::null()) };
++    }
++    let Some(path) = (unsafe { corefoundation::url::as_url(font_url) }).and_then(|u| u.file_path())
++    else {
++        return 0;
++    };
++    let path = prefix::ns::host_path(&path);
++    !fonts::register_file(&path.to_string_lossy()).is_empty() as u8
++}
++
++pub unsafe extern "C" fn CTFontCopyLocalizedName(
++    font: CFTypeRef,
++    name_key: CFTypeRef,
++    actual_language: *mut CFTypeRef,
++) -> CFTypeRef {
++    if !actual_language.is_null() {
++        unsafe { actual_language.write(string("en")) };
++    }
++    unsafe { CTFontCopyName(font, name_key) }
++}
++
+ exports::exports! {
+     functions {
+         "CTFontCreateUIFontForLanguage" => CTFontCreateUIFontForLanguage,
+@@ -1119,6 +1146,7 @@ exports::exports! {
+         "CTFontCopyFontDescriptor" => CTFontCopyFontDescriptor,
+         "CTFontCopyGraphicsFont" => CTFontCopyGraphicsFont,
+         "CTFontCopyName" => CTFontCopyName,
++        "CTFontCopyLocalizedName" => CTFontCopyLocalizedName,
+         "CTFontCopyFamilyName" => CTFontCopyFamilyName,
+         "CTFontCopyPostScriptName" => CTFontCopyPostScriptName,
+         "CTFontGetSymbolicTraits" => CTFontGetSymbolicTraits,
+@@ -1148,6 +1176,7 @@ exports::exports! {
+         "CTFontManagerCopyAvailableFontFamilyNames" => CTFontManagerCopyAvailableFontFamilyNames,
+         "CTFontManagerCreateFontDescriptorsFromURL" => CTFontManagerCreateFontDescriptorsFromURL,
+         "CTFontManagerCreateFontDescriptorFromData" => CTFontManagerCreateFontDescriptorFromData,
++        "CTFontManagerRegisterFontsForURL" => CTFontManagerRegisterFontsForURL,
+         "CTFontDescriptorCreateCopyWithAttributes" => CTFontDescriptorCreateCopyWithAttributes,
+         "CTFontDescriptorCreateWithNameAndSize" => CTFontDescriptorCreateWithNameAndSize,
+         "CTFontDescriptorCreateMatchingFontDescriptors" => CTFontDescriptorCreateMatchingFontDescriptors,
+diff --git a/crates/foundation/src/bundle.rs b/crates/foundation/src/bundle.rs
+index ef770d5..24e38ba 100644
+--- a/crates/foundation/src/bundle.rs
++++ b/crates/foundation/src/bundle.rs
+@@ -475,6 +475,28 @@ impl Layout {
+             .find(|p| p.exists())
+     }
+ 
++    /// `-pathForResource:ofType:inDirectory:forLocalization:`.
++    pub fn resource_in_localization(
++        &self,
++        name: &str,
++        extension: &str,
++        directory: &str,
++        localization: &str,
++    ) -> Option<PathBuf> {
++        let leaf = match extension.is_empty() {
++            true => name.to_string(),
++            false => format!("{name}.{extension}"),
++        };
++        if !localization.is_empty() {
++            let loc_dir = self.resources.join(format!("{localization}.lproj"));
++            let candidate = loc_dir.join(directory).join(&leaf);
++            if candidate.exists() {
++                return Some(candidate);
++            }
++        }
++        self.resource_in(name, extension, directory)
++    }
++
+     /// The main nib, if the `Info.plist` names one and it is there.
+     ///
+     /// `.nib` and `.storyboardc` are both directories in a modern bundle and a
+@@ -1953,6 +1975,106 @@ pub(crate) mod class {
+         path(unsafe { layout_of(receiver) }.and_then(|b| b.resource_in(name, kind, directory)))
+     }
+ 
++    unsafe extern "C" fn path_for_resource_in_directory_for_localization(
++        receiver: Id,
++        _sel: Sel,
++        name: Id,
++        kind: Id,
++        directory: Id,
++        localization: Id,
++    ) -> Id {
++        let (name, kind, directory, localization) = unsafe {
++            (
++                crate::string::bytes(name),
++                crate::string::bytes(kind),
++                crate::string::bytes(directory),
++                crate::string::bytes(localization),
++            )
++        };
++        let (Ok(name), Ok(kind), Ok(directory), Ok(localization)) = (
++            std::str::from_utf8(&name),
++            std::str::from_utf8(&kind),
++            std::str::from_utf8(&directory),
++            std::str::from_utf8(&localization),
++        ) else {
++            return std::ptr::null_mut();
++        };
++        path(unsafe { layout_of(receiver) }
++            .and_then(|b| b.resource_in_localization(name, kind, directory, localization)))
++    }
++
++    unsafe extern "C" fn url_for_resource_in_directory(
++        receiver: Id,
++        _sel: Sel,
++        name: Id,
++        kind: Id,
++        directory: Id,
++    ) -> Id {
++        let (name, kind, directory) = unsafe {
++            (
++                crate::string::bytes(name),
++                crate::string::bytes(kind),
++                crate::string::bytes(directory),
++            )
++        };
++        let (Ok(name), Ok(kind), Ok(directory)) = (
++            std::str::from_utf8(&name),
++            std::str::from_utf8(&kind),
++            std::str::from_utf8(&directory),
++        ) else {
++            return std::ptr::null_mut();
++        };
++        resource_file_url(
++            unsafe { layout_of(receiver) }.and_then(|b| b.resource_in(name, kind, directory)),
++        )
++    }
++
++    unsafe extern "C" fn url_for_resource_in_directory_for_localization(
++        receiver: Id,
++        _sel: Sel,
++        name: Id,
++        kind: Id,
++        directory: Id,
++        localization: Id,
++    ) -> Id {
++        let (name, kind, directory, localization) = unsafe {
++            (
++                crate::string::bytes(name),
++                crate::string::bytes(kind),
++                crate::string::bytes(directory),
++                crate::string::bytes(localization),
++            )
++        };
++        let (Ok(name), Ok(kind), Ok(directory), Ok(localization)) = (
++            std::str::from_utf8(&name),
++            std::str::from_utf8(&kind),
++            std::str::from_utf8(&directory),
++            std::str::from_utf8(&localization),
++        ) else {
++            return std::ptr::null_mut();
++        };
++        resource_file_url(unsafe { layout_of(receiver) }
++            .and_then(|b| b.resource_in_localization(name, kind, directory, localization)))
++    }
++
++    unsafe extern "C" fn paths_for_resources_of_type_for_localization(
++        receiver: Id,
++        sel: Sel,
++        kind: Id,
++        directory: Id,
++        _localization: Id,
++    ) -> Id {
++        unsafe { paths_for_resources_of_type(receiver, sel, kind, directory) }
++    }
++
++    unsafe extern "C" fn development_localization(receiver: Id, _sel: Sel) -> Id {
++        let val = unsafe { info(receiver, "CFBundleDevelopmentRegion") };
++        if !val.is_null() {
++            return val;
++        }
++        autoreleased("en")
++    }
++
+     /// `-infoDictionary`: the whole `Info.plist` as objects.
+     ///
+     /// This was refused until `crate::objectify` existed, and the reason is
+@@ -1972,6 +2094,18 @@ pub(crate) mod class {
+         std::ptr::null()
+     }
+ 
++    unsafe extern "C" fn app_store_receipt_url(_receiver: Id, _sel: Sel) -> Id {
++        std::ptr::null_mut()
++    }
++
++    unsafe extern "C" fn private_frameworks_url(receiver: Id, _sel: Sel) -> Id {
++        url(unsafe { layout_of(receiver) }.map(|b| b.frameworks.clone()))
++    }
++
++    unsafe extern "C" fn built_in_plug_ins_url(receiver: Id, _sel: Sel) -> Id {
++        url(unsafe { layout_of(receiver) }.map(|b| b.plugins.clone()))
++    }
++
+     pub(crate) fn install() {
+         let class =
+             corefoundation::base::register(c"NSBundle", None, std::mem::size_of::<Body>(), false);
+@@ -1980,6 +2114,9 @@ pub(crate) mod class {
+             "bundleURL" => bundle_url, c"@16@0:8";
+             "resourceURL" => resource_url, c"@16@0:8";
+             "executableURL" => executable_url, c"@16@0:8";
++            "appStoreReceiptURL" => app_store_receipt_url, c"@16@0:8";
++            "privateFrameworksURL" => private_frameworks_url, c"@16@0:8";
++            "builtInPlugInsURL" => built_in_plug_ins_url, c"@16@0:8";
+             "resourcePath" => resource_path, c"@16@0:8";
+             "executablePath" => executable_path, c"@16@0:8";
+             "executableArchitectures" => executable_architectures, c"@16@0:8";
+@@ -1991,7 +2128,12 @@ pub(crate) mod class {
+             "pathForResource:ofType:" => path_for_resource, c"@32@0:8@16@24";
+             "URLForResource:withExtension:" => url_for_resource, c"@32@0:8@16@24";
+             "pathForResource:ofType:inDirectory:" => path_for_resource_in_directory, c"@40@0:8@16@24@32";
++            "pathForResource:ofType:inDirectory:forLocalization:" => path_for_resource_in_directory_for_localization, c"@48@0:8@16@24@32@40";
++            "URLForResource:withExtension:subdirectory:" => url_for_resource_in_directory, c"@40@0:8@16@24@32";
++            "URLForResource:withExtension:subdirectory:localization:" => url_for_resource_in_directory_for_localization, c"@48@0:8@16@24@32@40";
+             "infoDictionary" => info_dictionary, c"@16@0:8";
++            "localizedInfoDictionary" => info_dictionary, c"@16@0:8";
++            "developmentLocalization" => development_localization, c"@16@0:8";
+             "executableName" => executable_name, c"*16@0:8";
+             "localizedStringForKey:value:table:" => localized_string_for_key, c"@40@0:8@16@24@32";
+             "preferredLocalizations" => preferred_localizations, c"@16@0:8";
+@@ -2001,7 +2143,8 @@ pub(crate) mod class {
+             "classNamed:" => class_named, c"#24@0:8@16";
+             "principalClass" => principal_class, c"#16@0:8";
+             "localizations" => localizations, c"@16@0:8";
+-            "pathsForResourcesOfType:inDirectory:" => paths_for_resources_of_type, c"@32@0:8@16@24"
++            "pathsForResourcesOfType:inDirectory:" => paths_for_resources_of_type, c"@32@0:8@16@24";
++            "pathsForResourcesOfType:inDirectory:forLocalization:" => paths_for_resources_of_type_for_localization, c"@40@0:8@16@24@32"
+         });
+         class_methods!(class, {
+             "mainBundle" => main_bundle, c"@16@0:8";
+diff --git a/crates/foundation/src/collections.rs b/crates/foundation/src/collections.rs
+index c40a60f..20d67cf 100644
+--- a/crates/foundation/src/collections.rs
++++ b/crates/foundation/src/collections.rs
+@@ -2143,6 +2143,92 @@ unsafe extern "C" fn data_init_with_base64_string(
+     }
+ }
+ 
++unsafe extern "C" fn data_init_with_base64_data(
++    receiver: Id,
++    _sel: Sel,
++    data: Id,
++    options: usize,
++) -> Id {
++    let text = unsafe { data_contents(data) }.to_vec();
++    match base64_decode(&text, options & BASE64_IGNORE_UNKNOWN_CHARACTERS != 0) {
++        Some(bytes) => replace_receiver(receiver, bytes),
++        None => {
++            objc::arc::release(receiver);
++            std::ptr::null_mut()
++        }
++    }
++}
++
++unsafe extern "C" fn data_init_with_base64_legacy(receiver: Id, sel: Sel, text: Id) -> Id {
++    unsafe { data_init_with_base64_string(receiver, sel, text, BASE64_IGNORE_UNKNOWN_CHARACTERS) }
++}
++
++fn base64_encode(input: &[u8], options: usize) -> Vec<u8> {
++    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++    let line_len = if options & (1 << 0) != 0 {
++        64
++    } else if options & (1 << 1) != 0 {
++        76
++    } else {
++        0
++    };
++    let line_end: &[u8] = if (options & (1 << 4)) != 0 && (options & (1 << 5)) != 0 {
++        b"\r\n"
++    } else if (options & (1 << 4)) != 0 {
++        b"\r"
++    } else if (options & (1 << 5)) != 0 {
++        b"\n"
++    } else {
++        b"\r\n"
++    };
++    let mut raw = Vec::with_capacity(input.len().div_ceil(3) * 4);
++    for chunk in input.chunks(3) {
++        let b0 = chunk[0] as u32;
++        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
++        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
++        let n = (b0 << 16) | (b1 << 8) | b2;
++        raw.push(TABLE[((n >> 18) & 0x3f) as usize]);
++        raw.push(TABLE[((n >> 12) & 0x3f) as usize]);
++        if chunk.len() > 1 {
++            raw.push(TABLE[((n >> 6) & 0x3f) as usize]);
++        } else {
++            raw.push(b'=');
++        }
++        if chunk.len() > 2 {
++            raw.push(TABLE[(n & 0x3f) as usize]);
++        } else {
++            raw.push(b'=');
++        }
++    }
++    if line_len == 0 || raw.len() <= line_len {
++        return raw;
++    }
++    let mut out = Vec::with_capacity(raw.len() + (raw.len() / line_len) * line_end.len());
++    for (i, chunk) in raw.chunks(line_len).enumerate() {
++        if i > 0 {
++            out.extend_from_slice(line_end);
++        }
++        out.extend_from_slice(chunk);
++    }
++    out
++}
++
++unsafe extern "C" fn data_base64_encoded_string(receiver: Id, _sel: Sel, options: usize) -> Id {
++    let input = unsafe { data_contents(receiver) };
++    let encoded = base64_encode(input, options);
++    let s = corefoundation::string::from_bytes(&encoded, false);
++    unsafe { api::CFAutorelease(s) as Id }
++}
++
++unsafe extern "C" fn data_base64_encoded_string_legacy(receiver: Id, sel: Sel) -> Id {
++    unsafe { data_base64_encoded_string(receiver, sel, 0) }
++}
++
++unsafe extern "C" fn data_base64_encoded_data(receiver: Id, _sel: Sel, options: usize) -> Id {
++    let input = unsafe { data_contents(receiver) };
++    autoreleased_data(base64_encode(input, options))
++}
++
+ unsafe extern "C" fn data_init_with_capacity(receiver: Id, _sel: Sel, capacity: usize) -> Id {
+     replace_receiver(receiver, Vec::with_capacity(capacity.min(1 << 24)))
+ }
+@@ -3107,6 +3193,11 @@ pub(crate) fn install() {
+         "init" => data_init, c"@16@0:8";
+         "initWithData:" => data_init_with_data, c"@24@0:8@16";
+         "initWithBase64EncodedString:options:" => data_init_with_base64_string, c"@32@0:8@16Q24";
++        "initWithBase64EncodedData:options:" => data_init_with_base64_data, c"@32@0:8@16Q24";
++        "initWithBase64Encoding:" => data_init_with_base64_legacy, c"@24@0:8@16";
++        "base64EncodedStringWithOptions:" => data_base64_encoded_string, c"@24@0:8Q16";
++        "base64EncodedDataWithOptions:" => data_base64_encoded_data, c"@24@0:8Q16";
++        "base64Encoding" => data_base64_encoded_string_legacy, c"@16@0:8";
+         "initWithBytes:length:" => data_init_with_bytes, c"@32@0:8r^v16Q24";
+         "initWithBytesNoCopy:length:" => data_init_no_copy, c"@32@0:8^v16Q24";
+         "initWithBytesNoCopy:length:freeWhenDone:" => data_init_no_copy_free, c"@36@0:8^v16Q24B32";
+diff --git a/crates/foundation/src/string.rs b/crates/foundation/src/string.rs
+index 2764ea1..031e12e 100644
+--- a/crates/foundation/src/string.rs
++++ b/crates/foundation/src/string.rs
+@@ -1323,13 +1323,51 @@ unsafe extern "C" fn get_characters(receiver: Id, sel: Sel, buffer: *mut u16) {
+ 
+ unsafe extern "C" fn lowercase(receiver: Id, _sel: Sel) -> Id {
+     // SAFETY: an `NSString`.
+-    let mut whole = unsafe { bytes(receiver) };
+-    whole.make_ascii_lowercase();
+-    let s = corefoundation::string::from_bytes(&whole, false);
++    let text = String::from_utf8_lossy(&unsafe { bytes(receiver) }).to_lowercase();
++    let s = corefoundation::string::from_bytes(text.as_bytes(), false);
+     // SAFETY: a fresh object.
+     unsafe { api::CFAutorelease(s) as Id }
+ }
+ 
++unsafe extern "C" fn lowercase_with_locale(receiver: Id, sel: Sel, _locale: Id) -> Id {
++    unsafe { lowercase(receiver, sel) }
++}
++
++unsafe extern "C" fn uppercase_with_locale(receiver: Id, sel: Sel, _locale: Id) -> Id {
++    unsafe { uppercase(receiver, sel) }
++}
++
++unsafe extern "C" fn capitalized(receiver: Id, _sel: Sel) -> Id {
++    // SAFETY: an `NSString`.
++    let text = String::from_utf8_lossy(&unsafe { bytes(receiver) }).into_owned();
++    let mut out = String::with_capacity(text.len());
++    let mut new_word = true;
++    for ch in text.chars() {
++        if ch.is_alphanumeric() {
++            if new_word {
++                for uc in ch.to_uppercase() {
++                    out.push(uc);
++                }
++                new_word = false;
++            } else {
++                for lc in ch.to_lowercase() {
++                    out.push(lc);
++                }
++            }
++        } else {
++            out.push(ch);
++            new_word = true;
++        }
++    }
++    let s = corefoundation::string::from_bytes(out.as_bytes(), false);
++    // SAFETY: a fresh object.
++    unsafe { api::CFAutorelease(s) as Id }
++}
++
++unsafe extern "C" fn capitalized_with_locale(receiver: Id, sel: Sel, _locale: Id) -> Id {
++    unsafe { capitalized(receiver, sel) }
++}
++
+ /// The receiver in a Unicode normalization form, autoreleased.
+ fn normalized(receiver: Id, form: api::NormalizationForm) -> Id {
+     // SAFETY: an `NSString`.
+@@ -1897,7 +1935,14 @@ pub(crate) fn install() {
+         "componentsSeparatedByString:" => components_separated_by_string, c"@24@0:8@16";
+         "componentsSeparatedByCharactersInSet:" => components_separated_by_characters, c"@24@0:8@16";
+         "lowercaseString" => lowercase, c"@16@0:8";
++        "lowercaseStringWithLocale:" => lowercase_with_locale, c"@24@0:8@16";
++        "localizedLowercaseString" => lowercase, c"@16@0:8";
+         "uppercaseString" => uppercase, c"@16@0:8";
++        "uppercaseStringWithLocale:" => uppercase_with_locale, c"@24@0:8@16";
++        "localizedUppercaseString" => uppercase, c"@16@0:8";
++        "capitalizedString" => capitalized, c"@16@0:8";
++        "capitalizedStringWithLocale:" => capitalized_with_locale, c"@24@0:8@16";
++        "localizedCapitalizedString" => capitalized, c"@16@0:8";
+         "precomposedStringWithCanonicalMapping" => precomposed_canonical, c"@16@0:8";
+         "decomposedStringWithCanonicalMapping" => decomposed_canonical, c"@16@0:8";
+         "precomposedStringWithCompatibilityMapping" => precomposed_compatibility, c"@16@0:8";
+diff --git a/crates/foundation/src/timer.rs b/crates/foundation/src/timer.rs
+index 17e80c0..1e72ee1 100644
+--- a/crates/foundation/src/timer.rs
++++ b/crates/foundation/src/timer.rs
+@@ -287,13 +287,13 @@ fn make(
+     }
+     let object = object as Id;
+     if schedule {
+-        add_to_main_loop(object);
++        add_to_loop(object, &corefoundation::runloop::current(), corefoundation::runloop::DEFAULT_MODE);
+     }
+     objc::arc::autorelease(object)
+ }
+ 
+-/// Schedule an already-built timer on the main run loop.
+-fn add_to_main_loop(object: Id) {
++/// Schedule an already-built timer on `target_loop` in `mode`.
++fn add_to_loop(object: Id, target_loop: &corefoundation::runloop::RunLoop, mode: &str) {
+     let timer = timer_of(object);
+     if !timer.timer.is_null() {
+         return;
+@@ -302,8 +302,7 @@ fn add_to_main_loop(object: Id) {
+     let repeat = (timer.repeats != 0).then_some(interval);
+     let run_loop_timer =
+         corefoundation::runloop::new_timer(interval, repeat, Some(fire), object as usize);
+-    corefoundation::runloop::main()
+-        .add_timer(&run_loop_timer, corefoundation::runloop::DEFAULT_MODE);
++    target_loop.add_timer(&run_loop_timer, mode);
+     // Kept alive by the object, and by the table: a scheduled timer outlives
+     // the reference the program holds.
+     objc::arc::retain(object);
+@@ -367,7 +366,11 @@ fn make_with_block(interval: f64, repeats: bool, block: Id, schedule: bool) -> I
+     );
+     timer_of(object).block = objc::block::copy(block);
+     if schedule {
+-        add_to_main_loop(object);
++        add_to_loop(
++            object,
++            &corefoundation::runloop::current(),
++            corefoundation::runloop::DEFAULT_MODE,
++        );
+     }
+     object
+ }
+@@ -466,6 +469,8 @@ unsafe extern "C" fn invalidate(receiver: Id, _sel: Sel) {
+     let run_loop_timer =
+         unsafe { Arc::from_raw(timer.timer as *const corefoundation::runloop::Timer) };
+     timer.timer = std::ptr::null();
++    corefoundation::runloop::current()
++        .remove_timer(&run_loop_timer, corefoundation::runloop::DEFAULT_MODE);
+     corefoundation::runloop::main()
+         .remove_timer(&run_loop_timer, corefoundation::runloop::DEFAULT_MODE);
+     run_loop_timer.invalidate();
+@@ -510,45 +515,107 @@ unsafe extern "C" fn fire_date(receiver: Id, _sel: Sel) -> Id {
+     date(now() + timer_of(receiver).interval)
+ }
+ 
+-/// The one run loop object, which `+currentRunLoop` and `+mainRunLoop` answer.
++/// An `NSRunLoop` wrapper backed by a specific `corefoundation::runloop::RunLoop`.
+ ///
+-/// One rather than one per thread: `corefoundation::runloop::main` is what every
+-/// method here acts on, so two objects would be two names for the same loop and
+-/// a program comparing them would be told they were different.
+-static RUN_LOOP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+-
+-unsafe extern "C" fn current_run_loop(class: Id, _sel: Sel) -> Id {
+-    *RUN_LOOP.get_or_init(|| {
+-        // SAFETY: `class` is `NSRunLoop`, which this module registered.
+-        let object = unsafe {
+-            objc::object::create_instance(
+-                objc::class::from_ptr(class as *const objc::class::Class).expect("a class"),
+-                0,
+-            )
+-        };
+-        objc::arc::retain(object);
+-        object as usize
+-    }) as Id
++/// `+mainRunLoop` returns the singleton wrapping `corefoundation::runloop::main()`.
++/// `+currentRunLoop` returns `+mainRunLoop` on the main thread, and a per-thread
++/// instance wrapping `corefoundation::runloop::current()` on background threads
++/// so worker threads never pump the main thread's run loop (e.g. Qt's Cocoa timers).
++#[repr(C)]
++struct NsRunLoop {
++    isa: *const objc::class::Class,
++    cf_loop: *const corefoundation::runloop::RunLoop,
++}
++
++const RUN_LOOP_INSTANCE_SIZE: usize = std::mem::size_of::<NsRunLoop>();
++
++static MAIN_RUN_LOOP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
++
++thread_local! {
++    static CURRENT_RUN_LOOP: std::cell::OnceCell<usize> = const { std::cell::OnceCell::new() };
++}
++
++fn make_ns_run_loop(class: Id, loop_: Arc<corefoundation::runloop::RunLoop>) -> usize {
++    let object = unsafe {
++        objc::object::create_instance(
++            objc::class::from_ptr(class as *const objc::class::Class).expect("a class"),
++            0,
++        )
++    };
++    objc::arc::retain(object);
++    let raw_loop = Arc::into_raw(loop_);
++    unsafe {
++        (*(object as *mut NsRunLoop)).cf_loop = raw_loop;
++    }
++    object as usize
++}
++
++unsafe extern "C" fn main_run_loop(class: Id, _sel: Sel) -> Id {
++    *MAIN_RUN_LOOP.get_or_init(|| make_ns_run_loop(class, corefoundation::runloop::main())) as Id
++}
++
++unsafe extern "C" fn current_run_loop(class: Id, sel: Sel) -> Id {
++    if unsafe { darwin::pthread::main_np() } != 0 {
++        return unsafe { main_run_loop(class, sel) };
++    }
++    CURRENT_RUN_LOOP
++        .try_with(|cell| {
++            *cell.get_or_init(|| make_ns_run_loop(class, corefoundation::runloop::current()))
++        })
++        .unwrap_or_else(|_| make_ns_run_loop(class, corefoundation::runloop::current())) as Id
++}
++
++fn run_loop_of(receiver: Id) -> Arc<corefoundation::runloop::RunLoop> {
++    if receiver.is_null() {
++        return corefoundation::runloop::current();
++    }
++    let ptr = unsafe { (*(receiver as *const NsRunLoop)).cf_loop };
++    if ptr.is_null() {
++        return corefoundation::runloop::current();
++    }
++    unsafe {
++        Arc::increment_strong_count(ptr);
++        Arc::from_raw(ptr)
++    }
++}
++
++fn cf_run_loop_ptr(receiver: Id) -> corefoundation::base::CFTypeRef {
++    if !receiver.is_null() {
++        let ptr = unsafe { (*(receiver as *const NsRunLoop)).cf_loop };
++        if !ptr.is_null() {
++            return ptr as corefoundation::base::CFTypeRef;
++        }
++    }
++    unsafe { corefoundation::api::CFRunLoopGetCurrent() }
++}
++
++fn mode_name(mode: Id) -> String {
++    if mode.is_null() {
++        return corefoundation::runloop::DEFAULT_MODE.to_string();
++    }
++    let bytes = unsafe { crate::string::bytes(mode) };
++    match String::from_utf8(bytes) {
++        Ok(s) if !s.is_empty() => s,
++        _ => corefoundation::runloop::DEFAULT_MODE.to_string(),
++    }
+ }
+ 
+-unsafe extern "C" fn add_timer_for_mode(_receiver: Id, _sel: Sel, timer: Id, _mode: Id) {
++unsafe extern "C" fn add_timer_for_mode(receiver: Id, _sel: Sel, timer: Id, mode: Id) {
+     if !timer.is_null() {
+-        add_to_main_loop(timer);
++        let target = run_loop_of(receiver);
++        let name = mode_name(mode);
++        add_to_loop(timer, &target, &name);
+     }
+ }
+ 
+ /// `-getCFRunLoop`: the loop every method here acts on.
+-unsafe extern "C" fn get_cf_run_loop(_receiver: Id, _sel: Sel) -> Id {
+-    // SAFETY: no arguments.
+-    unsafe { corefoundation::api::CFRunLoopGetMain() as Id }
++unsafe extern "C" fn get_cf_run_loop(receiver: Id, _sel: Sel) -> Id {
++    cf_run_loop_ptr(receiver) as Id
+ }
+ 
+ /// `-currentMode`: nil when the loop is not running.
+-unsafe extern "C" fn current_mode(_receiver: Id, _sel: Sel) -> Id {
+-    // SAFETY: the main loop, which is what every method here acts on.
+-    let mode = unsafe {
+-        corefoundation::api::CFRunLoopCopyCurrentMode(corefoundation::api::CFRunLoopGetMain())
+-    };
++unsafe extern "C" fn current_mode(receiver: Id, _sel: Sel) -> Id {
++    let mode = unsafe { corefoundation::api::CFRunLoopCopyCurrentMode(cf_run_loop_ptr(receiver)) };
+     if mode.is_null() {
+         return std::ptr::null_mut();
+     }
+@@ -557,16 +624,14 @@ unsafe extern "C" fn current_mode(_receiver: Id, _sel: Sel) -> Id {
+ }
+ 
+ /// `-runMode:beforeDate:`, which is `CFRunLoopRunInMode` under another name.
+-unsafe extern "C" fn run_mode_before_date(_receiver: Id, _sel: Sel, _mode: Id, limit: Id) -> u8 {
++unsafe extern "C" fn run_mode_before_date(receiver: Id, _sel: Sel, mode: Id, limit: Id) -> u8 {
+     let seconds = match limit.is_null() {
+         true => 0.0,
+         false => (date_of(limit) - now()).max(0.0),
+     };
+-    let result = corefoundation::runloop::main().run_in_mode(
+-        corefoundation::runloop::DEFAULT_MODE,
+-        seconds,
+-        true,
+-    );
++    let target = run_loop_of(receiver);
++    let name = mode_name(mode);
++    let result = target.run_in_mode(&name, seconds, true);
+     (result != corefoundation::runloop::result::FINISHED) as u8
+ }
+ 
+@@ -575,6 +640,11 @@ unsafe extern "C" fn run_until_date(receiver: Id, sel: Sel, limit: Id) {
+     unsafe { run_mode_before_date(receiver, sel, std::ptr::null_mut(), limit) };
+ }
+ 
++unsafe extern "C" fn run_loop_run(receiver: Id, _sel: Sel) {
++    let target = run_loop_of(receiver);
++    let _ = target.run_in_mode(corefoundation::runloop::DEFAULT_MODE, f64::INFINITY, false);
++}
++
+ pub(crate) fn install() {
+     let nsobject = objc::class::lookup(c"NSObject").expect("the runtime's own NSObject");
+     methods!(nsobject, {
+@@ -633,15 +703,16 @@ pub(crate) fn install() {
+     });
+ 
+     let run_loop =
+-        corefoundation::base::register(c"NSRunLoop", None, std::mem::size_of::<usize>(), false);
++        corefoundation::base::register(c"NSRunLoop", None, RUN_LOOP_INSTANCE_SIZE, false);
+     class_methods!(run_loop, {
+         "currentRunLoop" => current_run_loop, c"@16@0:8";
+-        "mainRunLoop" => current_run_loop, c"@16@0:8";
++        "mainRunLoop" => main_run_loop, c"@16@0:8";
+     });
+     methods!(run_loop, {
+         "addTimer:forMode:" => add_timer_for_mode, c"v32@0:8@16@24";
+         "runMode:beforeDate:" => run_mode_before_date, c"B32@0:8@16@24";
+         "runUntilDate:" => run_until_date, c"v24@0:8@16";
++        "run" => run_loop_run, c"v16@0:8";
+         "getCFRunLoop" => get_cf_run_loop, c"^v16@0:8";
+         "currentMode" => current_mode, c"@16@0:8";
+     });
+diff --git a/crates/foundation/src/timezone.rs b/crates/foundation/src/timezone.rs
+index 2f5a978..928440f 100644
+--- a/crates/foundation/src/timezone.rs
++++ b/crates/foundation/src/timezone.rs
+@@ -252,12 +252,23 @@ unsafe extern "C" fn name(receiver: Id, _sel: Sel) -> Id {
+     unsafe { corefoundation::timezone::get_name(receiver as _) as Id }
+ }
+ 
++unsafe extern "C" fn reset_system_time_zone(_class: Id, _sel: Sel) {}
++
++unsafe extern "C" fn set_default_time_zone(_class: Id, _sel: Sel, _tz: Id) {}
++
++unsafe extern "C" fn time_zone_data_version(_class: Id, _sel: Sel) -> Id {
++    objc::arc::autorelease(crate::string::from_str("2025a"))
++}
++
+ pub(crate) fn install() {
+     let class = corefoundation::base::abstract_class(c"NSTimeZone", None);
+     class_methods!(class, {
+         "systemTimeZone" => system_time_zone, c"@16@0:8";
+         "localTimeZone" => system_time_zone, c"@16@0:8";
+         "defaultTimeZone" => system_time_zone, c"@16@0:8";
++        "resetSystemTimeZone" => reset_system_time_zone, c"v16@0:8";
++        "setDefaultTimeZone:" => set_default_time_zone, c"v24@0:8@16";
++        "timeZoneDataVersion" => time_zone_data_version, c"@16@0:8";
+         "knownTimeZoneNames" => known_time_zone_names, c"@16@0:8";
+         "timeZoneWithName:" => time_zone_with_name, c"@24@0:8@16";
+         "timeZoneWithAbbreviation:" => time_zone_with_abbreviation, c"@24@0:8@16";
+diff --git a/crates/iokit/src/power.rs b/crates/iokit/src/power.rs
+index 8029edf..08b77be 100644
+--- a/crates/iokit/src/power.rs
++++ b/crates/iokit/src/power.rs
+@@ -90,10 +90,54 @@ pub unsafe extern "C" fn IOPMAssertionRelease(_assertion: u32) -> i32 {
+     0
+ }
+ 
++/// `IOReturn IOPMCopyCPUPowerStatus(CFDictionaryRef *cpuPowerStatus)`.
++pub unsafe extern "C" fn IOPMCopyCPUPowerStatus(out: *mut CFTypeRef) -> i32 {
++    if !out.is_null() {
++        let dict = collections::new_dictionary(
++            &[],
++            Policy::from_key_callbacks(),
++            Policy::from_type_callbacks(),
++            false,
++        );
++        unsafe { out.write(dict) };
++    }
++    0
++}
++
++/// `IOReturn IOPMAssertionCreateWithName(type, level, name, IOPMAssertionID *)`.
++pub unsafe extern "C" fn IOPMAssertionCreateWithName(
++    _kind: CFTypeRef,
++    _level: u32,
++    _name: CFTypeRef,
++    assertion: *mut u32,
++) -> i32 {
++    if !assertion.is_null() {
++        let id = NEXT_ASSERTION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        unsafe { assertion.write(id) };
++    }
++    0
++}
++
++/// `IOReturn IODisplayGetFloatParameter(io_service_t, IOOptionBits, CFStringRef, float *)`.
++pub unsafe extern "C" fn IODisplayGetFloatParameter(
++    _service: u32,
++    _options: u32,
++    _key: CFTypeRef,
++    value: *mut f32,
++) -> i32 {
++    if !value.is_null() {
++        unsafe { value.write(1.0) };
++    }
++    0
++}
++
+ exports::exports! {
+     functions {
+         "IOPMAssertionCreateWithDescription" => IOPMAssertionCreateWithDescription,
++        "IOPMAssertionCreateWithName" => IOPMAssertionCreateWithName,
+         "IOPMAssertionRelease" => IOPMAssertionRelease,
++        "IOPMCopyCPUPowerStatus" => IOPMCopyCPUPowerStatus,
++        "IODisplayGetFloatParameter" => IODisplayGetFloatParameter,
+         "IOPSCopyPowerSourcesInfo" => IOPSCopyPowerSourcesInfo,
+         "IOPSCopyPowerSourcesList" => IOPSCopyPowerSourcesList,
+         "IOPSGetPowerSourceDescription" => IOPSGetPowerSourceDescription,
+diff --git a/crates/iokit/src/registry.rs b/crates/iokit/src/registry.rs
+index 1264cf2..bc33985 100644
+--- a/crates/iokit/src/registry.rs
++++ b/crates/iokit/src/registry.rs
+@@ -728,10 +728,30 @@ pub unsafe extern "C" fn IODisplayCreateInfoDictionary(
+     empty_dictionary()
+ }
+ 
++pub unsafe extern "C" fn IODeregisterForSystemPower(_notifier: *mut u32) -> i32 {
++    0
++}
++
++pub unsafe extern "C" fn IOServiceClose(_connect: u32) -> i32 {
++    0
++}
++
++pub unsafe extern "C" fn IORegistryEntryGetName(
++    _entry: IoObject,
++    name: *mut c_char,
++) -> KernReturn {
++    if !name.is_null() {
++        let s = b"Root\0";
++        unsafe { std::ptr::copy_nonoverlapping(s.as_ptr().cast::<c_char>(), name, s.len()) };
++    }
++    SUCCESS
++}
++
+ exports::exports! {
+     functions {
+         "KextManagerCopyLoadedKextInfo" => KextManagerCopyLoadedKextInfo,
+         "IODisplayCreateInfoDictionary" => IODisplayCreateInfoDictionary,
++        "IORegistryEntryGetName" => IORegistryEntryGetName,
+         "IOServiceMatching" => IOServiceMatching,
+         "IORegistryEntryIDMatching" => IORegistryEntryIDMatching,
+         "IOServiceGetMatchingServices" => IOServiceGetMatchingServices,
+@@ -763,6 +783,8 @@ exports::exports! {
+         "IOCreatePlugInInterfaceForService" => IOCreatePlugInInterfaceForService,
+         "IODestroyPlugInInterface" => IODestroyPlugInInterface,
+         "IORegisterForSystemPower" => IORegisterForSystemPower,
++        "IODeregisterForSystemPower" => IODeregisterForSystemPower,
++        "IOServiceClose" => IOServiceClose,
+         "IOAllowPowerChange" | "IOCancelPowerChange" => IOAllowPowerChange,
+     }
+ }
