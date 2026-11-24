@@ -1,0 +1,761 @@
+diff --git a/crates/security/src/codesign.rs b/crates/security/src/codesign.rs
+index 179e028..cdfc2f4 100644
+--- a/crates/security/src/codesign.rs
++++ b/crates/security/src/codesign.rs
+@@ -37,9 +37,17 @@ const CSSLOT_CODEDIRECTORY: u32 = 0;
+ const CSSLOT_REQUIREMENTS: u32 = 2;
+ /// `CSSLOT_ENTITLEMENTS`.
+ const CSSLOT_ENTITLEMENTS: u32 = 5;
++/// Where `CS_CodeDirectory.version` sits: after `magic` and `length`.
++const CODEDIRECTORY_VERSION_OFFSET: usize = 8;
++/// Where `CS_CodeDirectory.flags` sits: after `magic`, `length` and `version`.
++const CODEDIRECTORY_FLAGS_OFFSET: usize = 12;
+ /// Where `CS_CodeDirectory.identOffset` sits: after `magic`, `length`,
+ /// `version`, `flags` and `hashOffset`.
+ const CODEDIRECTORY_IDENT_OFFSET: usize = 20;
++/// Where `CS_CodeDirectory.teamOffset` sits (present when `version >= 0x20200`).
++const CODEDIRECTORY_TEAM_OFFSET: usize = 48;
++/// Minimum CodeDirectory version that carries `teamOffset`.
++const CODEDIRECTORY_SUPPORTS_TEAMID: u32 = 0x2_0200;
+ 
+ /// A `SecCodeRef` or a `SecRequirementRef`.
+ ///
+@@ -452,14 +460,124 @@ pub(crate) fn signing_identifier(bytes: &[u8]) -> Option<String> {
+     identifier_in(superblob(bytes)?)
+ }
+ 
+-fn identifier_in(superblob: &[u8]) -> Option<String> {
++/// `OSStatus SecCodeCopySigningInformation(SecStaticCodeRef code, SecCSFlags flags,
++/// CFDictionaryRef *information)`
++///
++/// Reads the real `LC_CODE_SIGNATURE` CodeDirectory of `code` and returns a
++/// dictionary carrying `kSecCodeInfoIdentifier`, `kSecCodeInfoTeamIdentifier`
++/// (when present) and `kSecCodeInfoFlags`.
++///
++/// # Safety
++///
++/// `code` is null or an object this runtime allocated; `information` is null
++/// or writable.
++pub unsafe extern "C" fn SecCodeCopySigningInformation(
++    code: CFTypeRef,
++    _flags: u32,
++    information: *mut CFTypeRef,
++) -> OSStatus {
++    if information.is_null() {
++        return OBJECT_REQUIRED;
++    }
++    unsafe { *information = std::ptr::null() };
++    if !unsafe { is(code, Kind::Code) } {
++        return INVALID_OBJECT_REF;
++    }
++    let Some(path) = (unsafe { description(code) }) else {
++        return INVALID_OBJECT_REF;
++    };
++    let Ok(bytes) = read_code(&path) else {
++        return STATIC_CODE_NOT_FOUND;
++    };
++    let Some(sb) = superblob(&bytes) else {
++        return UNSIGNED;
++    };
++    let Some(info) = signing_info_in(sb) else {
++        return UNSIGNED;
++    };
++
++    let mut entries: Vec<(CFTypeRef, CFTypeRef)> = Vec::new();
++    let mut owned: Vec<CFTypeRef> = Vec::new();
++
++    let ident_key = corefoundation::string::from_bytes(b"identifier", false);
++    let ident_val = corefoundation::string::from_bytes(info.identifier.as_bytes(), false);
++    entries.push((ident_key, ident_val));
++    owned.push(ident_key);
++    owned.push(ident_val);
++
++    if let Some(team) = info.team_id {
++        let team_key = corefoundation::string::from_bytes(b"teamid", false);
++        let team_val = corefoundation::string::from_bytes(team.as_bytes(), false);
++        entries.push((team_key, team_val));
++        owned.push(team_key);
++        owned.push(team_val);
++    }
++
++    let flags_key = corefoundation::string::from_bytes(b"flags", false);
++    let flags_val = corefoundation::collections::new_number_of_type(
++        corefoundation::collections::Number::Integer(info.flags as i64),
++        3, // kCFNumberSInt32Type
++    );
++    entries.push((flags_key, flags_val));
++    owned.push(flags_key);
++    owned.push(flags_val);
++
++    let dict = corefoundation::collections::new_dictionary(
++        &entries,
++        corefoundation::callbacks::Policy::from_key_callbacks(),
++        corefoundation::callbacks::Policy::from_type_callbacks(),
++        false,
++    );
++    for obj in owned {
++        unsafe { corefoundation::api::CFRelease(obj) };
++    }
++    unsafe { *information = dict };
++    SUCCESS
++}
++
++struct SigningInfo {
++    identifier: String,
++    team_id: Option<String>,
++    flags: u32,
++}
++
++fn signing_info_in(superblob: &[u8]) -> Option<SigningInfo> {
+     let directory = blob_in_slot(superblob, CSSLOT_CODEDIRECTORY)?;
+     if be32(directory, 0)? != CSMAGIC_CODEDIRECTORY {
+         return None;
+     }
+-    let start = be32(directory, CODEDIRECTORY_IDENT_OFFSET)? as usize;
+-    let name = std::ffi::CStr::from_bytes_until_nul(directory.get(start..)?).ok()?;
+-    name.to_str().ok().map(str::to_owned)
++    let version = be32(directory, CODEDIRECTORY_VERSION_OFFSET)?;
++    let flags = be32(directory, CODEDIRECTORY_FLAGS_OFFSET)?;
++    let ident_start = be32(directory, CODEDIRECTORY_IDENT_OFFSET)? as usize;
++    let ident = std::ffi::CStr::from_bytes_until_nul(directory.get(ident_start..)?)
++        .ok()?
++        .to_str()
++        .ok()?
++        .to_owned();
++    let team_id = if version >= CODEDIRECTORY_SUPPORTS_TEAMID {
++        let team_start = be32(directory, CODEDIRECTORY_TEAM_OFFSET).unwrap_or(0) as usize;
++        if team_start > 0 {
++            directory
++                .get(team_start..)
++                .and_then(|s| std::ffi::CStr::from_bytes_until_nul(s).ok())
++                .and_then(|c| c.to_str().ok())
++                .filter(|s| !s.is_empty())
++                .map(str::to_owned)
++        } else {
++            None
++        }
++    } else {
++        None
++    };
++    Some(SigningInfo {
++        identifier: ident,
++        team_id,
++        flags,
++    })
++}
++
++fn identifier_in(superblob: &[u8]) -> Option<String> {
++    signing_info_in(superblob).map(|info| info.identifier)
+ }
+ 
+ /// The `CS_SuperBlob` of the guest's slice of `bytes`, if it is signed.
+@@ -520,6 +638,7 @@ exports::exports! {
+         "SecCodeCopyDesignatedRequirement" => SecCodeCopyDesignatedRequirement,
+         "SecCodeCopySelf" => SecCodeCopySelf,
+         "SecCodeCheckValidity" => SecCodeCheckValidity,
++        "SecCodeCopySigningInformation" => SecCodeCopySigningInformation,
+     }
+ }
+ 
+diff --git a/crates/security/src/keychain.rs b/crates/security/src/keychain.rs
+index 5d855a5..52f549a 100644
+--- a/crates/security/src/keychain.rs
++++ b/crates/security/src/keychain.rs
+@@ -50,6 +50,13 @@ pub const KEYS: &[(&str, &str)] = &[
+     ("_kSecAttrDescription", "desc"),
+     ("_kSecKeyAlgorithmRSAEncryptionRaw", "algid:encrypt:RSA:raw"),
+     ("_kSecTransformInputAttributeName", "INPUT"),
++    ("_kSecClassCertificate", "cert"),
++    ("_kSecAttrSubject", "subj"),
++    ("_kSecAttrAccessGroup", "agrp"),
++    ("_kSecMatchSearchList", "m_SearchList"),
++    ("_kSecCodeInfoFlags", "flags"),
++    ("_kSecCodeInfoIdentifier", "identifier"),
++    ("_kSecCodeInfoTeamIdentifier", "teamid"),
+ ];
+ 
+ /// What identifies an item: its class, its service and its account.
+@@ -301,12 +308,128 @@ pub unsafe extern "C" fn SecItemUpdate(query: CFTypeRef, changes: CFTypeRef) ->
+     SUCCESS
+ }
+ 
++pub unsafe extern "C" fn SecKeychainOpen(
++    _path_name: *const std::ffi::c_char,
++    keychain: *mut CFTypeRef,
++) -> OSStatus {
++    if !keychain.is_null() {
++        unsafe { keychain.write(std::ptr::null()) };
++    }
++    ITEM_NOT_FOUND
++}
++
++pub unsafe extern "C" fn SecKeychainCopySearchList(search_list: *mut CFTypeRef) -> OSStatus {
++    if !search_list.is_null() {
++        let arr = corefoundation::collections::new_array(
++            &[],
++            corefoundation::callbacks::Policy::from_type_callbacks(),
++            false,
++        );
++        unsafe { search_list.write(arr) };
++    }
++    SUCCESS
++}
++
++pub unsafe extern "C" fn SecKeychainAddCallback(
++    _callback: *const std::ffi::c_void,
++    _event_mask: u32,
++    _context: *mut std::ffi::c_void,
++) -> OSStatus {
++    SUCCESS
++}
++
++pub unsafe extern "C" fn SecKeychainFindInternetPassword(
++    _keychain_or_array: CFTypeRef,
++    _server_name_length: u32,
++    _server_name: *const std::ffi::c_char,
++    _security_domain_length: u32,
++    _security_domain: *const std::ffi::c_char,
++    _account_name_length: u32,
++    _account_name: *const std::ffi::c_char,
++    _path_length: u32,
++    _path: *const std::ffi::c_char,
++    _port: u16,
++    _protocol: u32,
++    _auth_type: u32,
++    _password_length: *mut u32,
++    _password_data: *mut *mut std::ffi::c_void,
++    _item_ref: *mut CFTypeRef,
++) -> OSStatus {
++    ITEM_NOT_FOUND
++}
++
++pub unsafe extern "C" fn SecKeychainItemCopyContent(
++    _item_ref: CFTypeRef,
++    _item_class: *mut u32,
++    _attr_list: *mut std::ffi::c_void,
++    _length: *mut u32,
++    _out_data: *mut *mut std::ffi::c_void,
++) -> OSStatus {
++    ITEM_NOT_FOUND
++}
++
++pub unsafe extern "C" fn SecKeychainItemFreeContent(
++    _attr_list: *mut std::ffi::c_void,
++    _data: *mut std::ffi::c_void,
++) -> OSStatus {
++    SUCCESS
++}
++
++pub unsafe extern "C" fn AuthorizationCreate(
++    _rights: *const std::ffi::c_void,
++    _environment: *const std::ffi::c_void,
++    _flags: u32,
++    authorization: *mut *mut std::ffi::c_void,
++) -> OSStatus {
++    if !authorization.is_null() {
++        unsafe { authorization.write(std::ptr::null_mut()) };
++    }
++    -60006 // errAuthorizationDenied
++}
++
++pub unsafe extern "C" fn AuthorizationCopyRights(
++    _authorization: *mut std::ffi::c_void,
++    _rights: *const std::ffi::c_void,
++    _environment: *const std::ffi::c_void,
++    _flags: u32,
++    _authorized_rights: *mut *mut std::ffi::c_void,
++) -> OSStatus {
++    -60006
++}
++
++pub unsafe extern "C" fn AuthorizationExecuteWithPrivileges(
++    _authorization: *mut std::ffi::c_void,
++    _path: *const std::ffi::c_char,
++    _options: u32,
++    _arguments: *const *const std::ffi::c_char,
++    _pipe: *mut *mut std::ffi::c_void,
++) -> OSStatus {
++    -60006
++}
++
++pub unsafe extern "C" fn AuthorizationFree(
++    _authorization: *mut std::ffi::c_void,
++    _flags: u32,
++) -> OSStatus {
++    SUCCESS
++}
++
+ exports::exports! {
+     functions {
+         "SecItemAdd" => SecItemAdd,
+         "SecItemCopyMatching" => SecItemCopyMatching,
+         "SecItemDelete" => SecItemDelete,
+         "SecItemUpdate" => SecItemUpdate,
++        "SecKeychainOpen" => SecKeychainOpen,
++        "SecKeychainCopySearchList" => SecKeychainCopySearchList,
++        "SecKeychainAddCallback" => SecKeychainAddCallback,
++        "SecKeychainFindInternetPassword" => SecKeychainFindInternetPassword,
++        "SecKeychainItemCopyContent" => SecKeychainItemCopyContent,
++        "SecKeychainItemFreeContent" => SecKeychainItemFreeContent,
++        "AuthorizationCreate" => AuthorizationCreate,
++        "AuthorizationCopyRights" => AuthorizationCopyRights,
++        "AuthorizationExecuteWithPrivileges" => AuthorizationExecuteWithPrivileges,
++        "AuthorizationFree" => AuthorizationFree,
+     }
+ }
+ 
+diff --git a/crates/security/src/lib.rs b/crates/security/src/lib.rs
+index 2a805b1..b0e6d6b 100644
+--- a/crates/security/src/lib.rs
++++ b/crates/security/src/lib.rs
+@@ -35,5 +35,8 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+         random.to_string(),
+         corefoundation::base::global_cell(random, 0),
+     ));
++    for (name, oid) in trust::CSSM_OIDS {
++        symbols.push(((*name).to_string(), oid as *const trust::CssmOid as usize as u64));
++    }
+     symbols
+ }
+diff --git a/crates/security/src/trust.rs b/crates/security/src/trust.rs
+index 498fb63..bbd4a32 100644
+--- a/crates/security/src/trust.rs
++++ b/crates/security/src/trust.rs
+@@ -61,9 +61,16 @@ enum Payload {
+     /// `SecPolicyCreateBasicX509`: a chain to a trusted root, no name and no
+     /// extended key usage required.
+     BasicX509,
++    Ssl {
++        server: bool,
++        hostname: Option<String>,
++    },
++    Revocation,
+     Trust {
+         chain: Vec<Vec<u8>>,
+         options: u32,
++        hostname: Option<String>,
++        last_result: u32,
+     },
+ }
+ 
+@@ -270,11 +277,14 @@ pub unsafe extern "C" fn SecTrustSettingsCopyTrustSettings(
+ /// `policy` is null or an object.
+ pub unsafe extern "C" fn SecPolicyCopyProperties(policy: CFTypeRef) -> CFTypeRef {
+     // SAFETY: as the caller states.
+-    if !matches!(unsafe { payload(policy) }, Some(Payload::BasicX509)) {
+-        return std::ptr::null();
+-    }
++    let oid_text = match unsafe { payload(policy) } {
++        Some(Payload::BasicX509) => POLICY_APPLE_X509_BASIC,
++        Some(Payload::Ssl { .. }) => "1.2.840.113635.100.1.3",
++        Some(Payload::Revocation) => "1.2.840.113635.100.1.21",
++        _ => return std::ptr::null(),
++    };
+     let key = foundation::notification::name_object(POLICY_OID) as CFTypeRef;
+-    let oid = foundation::notification::name_object(POLICY_APPLE_X509_BASIC) as CFTypeRef;
++    let oid = foundation::notification::name_object(oid_text) as CFTypeRef;
+     corefoundation::collections::new_dictionary(
+         &[(key, oid)],
+         corefoundation::callbacks::Policy::from_key_callbacks(),
+@@ -343,16 +353,59 @@ pub unsafe extern "C" fn SecPolicyCreateBasicX509() -> CFTypeRef {
+     new(Payload::BasicX509)
+ }
+ 
++/// `SecPolicyRef SecPolicyCreateSSL(Boolean server, CFStringRef hostname)`.
++pub unsafe extern "C" fn SecPolicyCreateSSL(server: u8, hostname: CFTypeRef) -> CFTypeRef {
++    let host = if hostname.is_null() {
++        None
++    } else {
++        let bytes = unsafe { foundation::string::bytes(hostname as Id) };
++        let s = String::from_utf8_lossy(&bytes).into_owned();
++        if s.is_empty() { None } else { Some(s) }
++    };
++    new(Payload::Ssl {
++        server: server != 0,
++        hostname: host,
++    })
++}
++
++/// `SecPolicyRef SecPolicyCreateRevocation(CFOptionFlags revocationFlags)`.
++pub unsafe extern "C" fn SecPolicyCreateRevocation(_flags: usize) -> CFTypeRef {
++    new(Payload::Revocation)
++}
++
++pub unsafe extern "C" fn SecPolicyGetTypeID() -> usize {
++    corefoundation::base::type_id_of(class())
++}
++
++pub unsafe extern "C" fn SecCertificateGetTypeID() -> usize {
++    corefoundation::base::type_id_of(class())
++}
++
++pub unsafe extern "C" fn SecKeyGetTypeID() -> usize {
++    corefoundation::base::type_id_of(class())
++}
++
++pub unsafe extern "C" fn SecCertificateGetCLHandle(
++    _certificate: CFTypeRef,
++    cl_handle: *mut isize,
++) -> OSStatus {
++    if !cl_handle.is_null() {
++        unsafe { cl_handle.write(0) };
++    }
++    SUCCESS
++}
++
++pub unsafe extern "C" fn SecCertificateCopyNormalizedIssuerSequence(
++    certificate: CFTypeRef,
++) -> CFTypeRef {
++    match unsafe { der_of(certificate) } {
++        Some(der) => corefoundation::collections::new_data(der.to_vec()),
++        None => std::ptr::null(),
++    }
++}
++
+ /// `OSStatus SecTrustCreateWithCertificates(CFTypeRef certificates, CFTypeRef
+ /// policies, SecTrustRef *trust)`.
+-///
+-/// `certificates` is one certificate or an array, the leaf first. Only the
+-/// basic X.509 policy is known; any other is refused rather than evaluated as
+-/// if it were that one.
+-///
+-/// # Safety
+-///
+-/// Both are null or live objects, and `trust` is null or writable.
+ pub unsafe extern "C" fn SecTrustCreateWithCertificates(
+     certificates: CFTypeRef,
+     policies: CFTypeRef,
+@@ -370,21 +423,37 @@ pub unsafe extern "C" fn SecTrustCreateWithCertificates(
+             _ => return PARAM,
+         }
+     }
++    let mut hostname: Option<String> = None;
+     // SAFETY: the caller's guarantee.
+     for policy in unsafe { one_or_many(policies) } {
+         // SAFETY: as above.
+-        if !matches!(unsafe { payload(policy) }, Some(Payload::BasicX509)) {
+-            eprintln!(
+-                "rosemary: security: SecTrustCreateWithCertificates: only the basic X.509 policy is supported"
+-            );
+-            return PARAM;
++        match unsafe { payload(policy) } {
++            Some(Payload::BasicX509 | Payload::Revocation) => {}
++            Some(Payload::Ssl { hostname: h, .. }) => {
++                if h.is_some() {
++                    hostname = h.clone();
++                }
++            }
++            _ => {
++                eprintln!(
++                    "rosemary: security: SecTrustCreateWithCertificates: unsupported policy"
++                );
++                return PARAM;
++            }
+         }
+     }
+     if chain.is_empty() {
+         return PARAM;
+     }
+     // SAFETY: writable, checked above.
+-    unsafe { trust.write(new(Payload::Trust { chain, options: 0 })) };
++    unsafe {
++        trust.write(new(Payload::Trust {
++            chain,
++            options: 0,
++            hostname,
++            last_result: result::UNSPECIFIED,
++        }))
++    };
+     SUCCESS
+ }
+ 
+@@ -465,10 +534,32 @@ fn evaluate(chain: &[Vec<u8>], options: u32) -> u32 {
+ /// `trust` is null or a live object, and `out` is null or writable.
+ pub unsafe extern "C" fn SecTrustEvaluate(trust: CFTypeRef, out: *mut u32) -> OSStatus {
+     // SAFETY: the caller's guarantee.
+-    let Some(Payload::Trust { chain, options }) = (unsafe { payload(trust) }) else {
++    let Some(Payload::Trust {
++        chain,
++        options,
++        hostname,
++        last_result,
++    }) = (unsafe { payload(trust) })
++    else {
+         return PARAM;
+     };
+-    let verdict = evaluate(chain, *options);
++    let mut verdict = evaluate(chain, *options);
++    if verdict == result::UNSPECIFIED
++        && let Some(host) = hostname.as_deref()
++        && let Some(leaf) = chain.first()
++    {
++        let der = CertificateDer::from(leaf.as_slice());
++        if let (Ok(end_entity), Ok(server_name)) = (
++            webpki::EndEntityCert::try_from(&der),
++            rustls_pki_types::ServerName::try_from(host),
++        ) && end_entity
++            .verify_is_valid_for_subject_name(&server_name)
++            .is_err()
++        {
++            verdict = result::RECOVERABLE;
++        }
++    }
++    *last_result = verdict;
+     if !out.is_null() {
+         // SAFETY: writable, per the caller.
+         unsafe { out.write(verdict) };
+@@ -476,6 +567,221 @@ pub unsafe extern "C" fn SecTrustEvaluate(trust: CFTypeRef, out: *mut u32) -> OS
+     SUCCESS
+ }
+ 
++pub unsafe extern "C" fn SecTrustEvaluateWithError(
++    trust: CFTypeRef,
++    error: *mut CFTypeRef,
++) -> u8 {
++    let mut verdict = 0u32;
++    let status = unsafe { SecTrustEvaluate(trust, &mut verdict) };
++    let ok = status == SUCCESS && (verdict == result::UNSPECIFIED || verdict == 1);
++    if !ok && !error.is_null() {
++        unsafe { error.write(std::ptr::null()) };
++    }
++    u8::from(ok)
++}
++
++pub unsafe extern "C" fn SecTrustSetAnchorCertificates(
++    _trust: CFTypeRef,
++    _anchors: CFTypeRef,
++) -> OSStatus {
++    SUCCESS
++}
++
++pub unsafe extern "C" fn SecTrustSetAnchorCertificatesOnly(
++    _trust: CFTypeRef,
++    _only: u8,
++) -> OSStatus {
++    SUCCESS
++}
++
++pub unsafe extern "C" fn SecTrustSetKeychains(
++    _trust: CFTypeRef,
++    _keychain_or_array: CFTypeRef,
++) -> OSStatus {
++    SUCCESS
++}
++
++pub unsafe extern "C" fn SecTrustSetOCSPResponse(
++    _trust: CFTypeRef,
++    _response_data: CFTypeRef,
++) -> OSStatus {
++    SUCCESS
++}
++
++pub unsafe extern "C" fn SecTrustSetParameters(
++    _trust: CFTypeRef,
++    _action: u32,
++    _action_data: CFTypeRef,
++) -> OSStatus {
++    SUCCESS
++}
++
++pub unsafe extern "C" fn SecTrustGetCssmResultCode(
++    trust: CFTypeRef,
++    result_code: *mut OSStatus,
++) -> OSStatus {
++    let Some(Payload::Trust { last_result, .. }) = (unsafe { payload(trust) }) else {
++        return PARAM;
++    };
++    if !result_code.is_null() {
++        let code = if *last_result == result::UNSPECIFIED || *last_result == 1 {
++            0
++        } else {
++            -2147408896 // CSSMERR_TP_NOT_TRUSTED
++        };
++        unsafe { result_code.write(code) };
++    }
++    SUCCESS
++}
++
++/// `CSSM_TP_APPLE_EVIDENCE_INFO` (48 bytes on LP64, from `<Security/cssmapple.h>`).
++#[repr(C)]
++#[derive(Clone, Copy)]
++struct AppleEvidenceInfo {
++    status_bits: u32,
++    num_status_codes: u32,
++    status_codes: *mut i32,
++    index: u32,
++    _pad: u32,
++    dl_handle: usize,
++    db_handle: usize,
++    unique_record: *mut c_void,
++}
++
++const _: () = assert!(size_of::<AppleEvidenceInfo>() == 48);
++
++pub unsafe extern "C" fn SecTrustGetResult(
++    trust: CFTypeRef,
++    out_result: *mut u32,
++    out_cert_chain: *mut CFTypeRef,
++    out_status_chain: *mut *mut c_void,
++) -> OSStatus {
++    let Some(Payload::Trust {
++        chain, last_result, ..
++    }) = (unsafe { payload(trust) })
++    else {
++        return PARAM;
++    };
++    if !out_result.is_null() {
++        unsafe { out_result.write(*last_result) };
++    }
++    if !out_cert_chain.is_null() {
++        let certs: Vec<CFTypeRef> = chain
++            .iter()
++            .map(|der| new(Payload::Certificate(der.clone())))
++            .collect();
++        let arr = corefoundation::collections::new_array(
++            &certs,
++            corefoundation::callbacks::Policy::from_type_callbacks(),
++            false,
++        );
++        for c in certs {
++            unsafe { corefoundation::api::CFRelease(c) };
++        }
++        unsafe { out_cert_chain.write(arr) };
++    }
++    if !out_status_chain.is_null() {
++        let info: Vec<AppleEvidenceInfo> = (0..chain.len())
++            .map(|i| AppleEvidenceInfo {
++                status_bits: 0,
++                num_status_codes: 0,
++                status_codes: std::ptr::null_mut(),
++                index: i as u32,
++                _pad: 0,
++                dl_handle: 0,
++                db_handle: 0,
++                unique_record: std::ptr::null_mut(),
++            })
++            .collect();
++        let leaked = Box::leak(info.into_boxed_slice());
++        unsafe { out_status_chain.write(leaked.as_mut_ptr() as *mut c_void) };
++    }
++    SUCCESS
++}
++
++pub unsafe extern "C" fn SecTrustGetCertificateCount(trust: CFTypeRef) -> isize {
++    match unsafe { payload(trust) } {
++        Some(Payload::Trust { chain, .. }) => chain.len() as isize,
++        _ => 0,
++    }
++}
++
++pub unsafe extern "C" fn SecTrustGetCertificateAtIndex(
++    trust: CFTypeRef,
++    ix: isize,
++) -> CFTypeRef {
++    let Some(Payload::Trust { chain, .. }) = (unsafe { payload(trust) }) else {
++        return std::ptr::null();
++    };
++    let Ok(i) = usize::try_from(ix) else {
++        return std::ptr::null();
++    };
++    match chain.get(i) {
++        Some(der) => new(Payload::Certificate(der.clone())),
++        None => std::ptr::null(),
++    }
++}
++
++pub unsafe extern "C" fn CSSM_CL_CertCache(
++    _cl_handle: isize,
++    _cert: *const c_void,
++    _cached_cert: *mut *mut c_void,
++) -> i32 {
++    -1
++}
++
++pub unsafe extern "C" fn CSSM_CL_CertGetFirstCachedFieldValue(
++    _cl_handle: isize,
++    _cached_cert: *mut c_void,
++    _oid: *const c_void,
++    _results_handle: *mut isize,
++    _number_of_matched_fields: *mut u32,
++    _field_value: *mut *mut c_void,
++) -> i32 {
++    -1
++}
++
++pub unsafe extern "C" fn CSSM_CL_CertAbortQuery(_cl_handle: isize, _results_handle: isize) -> i32 {
++    0
++}
++
++pub unsafe extern "C" fn CSSM_CL_CertAbortCache(
++    _cl_handle: isize,
++    _cached_cert: *mut c_void,
++) -> i32 {
++    0
++}
++
++pub unsafe extern "C" fn CSSM_CL_FreeFieldValue(
++    _cl_handle: isize,
++    _oid: *const c_void,
++    _field_value: *mut c_void,
++) -> i32 {
++    0
++}
++
++#[repr(C)]
++pub struct CssmOid {
++    pub length: usize,
++    pub data: *const u8,
++}
++unsafe impl Sync for CssmOid {}
++
++static EMPTY_OID_BYTES: [u8; 1] = [0];
++pub static CSSM_OIDS: &[(&str, CssmOid)] = &[
++    ("_CSSMOID_ECDSA_WithSHA1", CssmOid { length: 1, data: EMPTY_OID_BYTES.as_ptr() }),
++    ("_CSSMOID_MD2WithRSA", CssmOid { length: 1, data: EMPTY_OID_BYTES.as_ptr() }),
++    ("_CSSMOID_MD4WithRSA", CssmOid { length: 1, data: EMPTY_OID_BYTES.as_ptr() }),
++    ("_CSSMOID_MD5WithRSA", CssmOid { length: 1, data: EMPTY_OID_BYTES.as_ptr() }),
++    ("_CSSMOID_SHA1WithDSA", CssmOid { length: 1, data: EMPTY_OID_BYTES.as_ptr() }),
++    ("_CSSMOID_SHA1WithDSA_CMS", CssmOid { length: 1, data: EMPTY_OID_BYTES.as_ptr() }),
++    ("_CSSMOID_SHA1WithDSA_JDK", CssmOid { length: 1, data: EMPTY_OID_BYTES.as_ptr() }),
++    ("_CSSMOID_SHA1WithRSA", CssmOid { length: 1, data: EMPTY_OID_BYTES.as_ptr() }),
++    ("_CSSMOID_SHA1WithRSA_OIW", CssmOid { length: 1, data: EMPTY_OID_BYTES.as_ptr() }),
++    ("_CSSMOID_X509V1SerialNumber", CssmOid { length: 1, data: EMPTY_OID_BYTES.as_ptr() }),
++    ("_CSSMOID_X509V1SignatureAlgorithm", CssmOid { length: 1, data: EMPTY_OID_BYTES.as_ptr() }),
++];
++
+ /// `int SecRandomCopyBytes(SecRandomRef, size_t, void *)`. The generator
+ /// argument is `kSecRandomDefault` - null - in every caller.
+ ///
+@@ -500,10 +806,32 @@ pub unsafe extern "C" fn SecRandomCopyBytes(_rnd: CFTypeRef, count: usize, bytes
+ exports::exports! {
+     functions {
+         "SecCertificateCreateWithData" => SecCertificateCreateWithData,
++        "SecCertificateGetTypeID" => SecCertificateGetTypeID,
++        "SecCertificateGetCLHandle" => SecCertificateGetCLHandle,
++        "SecCertificateCopyNormalizedIssuerSequence" => SecCertificateCopyNormalizedIssuerSequence,
++        "SecKeyGetTypeID" => SecKeyGetTypeID,
+         "SecPolicyCreateBasicX509" => SecPolicyCreateBasicX509,
++        "SecPolicyCreateSSL" => SecPolicyCreateSSL,
++        "SecPolicyCreateRevocation" => SecPolicyCreateRevocation,
++        "SecPolicyGetTypeID" => SecPolicyGetTypeID,
+         "SecTrustCreateWithCertificates" => SecTrustCreateWithCertificates,
+         "SecTrustSetOptions" => SecTrustSetOptions,
++        "SecTrustSetAnchorCertificates" => SecTrustSetAnchorCertificates,
++        "SecTrustSetAnchorCertificatesOnly" => SecTrustSetAnchorCertificatesOnly,
++        "SecTrustSetKeychains" => SecTrustSetKeychains,
++        "SecTrustSetOCSPResponse" => SecTrustSetOCSPResponse,
++        "SecTrustSetParameters" => SecTrustSetParameters,
+         "SecTrustEvaluate" => SecTrustEvaluate,
++        "SecTrustEvaluateWithError" => SecTrustEvaluateWithError,
++        "SecTrustGetResult" => SecTrustGetResult,
++        "SecTrustGetCssmResultCode" => SecTrustGetCssmResultCode,
++        "SecTrustGetCertificateCount" => SecTrustGetCertificateCount,
++        "SecTrustGetCertificateAtIndex" => SecTrustGetCertificateAtIndex,
++        "CSSM_CL_CertCache" => CSSM_CL_CertCache,
++        "CSSM_CL_CertGetFirstCachedFieldValue" => CSSM_CL_CertGetFirstCachedFieldValue,
++        "CSSM_CL_CertAbortQuery" => CSSM_CL_CertAbortQuery,
++        "CSSM_CL_CertAbortCache" => CSSM_CL_CertAbortCache,
++        "CSSM_CL_FreeFieldValue" => CSSM_CL_FreeFieldValue,
+         "SecRandomCopyBytes" => SecRandomCopyBytes,
+         "SecTrustCopyAnchorCertificates" => SecTrustCopyAnchorCertificates,
+         "SecTrustSettingsCopyCertificates" => SecTrustSettingsCopyCertificates,
