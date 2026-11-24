@@ -700,10 +700,84 @@ index c40a60f..20d67cf 100644
          "initWithBytesNoCopy:length:" => data_init_no_copy, c"@32@0:8^v16Q24";
          "initWithBytesNoCopy:length:freeWhenDone:" => data_init_no_copy_free, c"@36@0:8^v16Q24B32";
 diff --git a/crates/foundation/src/string.rs b/crates/foundation/src/string.rs
-index 2764ea1..031e12e 100644
+index 2764ea1..09a5281 100644
 --- a/crates/foundation/src/string.rs
 +++ b/crates/foundation/src/string.rs
-@@ -1323,13 +1323,51 @@ unsafe extern "C" fn get_characters(receiver: Id, sel: Sel, buffer: *mut u16) {
+@@ -961,6 +961,73 @@ unsafe extern "C" fn range_of_character(receiver: Id, sel: Sel, set: Id) -> NSRa
+     unsafe { range_of_character_options(receiver, sel, set, 0) }
+ }
+ 
++/// `-rangeOfComposedCharacterSequenceAtIndex:`: expands across a UTF-16 surrogate pair.
++unsafe extern "C" fn range_of_composed_character_sequence_at_index(
++    receiver: Id,
++    _sel: Sel,
++    index: usize,
++) -> NSRange {
++    let u = unsafe { units(receiver) };
++    if index >= u.len() {
++        return NSRange {
++            location: index,
++            length: 0,
++        };
++    }
++    let unit = u[index];
++    if (0xD800..=0xDBFF).contains(&unit)
++        && index + 1 < u.len()
++        && (0xDC00..=0xDFFF).contains(&u[index + 1])
++    {
++        return NSRange {
++            location: index,
++            length: 2,
++        };
++    }
++    if (0xDC00..=0xDFFF).contains(&unit)
++        && index > 0
++        && (0xD800..=0xDBFF).contains(&u[index - 1])
++    {
++        return NSRange {
++            location: index - 1,
++            length: 2,
++        };
++    }
++    NSRange {
++        location: index,
++        length: 1,
++    }
++}
++
++/// `-rangeOfComposedCharacterSequencesForRange:`: expands range boundaries across UTF-16 surrogate pairs.
++unsafe extern "C" fn range_of_composed_character_sequences_for_range(
++    receiver: Id,
++    _sel: Sel,
++    range: NSRange,
++) -> NSRange {
++    let u = unsafe { units(receiver) };
++    let mut start = range.location.min(u.len());
++    let mut end = range.location.saturating_add(range.length).min(u.len());
++    if start > 0
++        && start < u.len()
++        && (0xDC00..=0xDFFF).contains(&u[start])
++        && (0xD800..=0xDBFF).contains(&u[start - 1])
++    {
++        start -= 1;
++    }
++    if end > 0
++        && end < u.len()
++        && (0xD800..=0xDBFF).contains(&u[end - 1])
++        && (0xDC00..=0xDFFF).contains(&u[end])
++    {
++        end += 1;
++    }
++    NSRange {
++        location: start,
++        length: end.saturating_sub(start),
++    }
++}
++
+ /// Replace `range` of a mutable string's UTF-16 units with `insertion`.
+ /// Past the end is Apple's range exception, which fails here by name.
+ unsafe fn splice(receiver: Id, selector: &str, range: NSRange, insertion: &[u16]) {
+@@ -1323,13 +1390,51 @@ unsafe extern "C" fn get_characters(receiver: Id, sel: Sel, buffer: *mut u16) {
  
  unsafe extern "C" fn lowercase(receiver: Id, _sel: Sel) -> Id {
      // SAFETY: an `NSString`.
@@ -758,7 +832,18 @@ index 2764ea1..031e12e 100644
  /// The receiver in a Unicode normalization form, autoreleased.
  fn normalized(receiver: Id, form: api::NormalizationForm) -> Id {
      // SAFETY: an `NSString`.
-@@ -1897,7 +1935,14 @@ pub(crate) fn install() {
+@@ -1887,6 +1992,10 @@ pub(crate) fn install() {
+         "rangeOfCharacterFromSet:options:" => range_of_character_options, c"{_NSRange=QQ}32@0:8@16Q24";
+         "rangeOfCharacterFromSet:options:range:" => range_of_character_in_range,
+             c"{_NSRange=QQ}48@0:8@16Q24{_NSRange=QQ}32";
++        "rangeOfComposedCharacterSequenceAtIndex:" => range_of_composed_character_sequence_at_index,
++            c"{_NSRange=QQ}24@0:8Q16";
++        "rangeOfComposedCharacterSequencesForRange:" => range_of_composed_character_sequences_for_range,
++            c"{_NSRange=QQ}32@0:8{_NSRange=QQ}16";
+         "rangeOfString:options:" => range_of_string_options, c"{_NSRange=QQ}32@0:8@16Q24";
+         "containsString:" => contains_string, c"B24@0:8@16";
+         "hasPrefix:" => has_prefix, c"B24@0:8@16";
+@@ -1897,7 +2006,14 @@ pub(crate) fn install() {
          "componentsSeparatedByString:" => components_separated_by_string, c"@24@0:8@16";
          "componentsSeparatedByCharactersInSet:" => components_separated_by_characters, c"@24@0:8@16";
          "lowercaseString" => lowercase, c"@16@0:8";
