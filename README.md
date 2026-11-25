@@ -1,54 +1,44 @@
 <p align="center"><img src="assets/cutmary-logo.png" alt="Cutmary logo" width="160"></p>
 
-# Cutmary — Running macOS CapCut Natively on Linux (`x86_64`) via Rosemary
+# Cutmary
 
-[![Platform](https://img.shields.io/badge/platform-Linux%20x86__64-blue.svg)](#requirements)
-[![Runtime](https://img.shields.io/badge/runtime-Rosemary%20(Darwin%20Compat)-purple.svg)](https://github.com/microlift/rosemary)
-[![Target](https://img.shields.io/badge/target-CapCut%209.8.0%20macOS%20DMG-brightgreen.svg)](#how-it-works)
-[![Status](https://img.shields.io/badge/status-Active%20WIP%20%E2%80%94%20GUI%20Boot%20Stage-orange.svg)](#current-status)
-[![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
+Cutmary is a Linux launcher for the macOS version of CapCut. It runs the app’s x86_64 code directly on Linux x86_64 through a patched Rosemary runtime, without Wine or a virtual machine. The GTK4 / Libadwaita launcher installs the official DMG locally, manages the runtime and project settings, and shows session logs.
 
-**Cutmary** is a clean, reproducible patch series and packaging toolkit to run the official **macOS `x86_64` build of CapCut Desktop** directly on Linux (developed & tested on **CachyOS / Arch Linux**) using [**Rosemary**](https://github.com/microlift/rosemary) — **no Wine, no Proton, no macOS VM, and no CPU emulation overhead**.
+## Get the launcher
 
-Because CapCut's macOS `.dmg` ships as a **Universal Mach-O binary (`x86_64` + `arm64`)**, Rosemary executes the `x86_64` slice natively on Linux `x86_64` while translating Darwin syscalls, Mach IPC, Objective-C, Foundation, CoreFoundation, Security, and AppKit/Qt/CEF calls directly onto Linux primitives (SDL3, Wayland/XWayland, OpenSSL/rustls, etc.).
+The planned distribution channels are AppImage and Flatpak bundles on GitHub Releases, and `cutmary-git` on the Arch User Repository. As of 25 November 2026, the public releases list is empty and the AUR package is pending publication. The packaging recipes are already in the repository. [GitHub Releases](https://github.com/oriilol/cutmary/releases) · [AppImage build script](packaging/appimage/build-appimage.sh) · [Flatpak manifest](packaging/flatpak/org.cutmary.Cutmary.yml) · [Arch PKGBUILD](packaging/aur/PKGBUILD)
 
-> **Legal Notice:** This repository contains **only** open-source Rosemary compatibility patches, build/extraction scripts, and a Mach-O `x86_64` thinner. **No proprietary CapCut binaries, assets, or DMG files are included or redistributed here.** The scripts download the official macOS DMG directly from ByteDance's CDN onto your local machine.
+To use the launcher today, build it from source with Rust, GTK 4.12+, Libadwaita 1.5+ and GLib development tools. Install 7-Zip and a Vulkan driver for your GPU. The build script below prepares the patched runtime in a dedicated work directory.
 
----
+```sh
+git clone https://github.com/oriilol/cutmary.git
+cd cutmary
+./scripts/build-rosemary.sh
+cargo run --release --locked --manifest-path launcher/Cargo.toml
+```
 
-## Why macOS CapCut via Rosemary?
+1. In **Settings → Runtime (Rosemary)**, select the custom runner and choose `work/rosemary-src/target/release/rosemary` from the checkout.
+2. From **Home**, choose **Install CapCut** to download the official DMG, or **Use local .dmg…** to select your own. The version tested below is 9.8.0.4799. The online installer follows the current download.
+3. Choose **Launch**. The launcher removes stale empty project locks before startup. **Show Logs** opens the current session log. **Repair Drafts** in Settings can restore a damaged draft from its backup.
 
-- **Windows builds on Wine/Proton** suffer from anti-cheat/DRM hooks, DirectComposition/D3D11/WebView2 breakage, and frequent silent crashes on Linux.
-- **macOS CapCut (`CapCut_9_8_0_4799_nosandbox.dmg`)** ships with a clean Qt 6 (`libqcocoa.dylib`) + Chromium Embedded Framework (CEF) + Cronet + FFmpeg stack as a native `x86_64` Mach-O universal binary.
-- **Universal Binary Thinning (`scripts/thin-x86_64.py`)** strips the unused `arm64` slice from all **236 universal Mach-O binaries** inside `CapCut.app`, shrinking the bundle from **2,295.9 MiB -> 1,173.1 MiB** (**saving ~1.12 GB**).
+The Flatpak recipe uses Rosemary on the host. The AppImage builder can include a patched runtime through `ROSEMARY_BIN`. The Arch recipe packages the launcher. [Launcher settings, paths and build instructions](launcher/README.md)
 
----
+## Current status
 
-## Current Status
+CapCut 9.8.0.4799 was tested on CachyOS x86_64 with KDE Plasma Wayland and an NVIDIA GeForce RTX 5060 Ti.
 
-We have taken CapCut 9.8.0.4799 from failing immediately on the very first Mach-O symbol all the way through **90+ live threads** into the **Qt 6 / AppKit main GUI event loop** (`NSApplication -run` / `QApplication::exec()`):
+| Workflow | Result on this system |
+| --- | --- |
+| Start CapCut and open an existing project | Home and editor render at 1.25× scale. Maximizing the editor fills the window. |
+| Import photos | Several JPGs imported consecutively. Four clips showed thumbnails on the timeline. The Effects panel opened and the Export button became active. Exporting a file still needs a live test. |
+| Open the context menu | Position and transparency verified. Opening took about 150–190 ms in the recorded run, with intermittent opacity on the OpenGL path. |
+| Play the timeline or import MP4 video | Playback and end-to-end MP4 import remain open. Dragging clip edges also lags. |
 
-| Milestone | Status | Notes |
-| --- | :---: | --- |
-| Official macOS DMG fetch & extraction (`7zz` + 34 QML symlinks) | **Done** | Automated in `scripts/fetch-capcut-dmg.sh` |
-| `x86_64`-only Mach-O universal binary thinning (-1.12 GB) | **Done** | Automated in `scripts/thin-x86_64.py` |
-| `libcccreator.dylib` & `libVECreator.dylib` bootstrap | **Done** | GCD, `OSAtomic*`, `NSString`/`NSData`/`NSBundle`, Mach ports, `kevent64` |
-| Cronet HTTPS/TLS certificate chain verification (`libsscronet.dylib`) | **Done** | `SecPolicyCreateSSL`, 48-byte `CSSM_TP_APPLE_EVIDENCE_INFO`, DNS fallback |
-| `libvideoeditor.dylib` Mach-O `LC_CODE_SIGNATURE` self-verification | **Done** | Real `SecCodeCopySigningInformation` parsing `identifier`, `teamid`, `flags` |
-| Chromium Embedded Framework (CEF) + GPU Helper process spawn | **Done** | Pipe-backed `notify_register_file_descriptor`, `__sandbox_ms`, `_kernelrpc_*_trap` |
-| `Parfait.framework` crash handler initialization | **Done** | XNU default entry for `task_get_exception_ports` |
-| `bytenn` AI engine, `mobilecv2`, `MMKV` & `EffectSDK` init | **Done** | All 6 MMKV stores, VECodec callback, and `EffectABConfig` loaded cleanly |
-| Qt 6 platform plugin (`libqcocoa.dylib`, `libqmacstyle.dylib`) & main event loop | **Done** | Fixed upstream Rosemary `NSRunLoop` per-thread isolation bug |
-| Main window rendering at fractional Wayland scale (1.25x), no titlebar band | **Done** | Verified live on KDE Plasma Wayland + RTX 5060 Ti |
-| Photo import -> media panel -> timeline (thumbnails) -> effects panel | **Done** | Verified live; see `HANDOFF.md` |
-| Player playback, second import, video (`.mp4`) import, performance | **In Progress** | See open items in `HANDOFF.md` |
-| Portable AppImage / CachyOS binary build | **Scripted** | `scripts/package-appimage.sh` ready once window stability is verified |
-
----
+The handoff records the test conditions, measurements and outstanding work. [Verification notes](HANDOFF.md#resultados-cachyos)
 
 ## Architecture & Patch Series
 
-All Rosemary modifications live as four clean, auditable patches in [`patches/`](patches/) pinned to upstream Rosemary commit `411f2844cbd44754f727c2ebd22d7a168a506097`:
+All Rosemary modifications live as five clean, auditable patches in [`patches/`](patches/) pinned to upstream Rosemary commit `411f2844cbd44754f727c2ebd22d7a168a506097`:
 
 ```
 patches/
@@ -85,7 +75,7 @@ sudo pacman -S --needed git rust curl 7zip python sdl3 zlib fuse3
 
 ---
 
-## Quick Start
+## Manual runtime workflow
 
 ```bash
 # 1. Clone this repository
@@ -101,8 +91,12 @@ cd cutmary
 # 4. (Optional) Strip arm64 slices to save ~1.12 GB
 python3 ./scripts/thin-x86_64.py ./work/extracted/CapCut.app
 
-# 5. Launch CapCut under patched Rosemary
-./work/rosemary-src/target/release/rosemary ./work/extracted/CapCut.app
+# 5. With CapCut closed, remove stale empty locks before a manual launch
+drafts="$HOME/.local/share/rosemary/prefixes/default/root/Users/$USER/Movies/CapCut/User Data/Projects/com.lveditor.draft"
+if [ -d "$drafts" ]; then
+    find "$drafts" -mindepth 2 -maxdepth 2 -type f -name '*.locked' -size 0c -delete
+fi
+./work/rosemary-src/target/release/rosemary run --new-instance ./work/extracted/CapCut.app
 
 # 6. Package as a portable AppDir / AppImage (thinned to x86_64)
 ./scripts/package-appimage.sh ./work/rosemary-src/target/release/rosemary ./work/extracted/CapCut.app
