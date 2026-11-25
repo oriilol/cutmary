@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.cutmary.Cutmary</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Cutmary</name>
+  <summary>Run the macOS version of CapCut on Linux</summary>
+  <developer id="io.github.oriilol">
+    <name>Cutmary contributors</name>
+  </developer>
+  <description>
+    <p>
+      Cutmary is a native launcher that installs the official macOS build of the
+      CapCut video editor and runs it on Linux through the Rosemary compatibility
+      runtime, without Wine, Proton or a virtual machine.
+    </p>
+    <p>
+      Cutmary does not include CapCut. On first launch it downloads the official
+      installer from ByteDance onto your computer and prepares it:
+    </p>
+    <ul>
+      <li>Downloads and verifies the latest official macOS installer</li>
+      <li>Extracts the app and restores its internal framework links</li>
+      <li>Removes unused Apple Silicon code, saving about 1.1 GB of disk space</li>
+      <li>Starts CapCut with tuned Rosemary settings and keeps a log for bug reports</li>
+    </ul>
+    <p>
+      CapCut is a trademark of ByteDance Ltd. Cutmary is an independent project and
+      is not affiliated with or endorsed by ByteDance.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.cutmary.Cutmary.desktop</launchable>
+  <provides>
+    <binary>cutmary</binary>
+  </provides>
+  <url type="homepage">https://github.com/oriilol/cutmary</url>
+  <url type="bugtracker">https://github.com/oriilol/cutmary/issues</url>
+  <url type="vcs-browser">https://github.com/oriilol/cutmary</url>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+  </categories>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <branding>
+    <color type="primary" scheme_preference="light">#e6f2dc</color>
+    <color type="primary" scheme_preference="dark">#1f3b22</color>
+  </branding>
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-info">mild</content_attribute>
+  </content_rating>
+  <releases>
+    <release version="0.1.0" date="2026-11-25">
+      <description>
+        <p>First release of the Cutmary launcher: one-click CapCut setup, launch and stop, logs viewer, and Rosemary runtime settings.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -1,0 +1,69 @@
+# Flatpak manifest for the Cutmary launcher.
+#
+# Local build (from the repository root):
+#   python3 packaging/flatpak/generate-cargo-sources.py launcher/Cargo.lock \
+#       > packaging/flatpak/cargo-sources.json
+#   flatpak-builder --user --install --force-clean build-flatpak \
+#       packaging/flatpak/org.cutmary.Cutmary.yml
+#
+# Rosemary is not bundled: Cutmary runs the host's `rosemary` through
+# `flatpak-spawn --host` (hence org.freedesktop.Flatpak), so CapCut runs as a
+# normal host process with Rosemary's own GPU, audio and window access.
+# A Flatpak-bundled Rosemary at /app/bin/rosemary would be picked up first.
+id: org.cutmary.Cutmary
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: cutmary
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Launch the host's Rosemary runtime.
+  - --talk-name=org.freedesktop.Flatpak
+  # Rosemary prefixes (including CapCut projects) live on the host.
+  - --filesystem=~/.local/share/rosemary:create
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+modules:
+  # 7-Zip (7zz) extracts the HFS+/APFS CapCut DMG.
+  - name: 7zip
+    buildsystem: simple
+    build-commands:
+      - make -C CPP/7zip/Bundles/Alone2 -f makefile.gcc -j${FLATPAK_BUILDER_N_JOBS}
+        CFLAGS_WARN_WALL="-Wall -Wextra"
+      - install -Dm755 CPP/7zip/Bundles/Alone2/_o/7zz /app/bin/7zz
+    sources:
+      - type: archive
+        url: https://github.com/ip7z/7zip/releases/download/26.06/7z2606-src.tar.xz
+        sha256: a4e374c8f864f51df48c2cfd0e1413ec3b2ea030deae852d6a655402ebb61ac4
+        strip-components: 0
+
+  - name: cutmary
+    buildsystem: simple
+    build-options:
+      env:
+        CARGO_HOME: /run/build/cutmary/cargo
+        CARGO_NET_OFFLINE: 'true'
+    build-commands:
+      - cargo --offline build --release --locked --manifest-path launcher/Cargo.toml
+      - install -Dm755 launcher/target/release/cutmary /app/bin/cutmary
+      - install -Dm644 packaging/org.cutmary.Cutmary.desktop /app/share/applications/org.cutmary.Cutmary.desktop
+      - install -Dm644 packaging/org.cutmary.Cutmary.metainfo.xml /app/share/metainfo/org.cutmary.Cutmary.metainfo.xml
+      - for size in 16 24 32 48 64 128 256 512; do install -Dm644 launcher/assets/icons/hicolor/${size}x${size}/apps/org.cutmary.Cutmary.png
+        /app/share/icons/hicolor/${size}x${size}/apps/org.cutmary.Cutmary.png; done
+    sources:
+      # For Flathub, replace with: {type: git, url: https://github.com/oriilol/cutmary.git, tag: v0.1.0, commit: ...}
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - launcher/target
+          - work
+          - build-flatpak
+          - .flatpak-builder
+      - cargo-sources.json

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Cutmary
+GenericName=CapCut Launcher
+Comment=Install and run the macOS version of CapCut on Linux with Rosemary
+Exec=cutmary
+Icon=org.cutmary.Cutmary
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+Keywords=CapCut;video;editor;Rosemary;macOS;launcher;
+StartupNotify=true
+SingleMainWindow=true
