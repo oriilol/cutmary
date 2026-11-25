@@ -1,8 +1,8 @@
 diff --git a/crates/appkit/src/backing.rs b/crates/appkit/src/backing.rs
-index 9f459b6a..70a43f58 100644
+index 9f459b6a..26746c61 100644
 --- a/crates/appkit/src/backing.rs
 +++ b/crates/appkit/src/backing.rs
-@@ -4729,10 +4729,116 @@ unsafe extern "C" fn zero(_receiver: Id, _sel: Sel) -> isize {
+@@ -4729,26 +4729,205 @@ unsafe extern "C" fn zero(_receiver: Id, _sel: Sel) -> isize {
      0
  }
  
@@ -32,13 +32,42 @@ index 9f459b6a..70a43f58 100644
 +    (1, 3)
 +}
 +
++fn make_immortal_color_space(model: isize, components: isize) -> Id {
++    let class = objc::class::lookup(c"NSColorSpace").expect("declared");
++    let obj = objc::object::create_instance(class, 0);
++    objc::arc::make_immortal(obj);
++    let owned_data = corefoundation::collections::new_data(crate::icc::srgb_profile()) as usize;
++    color_spaces()
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .insert(
++            obj as usize,
++            ColorSpaceState {
++                icc_data: owned_data,
++                model,
++                components,
++            },
++        );
++    obj
++}
++
  pub(crate) unsafe extern "C" fn shared_color_space(_receiver: Id, _sel: Sel) -> Id {
      shared_instance(c"NSColorSpace")
  }
  
++unsafe extern "C" fn shared_gray_color_space(_receiver: Id, _sel: Sel) -> Id {
++    static GRAY: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
++    *GRAY.get_or_init(|| make_immortal_color_space(0, 1) as usize) as Id
++}
++
++unsafe extern "C" fn shared_cmyk_color_space(_receiver: Id, _sel: Sel) -> Id {
++    static CMYK: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
++    *CMYK.get_or_init(|| make_immortal_color_space(2, 4) as usize) as Id
++}
++
 +/// `-[NSColorSpace initWithICCProfileData:]`: parses the ICC color space model
-+/// and retains an immutable copy of the profile bytes (falling back to sRGB if
-+/// the caller passes empty or non-CFData input).
++/// and retains an immutable copy of the profile bytes. Returns `nil` when
++/// `icc_data` is nil or empty, matching macOS.
 +unsafe extern "C" fn color_space_init_with_icc(receiver: Id, _sel: Sel, icc_data: Id) -> Id {
 +    if receiver.is_null() {
 +        return std::ptr::null_mut();
@@ -48,10 +77,13 @@ index 9f459b6a..70a43f58 100644
 +        return std::ptr::null_mut();
 +    }
 +    // SAFETY: `icc_data` is non-null and expected to be an `NSData` / `CFData`.
-+    let bytes = unsafe { corefoundation::collections::data(icc_data as *const c_void) }
++    let Some(bytes) = (unsafe { corefoundation::collections::data(icc_data as *const c_void) })
 +        .filter(|b| !b.is_empty())
 +        .cloned()
-+        .unwrap_or_else(crate::icc::srgb_profile);
++    else {
++        objc::arc::release(receiver);
++        return std::ptr::null_mut();
++    };
 +    let (model, components) = parse_icc_model_and_components(&bytes);
 +    let owned_data = corefoundation::collections::new_data(bytes) as usize;
 +    let prev = color_spaces()
@@ -85,6 +117,12 @@ index 9f459b6a..70a43f58 100644
 +        objc::arc::release(receiver);
 +        return std::ptr::null_mut();
 +    }
++    let components = crate::graphics::space_components(cg_space).unwrap_or(3) as isize;
++    let model = match components {
++        1 => 0, // NSColorSpaceModelGray
++        4 => 2, // NSColorSpaceModelCMYK
++        _ => 1, // NSColorSpaceModelRGB
++    };
 +    let bytes = crate::icc::srgb_profile();
 +    let owned_data = corefoundation::collections::new_data(bytes) as usize;
 +    let prev = color_spaces()
@@ -94,8 +132,8 @@ index 9f459b6a..70a43f58 100644
 +            receiver as usize,
 +            ColorSpaceState {
 +                icc_data: owned_data,
-+                model: 1,
-+                components: 3,
++                model,
++                components,
 +            },
 +        );
 +    if let Some(old) = prev {
@@ -117,9 +155,23 @@ index 9f459b6a..70a43f58 100644
 +}
 +
  /// `-[NSColorSpace CGColorSpace]`, which the caller does not own.
- unsafe extern "C" fn cg_color_space(_receiver: Id, _sel: Sel) -> *const c_void {
+-unsafe extern "C" fn cg_color_space(_receiver: Id, _sel: Sel) -> *const c_void {
++unsafe extern "C" fn cg_color_space(receiver: Id, _sel: Sel) -> *const c_void {
++    let model = color_spaces()
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .get(&(receiver as usize))
++        .map_or(1, |s| s.model);
++    if model == 0 {
++        static GRAY_SPACE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
++        // SAFETY: creates an object this runtime keeps for the process.
++        return *GRAY_SPACE
++            .get_or_init(|| unsafe { crate::graphics::CGColorSpaceCreateDeviceGray() } as usize)
++            as *const c_void;
++    }
      static SPACE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-@@ -4741,14 +4847,37 @@ unsafe extern "C" fn cg_color_space(_receiver: Id, _sel: Sel) -> *const c_void {
+     // SAFETY: creates an object this runtime keeps for the process.
+     *SPACE.get_or_init(|| unsafe { crate::graphics::CGColorSpaceCreateDeviceRGB() } as usize)
          as *const c_void
  }
  
@@ -160,17 +212,17 @@ index 9f459b6a..70a43f58 100644
  pub(crate) fn install() {
      let view = objc::class::lookup(c"NSView").expect("declared before its methods");
      methods!(view, {
-@@ -4786,10 +4915,22 @@ pub(crate) fn install() {
+@@ -4786,10 +4965,22 @@ pub(crate) fn install() {
          "sRGBColorSpace" => shared_color_space, c"@16@0:8";
          "deviceRGBColorSpace" => shared_color_space, c"@16@0:8";
          "genericRGBColorSpace" => shared_color_space, c"@16@0:8";
 +        "extendedSRGBColorSpace" => shared_color_space, c"@16@0:8";
 +        "displayP3ColorSpace" => shared_color_space, c"@16@0:8";
 +        "adobeRGB1998ColorSpace" => shared_color_space, c"@16@0:8";
-+        "genericGrayColorSpace" => shared_color_space, c"@16@0:8";
-+        "deviceGrayColorSpace" => shared_color_space, c"@16@0:8";
-+        "genericCMYKColorSpace" => shared_color_space, c"@16@0:8";
-+        "deviceCMYKColorSpace" => shared_color_space, c"@16@0:8";
++        "genericGrayColorSpace" => shared_gray_color_space, c"@16@0:8";
++        "deviceGrayColorSpace" => shared_gray_color_space, c"@16@0:8";
++        "genericCMYKColorSpace" => shared_cmyk_color_space, c"@16@0:8";
++        "deviceCMYKColorSpace" => shared_cmyk_color_space, c"@16@0:8";
      });
      methods!(space, {
 +        "initWithICCProfileData:" => color_space_init_with_icc, c"@24@0:8@16";
