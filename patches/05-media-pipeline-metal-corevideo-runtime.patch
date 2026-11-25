@@ -4061,6 +4061,168 @@ index fc4d6388..5ebc71fa 100644
      #[test]
      fn a_started_link_calls_back_on_its_own_thread() {
          FIRED.store(0, Ordering::SeqCst);
+diff --git a/crates/corevideo/src/pixel_buffer/attachments.rs b/crates/corevideo/src/pixel_buffer/attachments.rs
+index 4952c0d5..4ae8b2c6 100644
+--- a/crates/corevideo/src/pixel_buffer/attachments.rs
++++ b/crates/corevideo/src/pixel_buffer/attachments.rs
+@@ -99,6 +99,61 @@ pub unsafe extern "C" fn CVBufferSetAttachment(
+     with(buffer, |a| a.set(key, value, mode));
+ }
+ 
++pub unsafe extern "C" fn CVBufferHasAttachment(buffer: CFTypeRef, key: CFTypeRef) -> u8 {
++    refuse_foreign(c"CVBufferHasAttachment", buffer);
++    with(buffer, |a| !key.is_null() && a.get(key).is_some()).unwrap_or(false) as u8
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Default, Debug, PartialEq)]
++pub struct CGRect {
++    pub x: f64,
++    pub y: f64,
++    pub width: f64,
++    pub height: f64,
++}
++
++pub unsafe extern "C" fn CVImageBufferGetCleanRect(buffer: CFTypeRef) -> CGRect {
++    forward_foreign!(
++        c"CVImageBufferGetCleanRect",
++        buffer,
++        fn(CFTypeRef) -> CGRect,
++        (buffer)
++    );
++    let Some(state) = state(buffer) else {
++        return CGRect::default();
++    };
++    let full = CGRect {
++        width: state.width as f64,
++        height: state.height as f64,
++        ..Default::default()
++    };
++    with(buffer, |a| {
++        let (aperture, _) = a.get(super::key("CVCleanAperture"))?;
++        let dict = unsafe { corefoundation::collections::dictionary(aperture) }?;
++        let number = |name| {
++            let value = dict.get(super::key(name))?;
++            unsafe { corefoundation::collections::number(value) }
++                .map(|n| n.as_f64())
++                .filter(|n| n.is_finite())
++        };
++        let width = number("Width")?;
++        let height = number("Height")?;
++        if width <= 0.0 || height <= 0.0 {
++            return None;
++        }
++        // The aperture offset increases downwards; Quartz's origin is bottom left.
++        Some(CGRect {
++            x: (full.width - width) / 2.0 + number("HorizontalOffset").unwrap_or(0.0),
++            y: (full.height - height) / 2.0 - number("VerticalOffset").unwrap_or(0.0),
++            width,
++            height,
++        })
++    })
++    .flatten()
++    .unwrap_or(full)
++}
++
+ /// `CFTypeRef CVBufferGetAttachment(CVBufferRef, CFStringRef key,
+ /// CVAttachmentMode *)`, under the get rule.
+ pub unsafe extern "C" fn CVBufferGetAttachment(
+@@ -273,6 +328,7 @@ mod tests {
+             assert!(CVBufferGetAttachment(b, matrix, std::ptr::null_mut()).is_null());
+             assert!(CVBufferGetAttachments(b, SHOULD_PROPAGATE).is_null());
+             CVBufferSetAttachment(b, matrix, value, SHOULD_PROPAGATE);
++            assert_eq!(CVBufferHasAttachment(b, matrix), 1);
+             let mut mode = 7;
+             assert_eq!(CVBufferGetAttachment(b, matrix, &mut mode), value);
+             assert_eq!(mode, SHOULD_PROPAGATE);
+@@ -292,7 +348,9 @@ mod tests {
+             let copied = CVBufferCopyAttachment(b, matrix, std::ptr::null_mut());
+             assert_eq!(copied, value);
+             corefoundation::api::CFRelease(copied);
++            assert_eq!(CVBufferHasAttachment(b, matrix), 1);
+             CVBufferRemoveAttachment(b, matrix);
++            assert_eq!(CVBufferHasAttachment(b, matrix), 0);
+             assert!(CVBufferGetAttachment(b, matrix, std::ptr::null_mut()).is_null());
+             CVPixelBufferRelease(b);
+         }
+diff --git a/crates/corevideo/src/pixel_buffer/color.rs b/crates/corevideo/src/pixel_buffer/color.rs
+new file mode 100644
+index 00000000..f4b355e4
+--- /dev/null
++++ b/crates/corevideo/src/pixel_buffer/color.rs
+@@ -0,0 +1,72 @@
++//! H.273 / ISO/IEC 23091-2 code points representable by CoreVideo attachment values.
++
++use super::{CFTypeRef, key};
++
++pub extern "C" fn CVColorPrimariesGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
++    key(match code {
++        1 => "ITU_R_709_2",
++        5 => "EBU_3213",
++        6 | 7 => "SMPTE_C",
++        9 => "ITU_R_2020",
++        11 => "DCI_P3",
++        12 => "P3_D65",
++        _ => return std::ptr::null(),
++    })
++}
++
++pub extern "C" fn CVTransferFunctionGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
++    key(match code {
++        1 | 6 => "ITU_R_709_2",
++        4 | 5 => "UseGamma",
++        7 => "SMPTE_240M_1995",
++        8 => "Linear",
++        13 => "sRGB",
++        14 | 15 => "ITU_R_2020",
++        16 => "SMPTE_ST_2084_PQ",
++        17 => "SMPTE_ST_428_1",
++        18 => "ITU_R_2100_HLG",
++        _ => return std::ptr::null(),
++    })
++}
++
++pub extern "C" fn CVYCbCrMatrixGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
++    key(match code {
++        1 => "ITU_R_709_2",
++        5 | 6 => "ITU_R_601_4",
++        7 => "SMPTE_240M_1995",
++        9 => "ITU_R_2020",
++        _ => return std::ptr::null(),
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn code_points_return_borrowed_constants_in_their_own_domain() {
++        for (code, expected) in [(1, "ITU_R_709_2"), (9, "ITU_R_2020"), (12, "P3_D65")] {
++            assert_eq!(
++                CVColorPrimariesGetStringForIntegerCodePoint(code),
++                key(expected)
++            );
++        }
++        assert_eq!(
++            CVTransferFunctionGetStringForIntegerCodePoint(16),
++            key("SMPTE_ST_2084_PQ")
++        );
++        assert_eq!(
++            CVTransferFunctionGetStringForIntegerCodePoint(18),
++            key("ITU_R_2100_HLG")
++        );
++        assert_eq!(
++            CVYCbCrMatrixGetStringForIntegerCodePoint(6),
++            key("ITU_R_601_4")
++        );
++        for code in [-1, 2, 255] {
++            assert!(CVColorPrimariesGetStringForIntegerCodePoint(code).is_null());
++            assert!(CVTransferFunctionGetStringForIntegerCodePoint(code).is_null());
++            assert!(CVYCbCrMatrixGetStringForIntegerCodePoint(code).is_null());
++        }
++    }
++}
 diff --git a/crates/corevideo/src/pixel_buffer.rs b/crates/corevideo/src/pixel_buffer.rs
 index a1e29683..d312601f 100644
 --- a/crates/corevideo/src/pixel_buffer.rs
@@ -4285,168 +4447,6 @@ index a1e29683..d312601f 100644
      #[test]
      fn bgra_stride_lock_and_cf_ownership() {
          let b = create(7, 5, BGRA);
-diff --git a/crates/corevideo/src/pixel_buffer/attachments.rs b/crates/corevideo/src/pixel_buffer/attachments.rs
-index 4952c0d5..4ae8b2c6 100644
---- a/crates/corevideo/src/pixel_buffer/attachments.rs
-+++ b/crates/corevideo/src/pixel_buffer/attachments.rs
-@@ -99,6 +99,61 @@ pub unsafe extern "C" fn CVBufferSetAttachment(
-     with(buffer, |a| a.set(key, value, mode));
- }
- 
-+pub unsafe extern "C" fn CVBufferHasAttachment(buffer: CFTypeRef, key: CFTypeRef) -> u8 {
-+    refuse_foreign(c"CVBufferHasAttachment", buffer);
-+    with(buffer, |a| !key.is_null() && a.get(key).is_some()).unwrap_or(false) as u8
-+}
-+
-+#[repr(C)]
-+#[derive(Clone, Copy, Default, Debug, PartialEq)]
-+pub struct CGRect {
-+    pub x: f64,
-+    pub y: f64,
-+    pub width: f64,
-+    pub height: f64,
-+}
-+
-+pub unsafe extern "C" fn CVImageBufferGetCleanRect(buffer: CFTypeRef) -> CGRect {
-+    forward_foreign!(
-+        c"CVImageBufferGetCleanRect",
-+        buffer,
-+        fn(CFTypeRef) -> CGRect,
-+        (buffer)
-+    );
-+    let Some(state) = state(buffer) else {
-+        return CGRect::default();
-+    };
-+    let full = CGRect {
-+        width: state.width as f64,
-+        height: state.height as f64,
-+        ..Default::default()
-+    };
-+    with(buffer, |a| {
-+        let (aperture, _) = a.get(super::key("CVCleanAperture"))?;
-+        let dict = unsafe { corefoundation::collections::dictionary(aperture) }?;
-+        let number = |name| {
-+            let value = dict.get(super::key(name))?;
-+            unsafe { corefoundation::collections::number(value) }
-+                .map(|n| n.as_f64())
-+                .filter(|n| n.is_finite())
-+        };
-+        let width = number("Width")?;
-+        let height = number("Height")?;
-+        if width <= 0.0 || height <= 0.0 {
-+            return None;
-+        }
-+        // The aperture offset increases downwards; Quartz's origin is bottom left.
-+        Some(CGRect {
-+            x: (full.width - width) / 2.0 + number("HorizontalOffset").unwrap_or(0.0),
-+            y: (full.height - height) / 2.0 - number("VerticalOffset").unwrap_or(0.0),
-+            width,
-+            height,
-+        })
-+    })
-+    .flatten()
-+    .unwrap_or(full)
-+}
-+
- /// `CFTypeRef CVBufferGetAttachment(CVBufferRef, CFStringRef key,
- /// CVAttachmentMode *)`, under the get rule.
- pub unsafe extern "C" fn CVBufferGetAttachment(
-@@ -273,6 +328,7 @@ mod tests {
-             assert!(CVBufferGetAttachment(b, matrix, std::ptr::null_mut()).is_null());
-             assert!(CVBufferGetAttachments(b, SHOULD_PROPAGATE).is_null());
-             CVBufferSetAttachment(b, matrix, value, SHOULD_PROPAGATE);
-+            assert_eq!(CVBufferHasAttachment(b, matrix), 1);
-             let mut mode = 7;
-             assert_eq!(CVBufferGetAttachment(b, matrix, &mut mode), value);
-             assert_eq!(mode, SHOULD_PROPAGATE);
-@@ -292,7 +348,9 @@ mod tests {
-             let copied = CVBufferCopyAttachment(b, matrix, std::ptr::null_mut());
-             assert_eq!(copied, value);
-             corefoundation::api::CFRelease(copied);
-+            assert_eq!(CVBufferHasAttachment(b, matrix), 1);
-             CVBufferRemoveAttachment(b, matrix);
-+            assert_eq!(CVBufferHasAttachment(b, matrix), 0);
-             assert!(CVBufferGetAttachment(b, matrix, std::ptr::null_mut()).is_null());
-             CVPixelBufferRelease(b);
-         }
-diff --git a/crates/corevideo/src/pixel_buffer/color.rs b/crates/corevideo/src/pixel_buffer/color.rs
-new file mode 100644
-index 00000000..f4b355e4
---- /dev/null
-+++ b/crates/corevideo/src/pixel_buffer/color.rs
-@@ -0,0 +1,72 @@
-+//! H.273 / ISO/IEC 23091-2 code points representable by CoreVideo attachment values.
-+
-+use super::{CFTypeRef, key};
-+
-+pub extern "C" fn CVColorPrimariesGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
-+    key(match code {
-+        1 => "ITU_R_709_2",
-+        5 => "EBU_3213",
-+        6 | 7 => "SMPTE_C",
-+        9 => "ITU_R_2020",
-+        11 => "DCI_P3",
-+        12 => "P3_D65",
-+        _ => return std::ptr::null(),
-+    })
-+}
-+
-+pub extern "C" fn CVTransferFunctionGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
-+    key(match code {
-+        1 | 6 => "ITU_R_709_2",
-+        4 | 5 => "UseGamma",
-+        7 => "SMPTE_240M_1995",
-+        8 => "Linear",
-+        13 => "sRGB",
-+        14 | 15 => "ITU_R_2020",
-+        16 => "SMPTE_ST_2084_PQ",
-+        17 => "SMPTE_ST_428_1",
-+        18 => "ITU_R_2100_HLG",
-+        _ => return std::ptr::null(),
-+    })
-+}
-+
-+pub extern "C" fn CVYCbCrMatrixGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
-+    key(match code {
-+        1 => "ITU_R_709_2",
-+        5 | 6 => "ITU_R_601_4",
-+        7 => "SMPTE_240M_1995",
-+        9 => "ITU_R_2020",
-+        _ => return std::ptr::null(),
-+    })
-+}
-+
-+#[cfg(test)]
-+mod tests {
-+    use super::*;
-+
-+    #[test]
-+    fn code_points_return_borrowed_constants_in_their_own_domain() {
-+        for (code, expected) in [(1, "ITU_R_709_2"), (9, "ITU_R_2020"), (12, "P3_D65")] {
-+            assert_eq!(
-+                CVColorPrimariesGetStringForIntegerCodePoint(code),
-+                key(expected)
-+            );
-+        }
-+        assert_eq!(
-+            CVTransferFunctionGetStringForIntegerCodePoint(16),
-+            key("SMPTE_ST_2084_PQ")
-+        );
-+        assert_eq!(
-+            CVTransferFunctionGetStringForIntegerCodePoint(18),
-+            key("ITU_R_2100_HLG")
-+        );
-+        assert_eq!(
-+            CVYCbCrMatrixGetStringForIntegerCodePoint(6),
-+            key("ITU_R_601_4")
-+        );
-+        for code in [-1, 2, 255] {
-+            assert!(CVColorPrimariesGetStringForIntegerCodePoint(code).is_null());
-+            assert!(CVTransferFunctionGetStringForIntegerCodePoint(code).is_null());
-+            assert!(CVYCbCrMatrixGetStringForIntegerCodePoint(code).is_null());
-+        }
-+    }
-+}
 diff --git a/crates/corevideo/src/pixel_buffer/surface.rs b/crates/corevideo/src/pixel_buffer/surface.rs
 new file mode 100644
 index 00000000..e5757e6e
@@ -5323,15 +5323,15 @@ index 00000000..8a28b0fb
 +    }
 +}
 diff --git a/crates/metal/src/device.rs b/crates/metal/src/device.rs
-index f38422e9..6c4793b6 100644
+index f38422e9..aadf3f41 100644
 --- a/crates/metal/src/device.rs
 +++ b/crates/metal/src/device.rs
-@@ -147,6 +147,24 @@ pub(super) unsafe extern "C" fn new_compute_pipeline(
+@@ -147,6 +147,37 @@ pub(super) unsafe extern "C" fn new_compute_pipeline(
      }
  }
  
-+/// `-newRenderPipelineStateWithDescriptor:options:reflection:error:`: as the
-+/// compute forms, no reflection is made, so the out-parameter is nil.
++/// `-newRenderPipelineStateWithDescriptor:options:reflection:error:`: the
++/// reflection lists each stage's arguments from the translation.
 +pub(super) unsafe extern "C" fn new_render_pipeline_with_reflection(
 +    receiver: Id,
 +    sel: Sel,
@@ -5345,12 +5345,34 @@ index f38422e9..6c4793b6 100644
 +        unsafe { *reflection = std::ptr::null_mut() };
 +    }
 +    // SAFETY: the same call without reflection.
-+    unsafe { new_render_pipeline(receiver, sel, descriptor, error) }
++    let state = unsafe { new_render_pipeline(receiver, sel, descriptor, error) };
++    if !state.is_null() && !reflection.is_null() {
++        // SAFETY: a pipeline was made, so the descriptor is this crate's.
++        let described =
++            unsafe { object::body::<pipeline::RenderPipelineDescriptor>(descriptor) };
++        // SAFETY: the guest passed a writable pointer; functions or nil.
++        unsafe {
++            *reflection = crate::reflection::render(
++                artifact_of(described.vertex_function),
++                artifact_of(described.fragment_function),
++            );
++        }
++    }
++    state
 +}
 +
  pub(super) unsafe extern "C" fn new_render_pipeline(
      receiver: Id,
      _sel: Sel,
+@@ -200,7 +231,7 @@ pub(super) unsafe extern "C" fn new_render_pipeline(
+ /// # Safety
+ ///
+ /// `function` must be null or an `RosemaryMTLFunction`.
+-pub(super) unsafe fn artifact_of(function: Id) -> Option<&'static metal_translate::EntryArtifact> {
++pub(crate) unsafe fn artifact_of(function: Id) -> Option<&'static metal_translate::EntryArtifact> {
+     if function.is_null() || !object::is_kind(function, c"RosemaryMTLFunction") {
+         return None;
+     }
 diff --git a/crates/metal/src/encoder/mod.rs b/crates/metal/src/encoder/mod.rs
 index a00126ec..fb480c4f 100644
 --- a/crates/metal/src/encoder/mod.rs
@@ -5381,10 +5403,18 @@ index a00126ec..fb480c4f 100644
          "dealloc" => encoder_dealloc, c"v16@0:8";
          "setComputePipelineState:" => set_compute_pipeline, c"v24@0:8@16";
 diff --git a/crates/metal/src/lib.rs b/crates/metal/src/lib.rs
-index e3039156..b4c5fa9e 100644
+index e3039156..a7336c14 100644
 --- a/crates/metal/src/lib.rs
 +++ b/crates/metal/src/lib.rs
-@@ -260,6 +260,8 @@ pub fn bootstrap() {
+@@ -19,6 +19,7 @@ mod overlay;
+ mod pipeline;
+ mod present;
+ mod profile;
++mod reflection;
+ mod resource;
+ pub mod stats;
+ mod submission;
+@@ -260,6 +261,8 @@ pub fn bootstrap() {
                  c"@32@0:8@16^@24";
              "newRenderPipelineStateWithDescriptor:error:" => new_render_pipeline,
                  c"@32@0:8@16^@24";
@@ -5393,6 +5423,446 @@ index e3039156..b4c5fa9e 100644
              "currentAllocatedSize" => current_allocated_size, c"Q16@0:8";
              "newFence" => new_fence, c"@16@0:8";
              "newEvent" => new_event, c"@16@0:8";
+diff --git a/crates/metal/src/pipeline/compute_descriptor.rs b/crates/metal/src/pipeline/compute_descriptor.rs
+index d5298462..d5cd5a78 100644
+--- a/crates/metal/src/pipeline/compute_descriptor.rs
++++ b/crates/metal/src/pipeline/compute_descriptor.rs
+@@ -74,7 +74,7 @@ unsafe extern "C" fn set_object_value(receiver: Id, sel: Sel, value: Id) {
+ 
+ /// `-[MTLDevice newComputePipelineStateWithDescriptor:options:reflection:error:]`.
+ ///
+-/// No reflection object is made. A stage input descriptor describes a
++/// The reflection lists the kernel's arguments. A stage input descriptor describes a
+ /// kernel's `[[stage_in]]`, which no translated kernel has, so it has nothing
+ /// to configure.
+ pub(crate) unsafe extern "C" fn new_with_descriptor(
+@@ -91,7 +91,20 @@ pub(crate) unsafe extern "C" fn new_with_descriptor(
+     }
+     let function = descriptor_function(descriptor);
+     // SAFETY: the same call with the descriptor's function.
+-    unsafe { crate::device::new_compute_pipeline(device, sel, function, error) }
++    let state = unsafe { crate::device::new_compute_pipeline(device, sel, function, error) };
++    reflect(state, function, reflection);
++    state
++}
++
++/// Hand back a compute reflection for a made pipeline: engines such as AGFX
++/// treat a nil reflection as a failed pipeline.
++fn reflect(state: Id, function: Id, reflection: *mut Id) {
++    if !state.is_null() && !reflection.is_null() {
++        // SAFETY: the guest passed a writable pointer; a function or nil.
++        unsafe {
++            *reflection = crate::reflection::compute(crate::device::artifact_of(function));
++        }
++    }
+ }
+ 
+ /// The function a compute pipeline descriptor names, or nil.
+@@ -118,7 +131,9 @@ pub(crate) unsafe extern "C" fn new_with_function_reflection(
+         unsafe { *reflection = std::ptr::null_mut() };
+     }
+     // SAFETY: the same call without reflection.
+-    unsafe { crate::device::new_compute_pipeline(device, sel, function, error) }
++    let state = unsafe { crate::device::new_compute_pipeline(device, sel, function, error) };
++    reflect(state, function, reflection);
++    state
+ }
+ 
+ pub(super) fn install() {
+diff --git a/crates/metal/src/pipeline/mod.rs b/crates/metal/src/pipeline/mod.rs
+index dd652b28..44464a55 100644
+--- a/crates/metal/src/pipeline/mod.rs
++++ b/crates/metal/src/pipeline/mod.rs
+@@ -403,6 +403,7 @@ unsafe extern "C" fn set_compile_language_version(receiver: Id, _sel: Sel, value
+ pub(crate) fn install() {
+     buffer_descriptor::install();
+     compute_descriptor::install();
++    crate::reflection::install();
+     let descriptor = object::register::<RenderPipelineDescriptor>(c"MTLRenderPipelineDescriptor");
+     let color = object::register::<ColorElement>(c"RosemaryMTLColorAttachmentDescriptor");
+     // Of `MTLCompileOptions` only the preprocessor macros change what a
+diff --git a/crates/metal/src/reflection.rs b/crates/metal/src/reflection.rs
+new file mode 100644
+index 00000000..ccf6460a
+--- /dev/null
++++ b/crates/metal/src/reflection.rs
+@@ -0,0 +1,376 @@
++//! `MTLRenderPipelineReflection` / `MTLComputePipelineReflection`, built from
++//! the translator's argument reflection. Engines such as AGFX treat a nil
++//! reflection as a failed pipeline and bind uniforms by struct member name.
++
++use corefoundation::base::CFTypeRef;
++use metal_translate::{ArgumentReflection, EntryArtifact, ReflectedType};
++use objc::object::Id;
++use objc::sel::Sel;
++
++use crate::object::{self, methods};
++
++struct Argument {
++    name: Id,
++    kind: u64,
++    access: u64,
++    index: u64,
++    array_length: u64,
++    texture_type: u64,
++    texture_data_type: u64,
++    data_type: u64,
++    size: u64,
++    alignment: u64,
++    struct_type: Id,
++    array_type: Id,
++}
++
++struct StructType {
++    members: Id,
++    list: Vec<Id>,
++}
++
++struct Member {
++    name: Id,
++    offset: u64,
++    data_type: u64,
++    struct_type: Id,
++    array_type: Id,
++}
++
++struct ArrayType {
++    element_type: u64,
++    length: u64,
++    stride: u64,
++    struct_type: Id,
++    array_type: Id,
++}
++
++struct Reflection {
++    first: Id,
++    second: Id,
++}
++
++fn array(items: &[Id]) -> Id {
++    let refs: Vec<CFTypeRef> = items.iter().map(|item| *item as CFTypeRef).collect();
++    corefoundation::collections::new_array(
++        &refs,
++        corefoundation::callbacks::Policy::from_type_callbacks(),
++        false,
++    ) as Id
++}
++
++/// The struct and array type objects (+1) a reflected type has, if any.
++fn nested(ty: &ReflectedType) -> (Id, Id) {
++    match ty {
++        ReflectedType::Data { .. } => (std::ptr::null_mut(), std::ptr::null_mut()),
++        ReflectedType::Struct { members, .. } => {
++            let list: Vec<Id> = members
++                .iter()
++                .map(|member| {
++                    let (struct_type, array_type) = nested(&member.ty);
++                    object::make(
++                        c"RosemaryMTLStructMember",
++                        Member {
++                            name: foundation::string::from_str(&member.name),
++                            offset: u64::from(member.offset),
++                            data_type: member.ty.data_type(),
++                            struct_type,
++                            array_type,
++                        },
++                    )
++                })
++                .collect();
++            let members = array(&list);
++            (
++                object::make(c"RosemaryMTLStructType", StructType { members, list }),
++                std::ptr::null_mut(),
++            )
++        }
++        ReflectedType::Array {
++            element,
++            count,
++            stride,
++        } => {
++            let (struct_type, array_type) = nested(element);
++            (
++                std::ptr::null_mut(),
++                object::make(
++                    c"RosemaryMTLArrayType",
++                    ArrayType {
++                        element_type: element.data_type(),
++                        length: u64::from(*count),
++                        stride: u64::from(*stride),
++                        struct_type,
++                        array_type,
++                    },
++                ),
++            )
++        }
++    }
++}
++
++fn argument(reflected: &ArgumentReflection) -> Id {
++    use metal_translate::ir::{Access, ResourceKind};
++    let kind = match reflected.kind {
++        ResourceKind::Texture => 2,
++        ResourceKind::Sampler => 3,
++        _ => 0,
++    };
++    let access = match reflected.access {
++        Access::ReadWrite => 1,
++        Access::Write => 2,
++        _ => 0,
++    };
++    let (data_type, size, alignment, struct_type, array_type) = match &reflected.buffer {
++        Some(ty) => {
++            let (size, alignment) = ty.size_alignment();
++            let (struct_type, array_type) = nested(ty);
++            (ty.data_type(), size, alignment, struct_type, array_type)
++        }
++        None => (0, 0, 0, std::ptr::null_mut(), std::ptr::null_mut()),
++    };
++    object::make(
++        c"RosemaryMTLArgument",
++        Argument {
++            name: foundation::string::from_str(&reflected.name),
++            kind,
++            access,
++            index: u64::from(reflected.index),
++            array_length: u64::from(reflected.count.max(1)),
++            texture_type: reflected.texture_type,
++            texture_data_type: reflected.texture_data_type,
++            data_type,
++            size: u64::from(size),
++            alignment: u64::from(alignment),
++            struct_type,
++            array_type,
++        },
++    )
++}
++
++/// A +1 `NSArray` of `MTLArgument`s for an entry point (empty without one).
++fn arguments(artifact: Option<&EntryArtifact>) -> Id {
++    let list: Vec<Id> = artifact
++        .map(|artifact| artifact.arguments.iter().map(argument).collect())
++        .unwrap_or_default();
++    let result = array(&list);
++    for item in list {
++        objc::arc::release(item);
++    }
++    result
++}
++
++/// An autoreleased `MTLRenderPipelineReflection`.
++pub(crate) fn render(vertex: Option<&EntryArtifact>, fragment: Option<&EntryArtifact>) -> Id {
++    let reflection = object::make(
++        c"RosemaryMTLRenderPipelineReflection",
++        Reflection {
++            first: arguments(vertex),
++            second: arguments(fragment),
++        },
++    );
++    objc::arc::autorelease(reflection)
++}
++
++/// An autoreleased `MTLComputePipelineReflection`.
++pub(crate) fn compute(kernel: Option<&EntryArtifact>) -> Id {
++    let reflection = object::make(
++        c"RosemaryMTLComputePipelineReflection",
++        Reflection {
++            first: arguments(kernel),
++            second: std::ptr::null_mut(),
++        },
++    );
++    objc::arc::autorelease(reflection)
++}
++
++macro_rules! getter {
++    ($name:ident, $body:ty, $field:ident, $ret:ty) => {
++        unsafe extern "C" fn $name(receiver: Id, _sel: Sel) -> $ret {
++            // SAFETY: registered on the class whose body this is.
++            unsafe { object::body_ref::<$body>(receiver) }.$field
++        }
++    };
++}
++
++getter!(argument_name, Argument, name, Id);
++getter!(argument_type, Argument, kind, u64);
++getter!(argument_access, Argument, access, u64);
++getter!(argument_index, Argument, index, u64);
++getter!(argument_array_length, Argument, array_length, u64);
++getter!(argument_texture_type, Argument, texture_type, u64);
++getter!(argument_texture_data_type, Argument, texture_data_type, u64);
++getter!(argument_data_type, Argument, data_type, u64);
++getter!(argument_size, Argument, size, u64);
++getter!(argument_alignment, Argument, alignment, u64);
++getter!(argument_struct, Argument, struct_type, Id);
++getter!(struct_members, StructType, members, Id);
++getter!(member_name, Member, name, Id);
++getter!(member_offset, Member, offset, u64);
++getter!(member_data_type, Member, data_type, u64);
++getter!(member_struct, Member, struct_type, Id);
++getter!(member_array, Member, array_type, Id);
++getter!(array_element_type, ArrayType, element_type, u64);
++getter!(array_length, ArrayType, length, u64);
++getter!(array_stride, ArrayType, stride, u64);
++getter!(array_struct, ArrayType, struct_type, Id);
++getter!(array_array, ArrayType, array_type, Id);
++getter!(reflection_first, Reflection, first, Id);
++getter!(reflection_second, Reflection, second, Id);
++
++unsafe extern "C" fn yes(_receiver: Id, _sel: Sel) -> bool {
++    true
++}
++
++unsafe extern "C" fn no(_receiver: Id, _sel: Sel) -> bool {
++    false
++}
++
++unsafe extern "C" fn zero(_receiver: Id, _sel: Sel) -> u64 {
++    0
++}
++
++unsafe extern "C" fn struct_data_type(_receiver: Id, _sel: Sel) -> u64 {
++    1
++}
++
++unsafe extern "C" fn array_data_type(_receiver: Id, _sel: Sel) -> u64 {
++    2
++}
++
++unsafe extern "C" fn member_by_name(receiver: Id, _sel: Sel, name: Id) -> Id {
++    // SAFETY: an `RosemaryMTLStructType`.
++    let body = unsafe { object::body_ref::<StructType>(receiver) };
++    body.list
++        .iter()
++        .copied()
++        .find(|member| {
++            // SAFETY: a member of this crate's; both are strings.
++            let own = unsafe { object::body_ref::<Member>(*member) }.name;
++            !name.is_null()
++                && unsafe { corefoundation::api::CFEqual(own as CFTypeRef, name as CFTypeRef) } != 0
++        })
++        .unwrap_or(std::ptr::null_mut())
++}
++
++fn release_all(ids: &[Id]) {
++    for id in ids {
++        if !id.is_null() {
++            objc::arc::release(*id);
++        }
++    }
++}
++
++unsafe extern "C" fn argument_dealloc(receiver: Id, _sel: Sel) {
++    // SAFETY: an `RosemaryMTLArgument`, which owns these references.
++    let body = unsafe { object::body_ref::<Argument>(receiver) };
++    release_all(&[body.name, body.struct_type, body.array_type]);
++    objc::arc::finalize(receiver);
++}
++
++unsafe extern "C" fn struct_dealloc(receiver: Id, _sel: Sel) {
++    // SAFETY: an `RosemaryMTLStructType`; the list's references are the
++    // array's own after construction, so only the array and the Vec go.
++    let body = unsafe { object::body::<StructType>(receiver) };
++    release_all(&body.list);
++    release_all(&[body.members]);
++    // SAFETY: the body is dropped exactly once, before the object is freed.
++    unsafe { std::ptr::drop_in_place(body) };
++    objc::arc::finalize(receiver);
++}
++
++unsafe extern "C" fn member_dealloc(receiver: Id, _sel: Sel) {
++    // SAFETY: an `RosemaryMTLStructMember`.
++    let body = unsafe { object::body_ref::<Member>(receiver) };
++    release_all(&[body.name, body.struct_type, body.array_type]);
++    objc::arc::finalize(receiver);
++}
++
++unsafe extern "C" fn array_dealloc(receiver: Id, _sel: Sel) {
++    // SAFETY: an `RosemaryMTLArrayType`.
++    let body = unsafe { object::body_ref::<ArrayType>(receiver) };
++    release_all(&[body.struct_type, body.array_type]);
++    objc::arc::finalize(receiver);
++}
++
++unsafe extern "C" fn reflection_dealloc(receiver: Id, _sel: Sel) {
++    // SAFETY: a pipeline reflection of this crate's.
++    let body = unsafe { object::body_ref::<Reflection>(receiver) };
++    release_all(&[body.first, body.second]);
++    objc::arc::finalize(receiver);
++}
++
++pub(crate) fn install() {
++    let class = object::register::<Argument>(c"RosemaryMTLArgument");
++    methods!(class, {
++        "name" => argument_name, c"@16@0:8";
++        "type" => argument_type, c"Q16@0:8";
++        "access" => argument_access, c"Q16@0:8";
++        "index" => argument_index, c"Q16@0:8";
++        "isActive" => yes, c"B16@0:8";
++        "active" => yes, c"B16@0:8";
++        "isUsed" => yes, c"B16@0:8";
++        "used" => yes, c"B16@0:8";
++        "arrayLength" => argument_array_length, c"Q16@0:8";
++        "textureType" => argument_texture_type, c"Q16@0:8";
++        "textureDataType" => argument_texture_data_type, c"Q16@0:8";
++        "isDepthTexture" => no, c"B16@0:8";
++        "bufferDataType" => argument_data_type, c"Q16@0:8";
++        "bufferDataSize" => argument_size, c"Q16@0:8";
++        "bufferAlignment" => argument_alignment, c"Q16@0:8";
++        "bufferStructType" => argument_struct, c"@16@0:8";
++        "bufferPointerType" => crate::nil, c"@16@0:8";
++        "threadgroupMemoryAlignment" => zero, c"Q16@0:8";
++        "threadgroupMemoryDataSize" => zero, c"Q16@0:8";
++        "threadgroupMemoryStructType" => crate::nil, c"@16@0:8";
++        "dealloc" => argument_dealloc, c"v16@0:8";
++    });
++    let class = object::register::<StructType>(c"RosemaryMTLStructType");
++    methods!(class, {
++        "members" => struct_members, c"@16@0:8";
++        "memberByName:" => member_by_name, c"@24@0:8@16";
++        "dataType" => struct_data_type, c"Q16@0:8";
++        "dealloc" => struct_dealloc, c"v16@0:8";
++    });
++    let class = object::register::<Member>(c"RosemaryMTLStructMember");
++    methods!(class, {
++        "name" => member_name, c"@16@0:8";
++        "offset" => member_offset, c"Q16@0:8";
++        "dataType" => member_data_type, c"Q16@0:8";
++        "structType" => member_struct, c"@16@0:8";
++        "arrayType" => member_array, c"@16@0:8";
++        "pointerType" => crate::nil, c"@16@0:8";
++        "textureReferenceType" => crate::nil, c"@16@0:8";
++        "argumentIndex" => zero, c"Q16@0:8";
++        "dealloc" => member_dealloc, c"v16@0:8";
++    });
++    let class = object::register::<ArrayType>(c"RosemaryMTLArrayType");
++    methods!(class, {
++        "elementType" => array_element_type, c"Q16@0:8";
++        "arrayLength" => array_length, c"Q16@0:8";
++        "stride" => array_stride, c"Q16@0:8";
++        "argumentIndexStride" => zero, c"Q16@0:8";
++        "elementStructType" => array_struct, c"@16@0:8";
++        "elementArrayType" => array_array, c"@16@0:8";
++        "elementPointerType" => crate::nil, c"@16@0:8";
++        "elementTextureReferenceType" => crate::nil, c"@16@0:8";
++        "dataType" => array_data_type, c"Q16@0:8";
++        "dealloc" => array_dealloc, c"v16@0:8";
++    });
++    let class = object::register::<Reflection>(c"RosemaryMTLRenderPipelineReflection");
++    methods!(class, {
++        "vertexArguments" => reflection_first, c"@16@0:8";
++        "fragmentArguments" => reflection_second, c"@16@0:8";
++        "vertexBindings" => reflection_first, c"@16@0:8";
++        "fragmentBindings" => reflection_second, c"@16@0:8";
++        "tileArguments" => crate::nil, c"@16@0:8";
++        "tileBindings" => crate::nil, c"@16@0:8";
++        "dealloc" => reflection_dealloc, c"v16@0:8";
++    });
++    let class = object::register::<Reflection>(c"RosemaryMTLComputePipelineReflection");
++    methods!(class, {
++        "arguments" => reflection_first, c"@16@0:8";
++        "bindings" => reflection_first, c"@16@0:8";
++        "dealloc" => reflection_dealloc, c"v16@0:8";
++    });
++}
 diff --git a/crates/metal/src/swapchain/mod.rs b/crates/metal/src/swapchain/mod.rs
 index 1d278874..c89fd69d 100644
 --- a/crates/metal/src/swapchain/mod.rs
@@ -5492,6 +5962,157 @@ index 67d1296e..1f54b43d 100644
          send_with_object(encoder, "setComputePipelineState:", pipeline);
          set_buffer_at(encoder, buffer, 0, 0);
          dispatch(encoder, 1);
+diff --git a/crates/metal_translate/src/cache/codec.rs b/crates/metal_translate/src/cache/codec.rs
+index 96197fea..e8f3aa02 100644
+--- a/crates/metal_translate/src/cache/codec.rs
++++ b/crates/metal_translate/src/cache/codec.rs
+@@ -1,4 +1,5 @@
+ use super::*;
++use crate::spirv::{ArgumentReflection, ReflectedMember, ReflectedType};
+ 
+ pub(super) fn encode(key: &[u8; 32], library: &TranslatedLibrary) -> Vec<u8> {
+     let mut payload = Vec::new();
+@@ -33,6 +34,23 @@ pub(super) fn encode(key: &[u8; 32], library: &TranslatedLibrary) -> Vec<u8> {
+                 payload.extend_from_slice(&variable.data_type.to_le_bytes());
+             }
+         }
++        write_u32(&mut payload, entry.arguments.len() as u32);
++        for argument in &entry.arguments {
++            write_string(&mut payload, &argument.name);
++            payload.push(resource_kind_tag(argument.kind));
++            write_u32(&mut payload, argument.index);
++            write_u32(&mut payload, argument.count);
++            payload.push(access_tag(argument.access));
++            payload.extend_from_slice(&argument.texture_type.to_le_bytes());
++            payload.extend_from_slice(&argument.texture_data_type.to_le_bytes());
++            match &argument.buffer {
++                Some(ty) => {
++                    payload.push(1);
++                    write_reflected(&mut payload, ty);
++                }
++                None => payload.push(0),
++            }
++        }
+     }
+     write_function_constants(&mut payload, &library.function_constants);
+     write_u32(&mut payload, library.function_reflection.len() as u32);
+@@ -124,6 +142,23 @@ pub(super) fn decode(bytes: &[u8], key: &[u8; 32]) -> Option<TranslatedLibrary>
+             }
+         }
+         let [vertex_inputs, varyings] = lists;
++        let argument_count = reader.u32()? as usize;
++        let mut arguments = Vec::with_capacity(argument_count.min(256));
++        for _ in 0..argument_count {
++            arguments.push(ArgumentReflection {
++                name: reader.string()?,
++                kind: resource_kind_of_tag(reader.u8()?)?,
++                index: reader.u32()?,
++                count: reader.u32()?,
++                access: access_of_tag(reader.u8()?)?,
++                texture_type: reader.u64()?,
++                texture_data_type: reader.u64()?,
++                buffer: match reader.u8()? {
++                    0 => None,
++                    _ => Some(read_reflected(&mut reader, 0)?),
++                },
++            });
++        }
+         entries.push(EntryArtifact {
+             name,
+             stage,
+@@ -132,6 +167,7 @@ pub(super) fn decode(bytes: &[u8], key: &[u8; 32]) -> Option<TranslatedLibrary>
+             required,
+             vertex_inputs,
+             varyings,
++            arguments,
+         });
+     }
+     let function_constants = reader.function_constants()?;
+@@ -385,3 +421,84 @@ fn read_inline_sampler(reader: &mut Reader<'_>) -> Option<Option<crate::ir::Inli
+         lod_max_clamp: reader.u32()?,
+     }))
+ }
++
++fn write_reflected(payload: &mut Vec<u8>, ty: &ReflectedType) {
++    match ty {
++        ReflectedType::Data {
++            data_type,
++            size,
++            alignment,
++        } => {
++            payload.push(0);
++            payload.extend_from_slice(&data_type.to_le_bytes());
++            write_u32(payload, *size);
++            write_u32(payload, *alignment);
++        }
++        ReflectedType::Struct {
++            size,
++            alignment,
++            members,
++        } => {
++            payload.push(1);
++            write_u32(payload, *size);
++            write_u32(payload, *alignment);
++            write_u32(payload, members.len() as u32);
++            for member in members {
++                write_string(payload, &member.name);
++                write_u32(payload, member.offset);
++                write_reflected(payload, &member.ty);
++            }
++        }
++        ReflectedType::Array {
++            element,
++            count,
++            stride,
++        } => {
++            payload.push(2);
++            write_u32(payload, *count);
++            write_u32(payload, *stride);
++            write_reflected(payload, element);
++        }
++    }
++}
++
++fn read_reflected(reader: &mut Reader<'_>, depth: u32) -> Option<ReflectedType> {
++    if depth > 32 {
++        return None;
++    }
++    Some(match reader.u8()? {
++        0 => ReflectedType::Data {
++            data_type: reader.u64()?,
++            size: reader.u32()?,
++            alignment: reader.u32()?,
++        },
++        1 => {
++            let size = reader.u32()?;
++            let alignment = reader.u32()?;
++            let count = reader.u32()? as usize;
++            let mut members = Vec::with_capacity(count.min(256));
++            for _ in 0..count {
++                members.push(ReflectedMember {
++                    name: reader.string()?,
++                    offset: reader.u32()?,
++                    ty: read_reflected(reader, depth + 1)?,
++                });
++            }
++            ReflectedType::Struct {
++                size,
++                alignment,
++                members,
++            }
++        }
++        2 => {
++            let count = reader.u32()?;
++            let stride = reader.u32()?;
++            ReflectedType::Array {
++                element: Box::new(read_reflected(reader, depth + 1)?),
++                count,
++                stride,
++            }
++        }
++        _ => return None,
++    })
++}
 diff --git a/crates/metal_translate/src/cache/mod.rs b/crates/metal_translate/src/cache/mod.rs
 index 51962ab8..5539d1ff 100644
 --- a/crates/metal_translate/src/cache/mod.rs
@@ -5538,6 +6159,63 @@ index 51962ab8..5539d1ff 100644
  /// The key naming this input, this target, the IR passes the translation
  /// runs, and this build of the translator.
  ///
+diff --git a/crates/metal_translate/src/cache/tests.rs b/crates/metal_translate/src/cache/tests.rs
+index 404b6c79..7bd781b8 100644
+--- a/crates/metal_translate/src/cache/tests.rs
++++ b/crates/metal_translate/src/cache/tests.rs
+@@ -89,6 +89,32 @@ fn library() -> TranslatedLibrary {
+                     data_type: 6,
+                 }],
+                 varyings: Vec::new(),
++                arguments: vec![crate::ArgumentReflection {
++                    name: "uniforms".to_owned(),
++                    kind: ResourceKind::Buffer,
++                    index: 1,
++                    count: 1,
++                    access: Access::Read,
++                    texture_type: 0,
++                    texture_data_type: 0,
++                    buffer: Some(crate::ReflectedType::Struct {
++                        size: 32,
++                        alignment: 16,
++                        members: vec![crate::ReflectedMember {
++                            name: "weights".to_owned(),
++                            offset: 0,
++                            ty: crate::ReflectedType::Array {
++                                element: Box::new(crate::ReflectedType::Data {
++                                    data_type: 3,
++                                    size: 4,
++                                    alignment: 4,
++                                }),
++                                count: 2,
++                                stride: 4,
++                            },
++                        }],
++                    }),
++                }],
+             },
+             EntryArtifact {
+                 name: String::new(),
+@@ -100,6 +126,7 @@ fn library() -> TranslatedLibrary {
+                     extensions: vec!["SPV_KHR_variable_pointers".to_owned()],
+                 },
+                 vertex_inputs: Vec::new(),
++                arguments: Vec::new(),
+                 varyings: Vec::new(),
+             },
+         ],
+diff --git a/crates/metal_translate/src/lib.rs b/crates/metal_translate/src/lib.rs
+index 5126a37b..692fe0b9 100644
+--- a/crates/metal_translate/src/lib.rs
++++ b/crates/metal_translate/src/lib.rs
+@@ -25,6 +25,7 @@ pub use specialize::{
+     metal_data_type_of_encoding, metal_data_type_size, specialize,
+ };
+ pub use spirv::{
++    ArgumentReflection, ReflectedMember, ReflectedType,
+     EntryArtifact, FunctionConstantInfo, FunctionReflection, RejectedEntry, RequiredFeatures,
+     ResourceBinding, StageVariable, TargetProfile, TranslatedLibrary, WORKGROUP_SIZE_SPEC_IDS,
+     emit_spirv,
 diff --git a/crates/metal_translate/src/msl/lower/library.rs b/crates/metal_translate/src/msl/lower/library.rs
 index c5b4fc69..6cff3a98 100644
 --- a/crates/metal_translate/src/msl/lower/library.rs
@@ -5657,6 +6335,376 @@ index c2ef1e77..5959336f 100644
                      },
                  )?;
              }
+diff --git a/crates/metal_translate/src/spirv/mod.rs b/crates/metal_translate/src/spirv/mod.rs
+index dce52ea5..9c682820 100644
+--- a/crates/metal_translate/src/spirv/mod.rs
++++ b/crates/metal_translate/src/spirv/mod.rs
+@@ -1,4 +1,6 @@
+ mod cfg;
++mod reflect;
++pub use reflect::{ArgumentReflection, ReflectedMember, ReflectedType};
+ mod emit;
+ mod structurize;
+ mod widen;
+@@ -244,6 +246,8 @@ pub struct EntryArtifact {
+     /// libraries name them; the runtime renumbers a fragment function's
+     /// locations to its vertex function's by these names.
+     pub varyings: Vec<StageVariable>,
++    /// Resource arguments, for pipeline reflection.
++    pub arguments: Vec<ArgumentReflection>,
+ }
+ 
+ /// One stage interface variable, as reflection reports it.
+@@ -305,6 +309,7 @@ pub fn emit_spirv(
+             "the module's static initializers have not been run; specialize it first",
+         ));
+     }
++    let original = module;
+     let widened;
+     let module = match widen::widen(module, target) {
+         Some(module) => {
+@@ -317,8 +322,9 @@ pub fn emit_spirv(
+     let mut entries = Vec::new();
+     let mut rejected = Vec::new();
+     let mut first_error = None;
+-    for entry in &module.entries {
+-        match emit_entry(module, entry, target) {
++    for (index, entry) in module.entries.iter().enumerate() {
++        let original_entry = original.entries.get(index).unwrap_or(entry);
++        match emit_entry(module, entry, original, original_entry, target) {
+             Ok(artifact) => entries.push(artifact),
+             Err(error) => {
+                 rejected.push(RejectedEntry {
+@@ -383,6 +389,8 @@ fn validate_target(target: &TargetProfile) -> Result<(), TranslateError> {
+ fn emit_entry(
+     module: &Module,
+     entry: &EntryPoint,
++    original: &Module,
++    original_entry: &EntryPoint,
+     target: &TargetProfile,
+ ) -> Result<EntryArtifact, TranslateError> {
+     if !matches!(entry.stage, Stage::Kernel | Stage::Fragment | Stage::Vertex) {
+@@ -494,6 +502,11 @@ fn emit_entry(
+     rspirv::dr::load_words(&words)
+         .map_err(|error| emission(format!("emitted SPIR-V could not be parsed: {error}")))?;
+     let (vertex_inputs, varyings) = interface_reflection(entry, function);
++    let reflect_function = original
++        .functions
++        .get(original_entry.function)
++        .unwrap_or(function);
++    let arguments = reflect::argument_reflection(original_entry, reflect_function);
+     Ok(EntryArtifact {
+         name: function.name.clone(),
+         stage: entry.stage,
+@@ -505,6 +518,7 @@ fn emit_entry(
+         },
+         vertex_inputs,
+         varyings,
++        arguments,
+     })
+ }
+ 
+diff --git a/crates/metal_translate/src/spirv/reflect.rs b/crates/metal_translate/src/spirv/reflect.rs
+new file mode 100644
+index 00000000..14a0121e
+--- /dev/null
++++ b/crates/metal_translate/src/spirv/reflect.rs
+@@ -0,0 +1,248 @@
++//! Argument reflection for `MTLRenderPipelineReflection` and
++//! `MTLComputePipelineReflection`: each resource argument's name, slot and,
++//! for a buffer, the layout of the type it points at.
++
++use crate::ir::{Access, EntryPoint, Function, ResourceKind, TextureDimension, TextureType, Type};
++
++/// One `MTLArgument` of an entry point.
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct ArgumentReflection {
++    pub name: String,
++    pub kind: ResourceKind,
++    pub index: u32,
++    pub count: u32,
++    pub access: Access,
++    /// `MTLTextureType` of a texture argument, else 0.
++    pub texture_type: u64,
++    /// `MTLDataType` of a texture argument's texels, else 0.
++    pub texture_data_type: u64,
++    /// The pointee of a buffer argument.
++    pub buffer: Option<ReflectedType>,
++}
++
++/// A buffer's data type as `MTLStructType` / `MTLArrayType` describe it.
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub enum ReflectedType {
++    Data {
++        data_type: u64,
++        size: u32,
++        alignment: u32,
++    },
++    Struct {
++        size: u32,
++        alignment: u32,
++        members: Vec<ReflectedMember>,
++    },
++    Array {
++        element: Box<ReflectedType>,
++        count: u32,
++        stride: u32,
++    },
++}
++
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct ReflectedMember {
++    pub name: String,
++    pub offset: u32,
++    pub ty: ReflectedType,
++}
++
++impl ReflectedType {
++    /// Its `MTLDataType`: `Struct` is 1 and `Array` 2.
++    pub fn data_type(&self) -> u64 {
++        match self {
++            ReflectedType::Data { data_type, .. } => *data_type,
++            ReflectedType::Struct { .. } => 1,
++            ReflectedType::Array { .. } => 2,
++        }
++    }
++
++    pub fn size_alignment(&self) -> (u32, u32) {
++        match self {
++            ReflectedType::Data {
++                size, alignment, ..
++            }
++            | ReflectedType::Struct {
++                size, alignment, ..
++            } => (*size, *alignment),
++            ReflectedType::Array {
++                element,
++                count,
++                stride,
++            } => (stride * count, element.size_alignment().1),
++        }
++    }
++}
++
++pub(super) fn argument_reflection(
++    entry: &EntryPoint,
++    function: &Function,
++) -> Vec<ArgumentReflection> {
++    entry
++        .resources
++        .iter()
++        .filter_map(|resource| {
++            let parameter = function.parameters.get(resource.argument as usize)?;
++            let (texture_type, texture_data_type) = match &parameter.ty {
++                Type::Texture(texture) => (texture_type(texture), texel_data_type(texture)),
++                _ => (0, 0),
++            };
++            let buffer = match (&resource.kind, &parameter.ty) {
++                (ResourceKind::Buffer, Type::Pointer { pointee, .. }) => {
++                    Some(reflect_type(pointee, 0))
++                }
++                _ => None,
++            };
++            Some(ArgumentReflection {
++                name: parameter.name.clone(),
++                kind: resource.kind,
++                index: resource.index,
++                count: resource.count,
++                access: resource.access,
++                texture_type,
++                texture_data_type,
++                buffer,
++            })
++        })
++        .collect()
++}
++
++fn reflect_type(ty: &Type, depth: u32) -> ReflectedType {
++    match ty {
++        Type::Struct(structure) if depth < 16 => ReflectedType::Struct {
++            size: structure.size,
++            alignment: structure.alignment.max(1),
++            members: structure
++                .fields
++                .iter()
++                .enumerate()
++                .map(|(i, field)| ReflectedMember {
++                    name: field.name.clone().unwrap_or_else(|| format!("field{i}")),
++                    offset: field.offset,
++                    ty: reflect_type(&field.ty, depth + 1),
++                })
++                .collect(),
++        },
++        Type::Array { element, count } if depth < 16 => {
++            // The MSL frontend lowers float/half matrices as column arrays.
++            if (2..=4).contains(count)
++                && let Type::Vector {
++                    element: scalar,
++                    lanes,
++                } = element.as_ref()
++                && (2..=4).contains(lanes)
++                && matches!(scalar.as_ref(), Type::Float { bits: 16 | 32 })
++            {
++                let matrix = Type::Matrix {
++                    column: element.clone(),
++                    columns: *count as u8,
++                };
++                let (size, alignment) = data_layout(&matrix);
++                return ReflectedType::Data {
++                    data_type: data_type(&matrix),
++                    size,
++                    alignment,
++                };
++            }
++            let element = reflect_type(element, depth + 1);
++            let (size, alignment) = element.size_alignment();
++            ReflectedType::Array {
++                stride: size.next_multiple_of(alignment.max(1)),
++                count: *count,
++                element: Box::new(element),
++            }
++        }
++        other => {
++            let (size, alignment) = data_layout(other);
++            ReflectedType::Data {
++                data_type: data_type(other),
++                size,
++                alignment,
++            }
++        }
++    }
++}
++
++fn data_type(ty: &Type) -> u64 {
++    match ty {
++        Type::Matrix { column, columns } => {
++            let Type::Vector { element, lanes } = column.as_ref() else {
++                return 0;
++            };
++            let base = match element.as_ref() {
++                Type::Float { bits: 32 } => 7,
++                Type::Float { bits: 16 } => 20,
++                _ => return 0,
++            };
++            base + u64::from(columns.saturating_sub(2)) * 3 + u64::from(lanes.saturating_sub(2))
++        }
++        Type::Pointer { .. } => 60,
++        Type::Texture(_) => 58,
++        Type::Sampler => 59,
++        Type::Vector { element, .. } | Type::Array { element, .. } => {
++            let signed = matches!(element.as_ref(), Type::Int { signed: true, .. });
++            super::metal_data_type(ty, signed)
++        }
++        Type::Int { signed, .. } => super::metal_data_type(ty, *signed),
++        _ => super::metal_data_type(ty, false),
++    }
++}
++
++fn data_layout(ty: &Type) -> (u32, u32) {
++    match ty {
++        Type::Bool => (1, 1),
++        Type::Int { bits, .. } | Type::Float { bits } => {
++            let size = u32::from(*bits / 8).max(1);
++            (size, size)
++        }
++        Type::Vector { element, lanes } => {
++            let (scalar, _) = data_layout(element);
++            let size = scalar * u32::from(if *lanes == 3 { 4 } else { *lanes });
++            (size, size)
++        }
++        Type::Matrix { column, columns } => {
++            let (size, alignment) = data_layout(column);
++            (size * u32::from(*columns), alignment)
++        }
++        Type::Pointer { .. } => (8, 8),
++        Type::Struct(structure) => (structure.size, structure.alignment.max(1)),
++        _ => (0, 1),
++    }
++}
++
++fn texture_type(texture: &TextureType) -> u64 {
++    match (texture.dimension, texture.array, texture.multisampled) {
++        (TextureDimension::D1, false, _) => 0,
++        (TextureDimension::D1, true, _) => 1,
++        (TextureDimension::D2, false, false) => 2,
++        (TextureDimension::D2, true, false) => 3,
++        (TextureDimension::D2, false, true) => 4,
++        (TextureDimension::D2, true, true) => 8,
++        (TextureDimension::Cube, false, _) => 5,
++        (TextureDimension::Cube, true, _) => 6,
++        (TextureDimension::D3, ..) => 7,
++        (TextureDimension::Buffer, ..) => 9,
++    }
++}
++
++fn texel_data_type(texture: &TextureType) -> u64 {
++    match *texture.texel {
++        Type::Float { bits: 16 } => 16,
++        Type::Float { .. } => 3,
++        Type::Int { bits: 16, .. } => {
++            if texture.signed {
++                37
++            } else {
++                41
++            }
++        }
++        Type::Int { .. } => {
++            if texture.signed {
++                29
++            } else {
++                33
++            }
++        }
++        _ => 0,
++    }
++}
+diff --git a/crates/metal_translate/tests/source_reflection.rs b/crates/metal_translate/tests/source_reflection.rs
+new file mode 100644
+index 00000000..4af46a99
+--- /dev/null
++++ b/crates/metal_translate/tests/source_reflection.rs
+@@ -0,0 +1,41 @@
++use metal_translate::{ReflectedType, TargetProfile, translate_msl};
++
++#[test]
++fn kernel_arguments_are_reflected_for_pipeline_reflection() {
++    // CapCut's SwingBaseBlender in-place flip: AGFX fails the pipeline when
++    // the reflection it asks for is nil.
++    let source = "using namespace metal;
++        kernel void verticalFlipInplace(texture2d<half, access::read> src [[texture(0)]],
++            texture2d<half, access::write> dst [[texture(1)]], ushort2 gid [[thread_position_in_grid]]) {
++            if (gid.x >= dst.get_width() || gid.y >= dst.get_height() / 2) return;
++            ushort2 flipped = ushort2(gid.x, dst.get_height() - 1 - gid.y);
++            half4 up = src.read(gid); half4 down = src.read(flipped);
++            dst.write(down, gid); dst.write(up, flipped);
++        }";
++    let mut target = TargetProfile::vulkan_1_3();
++    target.shader_storage_image_write_without_format = true;
++    target.shader_int16 = true;
++    let library = translate_msl(source, &target).unwrap();
++    let arguments = &library.entries[0].arguments;
++    let names: Vec<_> = arguments.iter().map(|a| (a.name.as_str(), a.index, a.texture_type, a.texture_data_type)).collect();
++    assert_eq!(names, [("src", 0, 2, 16), ("dst", 1, 2, 16)]);
++}
++
++#[test]
++fn buffer_struct_members_carry_names_offsets_and_types() {
++    let source = "using namespace metal;
++        struct Uniforms { float4x4 mvp; float alpha; float3 tint; float weights[2]; };
++        struct VOut { float4 position [[position]]; };
++        vertex VOut vs(uint id [[vertex_id]], constant Uniforms& u [[buffer(2)]]) {
++            VOut out; out.position = u.mvp * float4(u.tint * u.alpha, u.weights[1]); return out;
++        }";
++    let library = translate_msl(source, &TargetProfile::vulkan_1_3()).unwrap();
++    let argument = &library.entries[0].arguments[0];
++    assert_eq!((argument.name.as_str(), argument.index), ("u", 2));
++    let Some(ReflectedType::Struct { members, size, .. }) = &argument.buffer else {
++        panic!("{argument:?}");
++    };
++    let summary: Vec<_> = members.iter().map(|m| (m.name.as_str(), m.offset, m.ty.data_type())).collect();
++    assert_eq!(summary, [("mvp", 0, 15), ("alpha", 64, 3), ("tint", 80, 5), ("weights", 96, 2)]);
++    assert_eq!(*size, 112);
++}
 diff --git a/crates/metal_translate/tests/translate.rs b/crates/metal_translate/tests/translate.rs
 index 251f932e..9bfc1160 100644
 --- a/crates/metal_translate/tests/translate.rs
