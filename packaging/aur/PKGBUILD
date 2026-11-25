@@ -10,9 +10,14 @@ pkgdesc="GTK4/Libadwaita launcher that installs and runs macOS CapCut on Linux v
 arch=('x86_64')
 url="https://github.com/oriilol/cutmary"
 license=('MIT')
-depends=('gtk4' 'libadwaita' 'glib2' 'glibc' 'gcc-libs' '7zip')
+# The launcher links GTK/libadwaita; the rest are host libraries Rosemary's
+# ImageIO (JPEG/WebP), windowing (SDL3) and Metal-on-Vulkan paths load at
+# run time while CapCut runs. The launcher's preflight check reports them too.
+depends=('gtk4' 'libadwaita' 'glib2' 'glibc' 'gcc-libs' '7zip'
+         'libjpeg-turbo' 'libwebp' 'sdl3' 'vulkan-icd-loader')
 makedepends=('cargo' 'git')
-optdepends=('rosemary: macOS compatibility runtime (build the patched one with scripts/build-rosemary.sh)')
+optdepends=('rosemary: macOS compatibility runtime (build the patched one with scripts/build-rosemary.sh)'
+            'vulkan-driver: GPU rendering (nvidia-utils, vulkan-radeon or vulkan-intel)')
 provides=("$_pkgname")
 conflicts=("$_pkgname")
 options=('!lto' '!debug')

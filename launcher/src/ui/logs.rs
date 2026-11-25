@@ -56,12 +56,7 @@ pub fn present(ctl: &Rc<Controller>) {
 
     let copy = gtk::Button::builder().label("Copy").css_classes(["pill"]).build();
     let open = gtk::Button::builder().label("Open Logs Folder").css_classes(["pill"]).build();
-    let bottom = gtk::Box::builder()
-        .spacing(12)
-        .halign(gtk::Align::Center)
-        .margin_top(12)
-        .margin_bottom(12)
-        .build();
+    let bottom = gtk::Box::builder().spacing(12).halign(gtk::Align::Center).margin_top(12).margin_bottom(12).build();
     bottom.append(&open);
     bottom.append(&copy);
 
@@ -74,12 +69,7 @@ pub fn present(ctl: &Rc<Controller>) {
     toolbar.add_bottom_bar(&bottom);
     toolbar.set_content(Some(&toasts));
 
-    let dialog = adw::Dialog::builder()
-        .title("Logs")
-        .content_width(820)
-        .content_height(560)
-        .child(&toolbar)
-        .build();
+    let dialog = adw::Dialog::builder().title("Logs").content_width(820).content_height(560).child(&toolbar).build();
 
     // (Re)load when the file changes; stick to the bottom if already there.
     let last_len = Rc::new(Cell::new(u64::MAX));

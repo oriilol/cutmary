@@ -9,9 +9,7 @@ use std::path::{Component, Path, PathBuf};
 /// Finds an executable called `name` in the colon-separated `path_var`.
 pub fn which_in(name: &str, path_var: Option<&OsStr>) -> Option<PathBuf> {
     let path_var = path_var?;
-    std::env::split_paths(path_var)
-        .map(|dir| dir.join(name))
-        .find(|candidate| is_executable(candidate))
+    std::env::split_paths(path_var).map(|dir| dir.join(name)).find(|candidate| is_executable(candidate))
 }
 
 /// Finds an executable called `name` in the current `$PATH`.
@@ -21,9 +19,7 @@ pub fn which(name: &str) -> Option<PathBuf> {
 
 /// Whether `path` is a regular file (following symlinks) with an execute bit set.
 pub fn is_executable(path: &Path) -> bool {
-    fs::metadata(path)
-        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
+    fs::metadata(path).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
 /// Lexically normalizes a path: drops `.` and resolves `..` against earlier
@@ -120,19 +116,45 @@ pub fn format_bytes(bytes: u64) -> String {
         value /= 1024.0;
         unit += 1;
     }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
+    if unit == 0 { format!("{bytes} B") } else { format!("{value:.1} {}", UNITS[unit]) }
+}
+
+/// Library directories searched when `ldconfig -p` is unavailable.
+pub const LIBRARY_DIRS: &[&str] = &[
+    "/usr/lib",
+    "/usr/lib64",
+    "/usr/lib/x86_64-linux-gnu",
+    "/lib",
+    "/lib64",
+    "/lib/x86_64-linux-gnu",
+    "/usr/local/lib",
+];
+
+/// Finds `soname` in `ldconfig -p` output, returning the library path.
+pub fn find_in_ldconfig(listing: &str, soname: &str) -> Option<String> {
+    listing.lines().find_map(|line| {
+        let (left, path) = line.split_once(" => ")?;
+        let name = left.split_whitespace().next()?;
+        // x86_64 entries only: an i686 copy cannot be loaded by Rosemary.
+        let wrong_arch = left.contains("(libc6)") || left.contains("i386");
+        (name == soname && !wrong_arch).then(|| path.trim().to_owned())
+    })
+}
+
+/// Whether the desktop session is Wayland, from an environment lookup.
+pub fn is_wayland(get: impl Fn(&str) -> Option<String>) -> bool {
+    get("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
+        || get("XDG_SESSION_TYPE").is_some_and(|v| v.eq_ignore_ascii_case("wayland"))
+}
+
+/// Whether the current desktop session is Wayland.
+pub fn is_wayland_session() -> bool {
+    is_wayland(|k| std::env::var(k).ok())
 }
 
 /// Seconds since the Unix epoch.
 pub fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -148,6 +170,31 @@ mod tests {
         assert!(!is_strictly_inside(Path::new("/app/../etc"), Path::new("/app")));
         assert!(!is_strictly_inside(Path::new("/app"), Path::new("/app")));
         assert!(!is_strictly_inside(Path::new("/application"), Path::new("/app")));
+    }
+
+    #[test]
+    fn finds_libraries_in_ldconfig_output() {
+        let listing = "1234 libs found in cache `/etc/ld.so.cache'
+\tlibwebp.so.7 (libc6,x86-64) => /usr/lib/libwebp.so.7
+\tlibturbojpeg.so.0 (libc6) => /usr/lib32/libturbojpeg.so.0
+\tlibturbojpeg.so.0 (libc6,x86-64) => /usr/lib/libturbojpeg.so.0
+\tlibSDL3.so.0 (libc6) => /usr/lib32/libSDL3.so.0
+";
+        assert_eq!(find_in_ldconfig(listing, "libwebp.so.7").as_deref(), Some("/usr/lib/libwebp.so.7"));
+        assert_eq!(find_in_ldconfig(listing, "libturbojpeg.so.0").as_deref(), Some("/usr/lib/libturbojpeg.so.0"));
+        assert_eq!(find_in_ldconfig(listing, "libSDL3.so.0"), None, "32-bit only");
+        assert_eq!(find_in_ldconfig(listing, "libwebp.so"), None);
+    }
+
+    #[test]
+    fn detects_wayland_sessions() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| pairs.iter().find(|(key, _)| *key == k).map(|(_, v)| v.to_string())
+        };
+        assert!(is_wayland(env(&[("WAYLAND_DISPLAY", "wayland-0")])));
+        assert!(is_wayland(env(&[("XDG_SESSION_TYPE", "wayland")])));
+        assert!(!is_wayland(env(&[("XDG_SESSION_TYPE", "x11"), ("WAYLAND_DISPLAY", "")])));
+        assert!(!is_wayland(env(&[])));
     }
 
     #[test]

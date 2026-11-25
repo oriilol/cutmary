@@ -230,11 +230,15 @@ fn set(env: &mut Vec<(String, String)>, key: &str, value: impl Into<String>) {
 
 /// The Rosemary environment for the current settings. Custom variables are
 /// applied last (overriding the switches) and only while advanced mode is on.
-pub fn rosemary_env(config: &Config, prefix: &Path) -> Result<Vec<(String, String)>, String> {
+/// `wayland` says whether the host session is Wayland (see [`util::is_wayland_session`]).
+pub fn rosemary_env(config: &Config, prefix: &Path, wayland: bool) -> Result<Vec<(String, String)>, String> {
     let mut env = Vec::new();
     let g = &config.graphics;
     set(&mut env, "ROSEMARY_PREFIX", prefix.to_string_lossy());
     set(&mut env, "ROSEMARY_DECORATIONS", g.decorations.env_value());
+    if let Some(menu) = g.menu.env_value(wayland) {
+        set(&mut env, "ROSEMARY_MENU", menu);
+    }
     if let Some(mode) = g.present_mode.env_value() {
         set(&mut env, "ROSEMARY_METAL_PRESENTATION_MODE", mode);
     }
@@ -271,8 +275,16 @@ fn wrap(runner: &ResolvedRunner, args: Vec<OsString>, env: Vec<(String, String)>
 }
 
 /// `rosemary run --new-instance <CapCut.app>` with the configured environment.
-pub fn launch_spec(runner: &ResolvedRunner, config: &Config, prefix: &Path, app: &Path) -> Result<LaunchSpec, String> {
-    let env = rosemary_env(config, prefix)?;
+/// `--new-instance` is always passed so a stale claim from a crashed session
+/// never turns a launch into a no-op hand-off.
+pub fn launch_spec(
+    runner: &ResolvedRunner,
+    config: &Config,
+    prefix: &Path,
+    app: &Path,
+    wayland: bool,
+) -> Result<LaunchSpec, String> {
+    let env = rosemary_env(config, prefix, wayland)?;
     let args = vec!["run".into(), "--new-instance".into(), app.as_os_str().to_owned()];
     Ok(wrap(runner, args, env))
 }
@@ -320,10 +332,7 @@ pub fn prefix_status(prefix: &Path) -> PrefixStatus {
         return PrefixStatus::NoBase;
     }
     let field = |name: &str| {
-        text.lines()
-            .filter_map(|l| l.trim().strip_prefix(name))
-            .map(|v| v.trim().trim_matches('"').to_owned())
-            .next()
+        text.lines().filter_map(|l| l.trim().strip_prefix(name)).map(|v| v.trim().trim_matches('"').to_owned()).next()
     };
     let base = match (field("project:"), field("tag:")) {
         (Some(p), Some(t)) => Some(format!("{p} {t}")),
@@ -454,15 +463,21 @@ mod tests {
     #[test]
     fn default_launch_command_and_environment() {
         let config = Config::default();
-        let spec = launch_spec(&runner(), &config, Path::new("/p"), Path::new("/d/CapCut.app")).unwrap();
+        let spec = launch_spec(&runner(), &config, Path::new("/p"), Path::new("/d/CapCut.app"), true).unwrap();
         assert_eq!(spec.program, PathBuf::from("/usr/bin/rosemary"));
         assert_eq!(args(&spec), ["run", "--new-instance", "/d/CapCut.app"]);
         assert_eq!(spec.env_value("ROSEMARY_PREFIX"), Some("/p"));
         assert_eq!(spec.env_value("ROSEMARY_DECORATIONS"), Some("server"));
+        assert_eq!(spec.env_value("ROSEMARY_MENU"), Some("none"), "menu hidden on Wayland");
         assert_eq!(spec.env_value("ROSEMARY_KEEP_FAULT_HANDLER"), Some("1"));
         assert_eq!(spec.env_value("ROSEMARY_CONTROL_EDIT_KEYS"), Some("1"));
         assert_eq!(spec.env_value("ROSEMARY_METAL_PRESENTATION_MODE"), None);
         assert_eq!(spec.env_value("ROSEMARY_UNBOUND_DETAIL"), None);
+
+        // On X11 the menu placement is left to Rosemary unless chosen.
+        let x11 = launch_spec(&runner(), &config, Path::new("/p"), Path::new("/d/CapCut.app"), false).unwrap();
+        assert_eq!(x11.env_value("ROSEMARY_MENU"), None);
+        assert_eq!(args(&x11), ["run", "--new-instance", "/d/CapCut.app"]);
     }
 
     #[test]
@@ -472,12 +487,14 @@ mod tests {
         config.graphics.present_mode = PresentMode::Mailbox;
         config.graphics.keep_fault_handler = false;
         config.graphics.ctrl_edit_shortcuts = false;
-        let env = rosemary_env(&config, Path::new("/p")).unwrap();
+        config.graphics.menu = crate::config::MenuPlacement::Strip;
+        let env = rosemary_env(&config, Path::new("/p"), true).unwrap();
         let get = |k: &str| env.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str());
         assert_eq!(get("ROSEMARY_DECORATIONS"), Some("client"));
         assert_eq!(get("ROSEMARY_METAL_PRESENTATION_MODE"), Some("mailbox"));
         assert_eq!(get("ROSEMARY_KEEP_FAULT_HANDLER"), None);
         assert_eq!(get("ROSEMARY_CONTROL_EDIT_KEYS"), None);
+        assert_eq!(get("ROSEMARY_MENU"), Some("strip"));
     }
 
     #[test]
@@ -485,20 +502,23 @@ mod tests {
         let mut config = Config::default();
         config.graphics.custom_env = "ROSEMARY_DECORATIONS=client  ROSEMARY_MENU=strip\nQT_DEBUG=\"a b\"".into();
         config.runtime.log_all_unbound_imports = true;
-        let env = rosemary_env(&config, Path::new("/p")).unwrap();
-        assert!(!env.iter().any(|(k, _)| k == "ROSEMARY_MENU" || k == "ROSEMARY_UNBOUND_DETAIL"));
+        let env = rosemary_env(&config, Path::new("/p"), true).unwrap();
+        // Without advanced mode the custom value is ignored: the Wayland default stands.
+        assert!(env.contains(&("ROSEMARY_MENU".into(), "none".into())));
+        assert!(!env.iter().any(|(k, _)| k == "ROSEMARY_UNBOUND_DETAIL"));
 
         config.launcher.advanced = true;
-        let env = rosemary_env(&config, Path::new("/p")).unwrap();
+        let env = rosemary_env(&config, Path::new("/p"), true).unwrap();
         let get = |k: &str| env.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str());
         assert_eq!(get("ROSEMARY_DECORATIONS"), Some("client"), "custom value overrides");
         assert_eq!(env.iter().filter(|(k, _)| k == "ROSEMARY_DECORATIONS").count(), 1);
-        assert_eq!(get("ROSEMARY_MENU"), Some("strip"));
+        assert_eq!(get("ROSEMARY_MENU"), Some("strip"), "custom value overrides the default");
+        assert_eq!(env.iter().filter(|(k, _)| k == "ROSEMARY_MENU").count(), 1);
         assert_eq!(get("QT_DEBUG"), Some("a b"));
         assert_eq!(get("ROSEMARY_UNBOUND_DETAIL"), Some("all"));
 
         config.graphics.custom_env = "1BAD=x".into();
-        assert!(rosemary_env(&config, Path::new("/p")).is_err());
+        assert!(rosemary_env(&config, Path::new("/p"), true).is_err());
     }
 
     #[test]
@@ -524,12 +544,14 @@ mod tests {
     #[test]
     fn flatpak_host_runner_passes_env_as_arguments() {
         let host = ResolvedRunner { program: PathBuf::from("rosemary"), source: RunnerSource::Host };
-        let spec = launch_spec(&host, &Config::default(), Path::new("/p"), Path::new("/a/CapCut.app")).unwrap();
+        let spec = launch_spec(&host, &Config::default(), Path::new("/p"), Path::new("/a/CapCut.app"), true).unwrap();
         assert_eq!(spec.program, PathBuf::from("flatpak-spawn"));
         assert!(spec.env.is_empty());
         let a = args(&spec);
         assert_eq!(&a[..2], ["--host", "--watch-bus"]);
         assert!(a.contains(&"--env=ROSEMARY_DECORATIONS=server".to_owned()));
+        assert!(a.contains(&"--env=ROSEMARY_MENU=none".to_owned()));
+        assert!(a.contains(&"--env=ROSEMARY_KEEP_FAULT_HANDLER=1".to_owned()));
         assert_eq!(&a[a.len() - 4..], ["rosemary", "run", "--new-instance", "/a/CapCut.app"]);
     }
 

@@ -6,7 +6,8 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 
 use super::controller::{Activity, Change, Controller};
-use crate::config::{Choice, Config, Decorations, PresentMode, RunnerChoice, Theme, VERSION};
+use crate::config::{Choice, Config, Decorations, MenuPlacement, PresentMode, RunnerChoice, Theme, VERSION};
+use crate::drafts::{self, BrokenDraft};
 use crate::installer::Source;
 use crate::runner::{self, PrefixStatus};
 use crate::update::UpdateStatus;
@@ -14,11 +15,8 @@ use crate::util;
 
 fn combo<T: Choice>(ctl: &Rc<Controller>, title: &str, current: T, apply: fn(&mut Config, T)) -> adw::ComboRow {
     let labels: Vec<&str> = T::ALL.iter().map(|c| c.label()).collect();
-    let row = adw::ComboRow::builder()
-        .title(title)
-        .model(&gtk::StringList::new(&labels))
-        .selected(current.index())
-        .build();
+    let row =
+        adw::ComboRow::builder().title(title).model(&gtk::StringList::new(&labels)).selected(current.index()).build();
     let ctl = ctl.clone();
     row.connect_selected_notify(move |row| {
         let value = T::from_index(row.selected());
@@ -27,7 +25,13 @@ fn combo<T: Choice>(ctl: &Rc<Controller>, title: &str, current: T, apply: fn(&mu
     row
 }
 
-fn switch(ctl: &Rc<Controller>, title: &str, subtitle: &str, active: bool, apply: fn(&mut Config, bool)) -> adw::SwitchRow {
+fn switch(
+    ctl: &Rc<Controller>,
+    title: &str,
+    subtitle: &str,
+    active: bool,
+    apply: fn(&mut Config, bool),
+) -> adw::SwitchRow {
     let row = adw::SwitchRow::builder().title(title).subtitle(subtitle).active(active).build();
     let ctl = ctl.clone();
     row.connect_active_notify(move |row| {
@@ -146,6 +150,23 @@ pub fn build(ctl: &Rc<Controller>) -> gtk::Widget {
         move |_| ctl.open_folder(&ctl.projects_dir())
     });
     capcut.add(&projects_row);
+
+    let drafts_row = adw::ActionRow::builder().title("Project Drafts").build();
+    let repair_drafts = suffix_button("Repair Drafts");
+    repair_drafts
+        .set_tooltip_text(Some("Remove stale lock files left by a crash and archive drafts that cannot be opened"));
+    drafts_row.add_suffix(&repair_drafts);
+    repair_drafts.connect_clicked({
+        let ctl = ctl.clone();
+        move |_| {
+            if let Some(broken) = ctl.repair_drafts()
+                && !broken.is_empty()
+            {
+                confirm_archive(&ctl, broken);
+            }
+        }
+    });
+    capcut.add(&drafts_row);
     page.add(&capcut);
 
     // ---- Runtime ------------------------------------------------------------
@@ -208,11 +229,44 @@ pub fn build(ctl: &Rc<Controller>) -> gtk::Widget {
     runtime.add(&unbound);
     page.add(&runtime);
 
+    // ---- System requirements ------------------------------------------------
+    let requirements = adw::PreferencesGroup::builder()
+        .title("System Requirements")
+        .description("Host libraries Rosemary loads while CapCut runs")
+        .build();
+    let recheck = gtk::Button::builder()
+        .icon_name("view-refresh-symbolic")
+        .tooltip_text("Check Again")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    requirements.set_header_suffix(Some(&recheck));
+    recheck.connect_clicked({
+        let ctl = ctl.clone();
+        move |_| ctl.run_preflight()
+    });
+    let install_row = adw::ActionRow::builder().title("Install Missing Libraries").visible(false).build();
+    let copy_command = icon_button("edit-copy-symbolic", "Copy Command");
+    install_row.add_suffix(&copy_command);
+    copy_command.connect_clicked({
+        let ctl = ctl.clone();
+        move |button| {
+            if let Some(command) = ctl.preflight().and_then(|r| r.install_command()) {
+                button.clipboard().set_text(&command);
+                ctl.toast("Command copied — paste it in a terminal");
+            }
+        }
+    });
+    requirements.add(&install_row);
+    let requirement_rows: Rc<std::cell::RefCell<Vec<adw::ActionRow>>> = Rc::default();
+    page.add(&requirements);
+
     // ---- Graphics & window --------------------------------------------------
     let graphics = adw::PreferencesGroup::builder().title("Graphics &amp; Window").build();
     graphics.add(&combo(ctl, "Window Decorations", config.graphics.decorations, |c, v: Decorations| {
         c.graphics.decorations = v
     }));
+    graphics.add(&combo(ctl, "Application Menu", config.graphics.menu, |c, v: MenuPlacement| c.graphics.menu = v));
     graphics.add(&combo(ctl, "Vulkan Presentation Mode", config.graphics.present_mode, |c, v: PresentMode| {
         c.graphics.present_mode = v
     }));
@@ -270,10 +324,8 @@ pub fn build(ctl: &Rc<Controller>) -> gtk::Widget {
                 match ctl.installed() {
                     Some(app) => {
                         status_row.set_title(&format!("CapCut {}", app.version.as_deref().unwrap_or("")));
-                        let size = ctl
-                            .installed_size()
-                            .map(util::format_bytes)
-                            .unwrap_or_else(|| "measuring…".to_owned());
+                        let size =
+                            ctl.installed_size().map(util::format_bytes).unwrap_or_else(|| "measuring…".to_owned());
                         status_row.set_subtitle(&format!("Installed • {size} on disk"));
                         status_icon.set_icon_name(Some("cutmary-check-symbolic"));
                         status_icon.set_css_classes(&["success"]);
@@ -288,6 +340,59 @@ pub fn build(ctl: &Rc<Controller>) -> gtk::Widget {
                     }
                 }
                 reinstall.set_sensitive(idle);
+            }
+
+            if matches!(change, Change::Config | Change::Prefix | Change::Drafts)
+                || (change == Change::Activity && idle)
+            {
+                let summary = match ctl.drafts_report() {
+                    Ok(r) if r.drafts == 0 => "No drafts yet".to_owned(),
+                    Ok(r) => {
+                        let mut parts = vec![format!("{} draft(s)", r.drafts)];
+                        if r.stale_locks > 0 {
+                            parts.push(format!("{} stale lock(s)", r.stale_locks));
+                        }
+                        if !r.broken.is_empty() {
+                            parts.push(format!("{} damaged", r.broken.len()));
+                        }
+                        parts.join(" • ")
+                    }
+                    Err(e) => format!("Cannot read drafts: {e}"),
+                };
+                drafts_row.set_subtitle(&glib::markup_escape_text(&summary));
+                repair_drafts.set_sensitive(idle);
+            }
+
+            if change == Change::Preflight {
+                for row in requirement_rows.borrow_mut().drain(..) {
+                    requirements.remove(&row);
+                }
+                let Some(report) = ctl.preflight() else { return };
+                for check in &report.checks {
+                    let row = adw::ActionRow::builder()
+                        .title(glib::markup_escape_text(check.name))
+                        .subtitle(glib::markup_escape_text(&match &check.found {
+                            Some(found) => format!("{} — {found}", check.purpose),
+                            None => format!("{} — not found", check.purpose),
+                        }))
+                        .build();
+                    let icon = gtk::Image::from_icon_name(if check.ok() {
+                        "cutmary-check-symbolic"
+                    } else {
+                        "dialog-warning-symbolic"
+                    });
+                    icon.add_css_class(if check.ok() { "success" } else { "warning" });
+                    row.add_prefix(&icon);
+                    requirements.add(&row);
+                    requirement_rows.borrow_mut().push(row);
+                }
+                match report.install_command() {
+                    Some(command) => {
+                        install_row.set_subtitle(&glib::markup_escape_text(&command));
+                        install_row.set_visible(true);
+                    }
+                    None => install_row.set_visible(false),
+                }
             }
 
             if matches!(change, Change::Config | Change::Prefix) {
@@ -332,12 +437,9 @@ pub fn build(ctl: &Rc<Controller>) -> gtk::Widget {
                         format!("Darwin base installed{}", base.map(|b| format!(" ({b})")).unwrap_or_default()),
                         "Repair",
                     ),
-                    PrefixStatus::NoBase => (
-                        "dialog-warning-symbolic",
-                        "warning",
-                        "Darwin base missing".to_owned(),
-                        "Repair",
-                    ),
+                    PrefixStatus::NoBase => {
+                        ("dialog-warning-symbolic", "warning", "Darwin base missing".to_owned(), "Repair")
+                    }
                     PrefixStatus::Missing => (
                         "dialog-information-symbolic",
                         "accent",
@@ -355,6 +457,7 @@ pub fn build(ctl: &Rc<Controller>) -> gtk::Widget {
     };
     refresh(Change::Installed);
     refresh(Change::Config);
+    refresh(Change::Preflight);
     ctl.subscribe(refresh);
 
     page.upcast()
@@ -379,6 +482,27 @@ fn confirm_reinstall(ctl: &Rc<Controller>) {
     dialog.set_response_appearance("reinstall", adw::ResponseAppearance::Suggested);
     let ctl2 = ctl.clone();
     dialog.connect_response(Some("reinstall"), move |_, _| ctl2.start_install(Source::Download));
+    dialog.present(ctl.window().as_ref());
+}
+
+fn confirm_archive(ctl: &Rc<Controller>, broken: Vec<BrokenDraft>) {
+    let list =
+        broken.iter().map(|d| format!("• {} — {}", d.name(), d.damage.describe())).collect::<Vec<_>>().join("\n");
+    let dialog = adw::AlertDialog::builder()
+        .heading(format!("{} Damaged Draft(s)", broken.len()))
+        .body(format!(
+            "CapCut cannot open these drafts:\n\n{list}\n\nArchiving moves them to “{}” next to your \
+             projects folder so CapCut stops tripping over them. Nothing is deleted.",
+            drafts::ARCHIVE_DIR
+        ))
+        .close_response("keep")
+        .default_response("archive")
+        .build();
+    dialog.add_response("keep", "Keep");
+    dialog.add_response("archive", "Archive");
+    dialog.set_response_appearance("archive", adw::ResponseAppearance::Suggested);
+    let ctl2 = ctl.clone();
+    dialog.connect_response(Some("archive"), move |_, _| ctl2.archive_drafts(&broken));
     dialog.present(ctl.window().as_ref());
 }
 

@@ -5,7 +5,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::gio;
 
-use super::controller::Controller;
+use super::controller::{Change, Controller};
 use crate::config::{APP_ID, REPOSITORY, VERSION};
 
 pub fn build(app: &adw::Application, ctl: Rc<Controller>) -> adw::ApplicationWindow {
@@ -13,12 +13,7 @@ pub fn build(app: &adw::Application, ctl: Rc<Controller>) -> adw::ApplicationWin
 
     let stack = adw::ViewStack::new();
     stack.add_titled_with_icon(&super::home::build(&ctl), Some("home"), "Home", "cutmary-home-symbolic");
-    stack.add_titled_with_icon(
-        &super::settings::build(&ctl),
-        Some("settings"),
-        "Settings",
-        "emblem-system-symbolic",
-    );
+    stack.add_titled_with_icon(&super::settings::build(&ctl), Some("settings"), "Settings", "emblem-system-symbolic");
 
     let switcher = adw::ViewSwitcher::builder().stack(&stack).policy(adw::ViewSwitcherPolicy::Wide).build();
     let menu = gio::Menu::new();
@@ -35,8 +30,36 @@ pub fn build(app: &adw::Application, ctl: Rc<Controller>) -> adw::ApplicationWin
 
     let toasts = adw::ToastOverlay::new();
     toasts.set_child(Some(&stack));
+    // Non-blocking notice when host libraries Rosemary needs are missing.
+    let banner = adw::Banner::builder().button_label("Details").revealed(false).build();
+    banner.connect_button_clicked({
+        let stack = stack.clone();
+        move |_| stack.set_visible_child_name("settings")
+    });
+    ctl.subscribe({
+        let (banner, ctl) = (banner.clone(), Rc::downgrade(&ctl));
+        move |change| {
+            let Some(ctl) = ctl.upgrade() else { return };
+            if change != Change::Preflight {
+                return;
+            }
+            match ctl.preflight().filter(|r| !r.all_ok()) {
+                Some(report) => {
+                    let names: Vec<&str> = report.missing().iter().map(|c| c.name).collect();
+                    banner.set_title(&gtk::glib::markup_escape_text(&format!(
+                        "Missing runtime libraries: {} — CapCut may fail to start or import media",
+                        names.join(", ")
+                    )));
+                    banner.set_revealed(true);
+                }
+                None => banner.set_revealed(false),
+            }
+        }
+    });
+
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
+    toolbar.add_top_bar(&banner);
     toolbar.set_content(Some(&toasts));
 
     let window = adw::ApplicationWindow::builder()
@@ -57,9 +80,8 @@ pub fn build(app: &adw::Application, ctl: Rc<Controller>) -> adw::ApplicationWin
             move |_: &adw::ApplicationWindow, _, _| super::logs::present(&ctl)
         })
         .build();
-    let about = gio::ActionEntry::builder("about")
-        .activate(|window: &adw::ApplicationWindow, _, _| show_about(window))
-        .build();
+    let about =
+        gio::ActionEntry::builder("about").activate(|window: &adw::ApplicationWindow, _, _| show_about(window)).build();
     window.add_action_entries([logs, about]);
     window
 }

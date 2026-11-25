@@ -18,18 +18,33 @@ ByteDance's CDN and prepares it locally.
   running the button shows **Running…** next to **Stop**, which sends SIGTERM
   to the process group and SIGKILL after 5 s.
 - **Show Logs** opens a live viewer for `latest.log`, with Copy and Open Logs Folder buttons.
+- Before every launch, while no CapCut instance is running, the 0-byte
+  `*.locked` markers that a crashed CapCut leaves in
+  `com.lveditor.draft/<draft>/` are removed and logged. Without this, those
+  projects refuse to open.
+- A banner appears if host libraries Rosemary needs are missing. It never
+  blocks a launch.
 
 **Settings**
 - *Cutmary*: version + GitHub Releases update check, theme, advanced mode.
-- *CapCut Installation*: status and size, Reinstall / Repair, arm64 thinning, projects folder.
+- *CapCut Installation*: status and size, Reinstall / Repair, arm64 thinning,
+  projects folder, and **Repair Drafts**. Repair Drafts cleans stale locks,
+  restores a missing or empty `draft_info.json` from CapCut's
+  `draft_info.json.bak`, and offers to archive drafts that can't be restored
+  into `Projects/Cutmary Archived Drafts` (it never deletes them).
 - *Runtime (Rosemary)*: runner (auto / bundled / custom), prefix directory,
   prefix status with `rosemary prefix create|repair`.
-- *Graphics & Window*: decorations, Vulkan present mode, fault handler,
+- *System Requirements*: `libturbojpeg.so.0`, `libwebpdecoder.so.3`/`libwebp.so.7`,
+  `libSDL3.so.0`, `libvulkan.so.1` and a Vulkan ICD. Inside the Flatpak these
+  are checked on the host. When something is missing, a copyable install
+  command is shown, e.g. `sudo pacman -S --needed libjpeg-turbo libwebp sdl3`.
+- *Graphics & Window*: decorations, application menu, Vulkan present mode, fault handler,
   Ctrl editing shortcuts, custom environment variables (advanced).
 
 | Setting | Rosemary variable |
 | --- | --- |
 | Window Decorations: Native / Client | `ROSEMARY_DECORATIONS=server` / `client` |
+| Application Menu: Auto (default) / Hidden / Strip / Titlebar | `ROSEMARY_MENU=none` on Wayland (unset elsewhere) / `none` / `strip` / `titlebar` |
 | Vulkan Presentation Mode | `ROSEMARY_METAL_PRESENTATION_MODE=fifo\|fifo_relaxed\|mailbox\|immediate` |
 | Keep Fault Handler (default on) | `ROSEMARY_KEEP_FAULT_HANDLER=1` |
 | Ctrl for Editing Shortcuts (default on) | `ROSEMARY_CONTROL_EDIT_KEYS=1` |
@@ -86,6 +101,8 @@ src/config.rs       XDG paths + TOML config
 src/installer.rs    download, verify, 7-Zip extraction, symlink restoration, pipeline
 src/macho.rs        native FAT Mach-O → x86_64 thinner
 src/runner.rs       runner discovery, command/env builder, process sessions, prefix status
+src/drafts.rs       stale draft lock cleanup, damaged-draft restore/archive, running-CapCut check
+src/preflight.rs    host library / Vulkan ICD checks with distro install hints
 src/update.rs       GitHub Releases check
 src/logging.rs      shared log file
 src/ui/             controller (state + background work), window, home, settings, logs

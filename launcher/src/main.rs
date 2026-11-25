@@ -2,9 +2,11 @@
 //! CapCut and runs it on Linux through the Rosemary compatibility runtime.
 
 mod config;
+mod drafts;
 mod installer;
 mod logging;
 mod macho;
+mod preflight;
 mod runner;
 mod ui;
 mod update;

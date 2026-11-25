@@ -168,6 +168,43 @@ impl Choice for Decorations {
     }
 }
 
+/// `ROSEMARY_MENU`: where Rosemary shows the macOS application menu.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MenuPlacement {
+    /// Hidden on Wayland sessions (CapCut has its own in-window UI and the
+    /// strip costs space under server decorations); Rosemary's default elsewhere.
+    #[default]
+    Auto,
+    Hidden,
+    Strip,
+    Titlebar,
+}
+
+impl MenuPlacement {
+    /// The env value, or `None` to let Rosemary pick.
+    pub fn env_value(self, wayland: bool) -> Option<&'static str> {
+        match self {
+            Self::Auto => wayland.then_some("none"),
+            Self::Hidden => Some("none"),
+            Self::Strip => Some("strip"),
+            Self::Titlebar => Some("titlebar"),
+        }
+    }
+}
+
+impl Choice for MenuPlacement {
+    const ALL: &'static [Self] = &[Self::Auto, Self::Hidden, Self::Strip, Self::Titlebar];
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto (Hidden on Wayland)",
+            Self::Hidden => "Hidden",
+            Self::Strip => "Menu Strip",
+            Self::Titlebar => "Titlebar (Client Decorations)",
+        }
+    }
+}
+
 /// `ROSEMARY_METAL_PRESENTATION_MODE`: the Vulkan present mode of the Metal translator.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -194,8 +231,7 @@ impl PresentMode {
 }
 
 impl Choice for PresentMode {
-    const ALL: &'static [Self] =
-        &[Self::Default, Self::Fifo, Self::FifoRelaxed, Self::Mailbox, Self::Immediate];
+    const ALL: &'static [Self] = &[Self::Default, Self::Fifo, Self::FifoRelaxed, Self::Mailbox, Self::Immediate];
     fn label(self) -> &'static str {
         match self {
             Self::Default => "Default",
@@ -245,6 +281,7 @@ pub struct RuntimeSection {
 #[serde(default)]
 pub struct GraphicsSection {
     pub decorations: Decorations,
+    pub menu: MenuPlacement,
     pub present_mode: PresentMode,
     /// `ROSEMARY_KEEP_FAULT_HANDLER=1`
     pub keep_fault_handler: bool,
@@ -258,6 +295,7 @@ impl Default for GraphicsSection {
     fn default() -> Self {
         Self {
             decorations: Decorations::default(),
+            menu: MenuPlacement::default(),
             present_mode: PresentMode::default(),
             keep_fault_handler: true,
             ctrl_edit_shortcuts: true,
@@ -279,8 +317,7 @@ impl Config {
     /// Loads `path`; a missing file yields the defaults.
     pub fn load(path: &Path) -> io::Result<Self> {
         match fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
+            Ok(text) => toml::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e),
         }
@@ -309,8 +346,8 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let text = toml::to_string_pretty(self)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        let text =
+            toml::to_string_pretty(self).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         let tmp = path.with_extension("toml.tmp");
         fs::write(&tmp, format!("# Cutmary launcher settings\n{text}"))?;
         fs::rename(&tmp, path)
@@ -318,19 +355,13 @@ impl Config {
 
     /// The prefix directory in effect.
     pub fn prefix_dir(&self, paths: &Paths) -> PathBuf {
-        self.runtime
-            .prefix_dir
-            .clone()
-            .unwrap_or_else(|| paths.default_prefix.clone())
+        self.runtime.prefix_dir.clone().unwrap_or_else(|| paths.default_prefix.clone())
     }
 }
 
 /// The guest's `~/Movies/CapCut/.../com.lveditor.draft` projects folder inside a prefix.
 pub fn projects_dir(prefix: &Path, user: &str) -> PathBuf {
-    prefix
-        .join("root/Users")
-        .join(user)
-        .join("Movies/CapCut/User Data/Projects/com.lveditor.draft")
+    prefix.join("root/Users").join(user).join("Movies/CapCut/User Data/Projects/com.lveditor.draft")
 }
 
 /// The host user name Rosemary maps to `/Users/<name>`.
@@ -359,6 +390,7 @@ mod tests {
         assert_eq!(c.runtime.runner, RunnerChoice::Auto);
         assert_eq!(c.runtime.prefix_dir, None);
         assert_eq!(c.graphics.decorations, Decorations::Native);
+        assert_eq!(c.graphics.menu, MenuPlacement::Auto);
         assert_eq!(c.graphics.present_mode, PresentMode::Default);
         assert!(c.graphics.keep_fault_handler);
         assert!(c.graphics.custom_env.is_empty());
@@ -383,6 +415,7 @@ mod tests {
         config.runtime.custom_runner = Some(PathBuf::from("/opt/rosemary/bin/rosemary"));
         config.runtime.prefix_dir = Some(PathBuf::from("/srv/prefixes/capcut"));
         config.graphics.decorations = Decorations::Client;
+        config.graphics.menu = MenuPlacement::Strip;
         config.graphics.present_mode = PresentMode::FifoRelaxed;
         config.graphics.keep_fault_handler = false;
         config.graphics.custom_env = "FOO=bar BAZ=\"a b\"".into();
@@ -392,6 +425,7 @@ mod tests {
         assert!(text.contains("theme = \"light\""), "{text}");
         assert!(text.contains("present_mode = \"fifo_relaxed\""), "{text}");
         assert!(text.contains("decorations = \"client\""), "{text}");
+        assert!(text.contains("menu = \"strip\""), "{text}");
         assert!(!path.with_extension("toml.tmp").exists());
         assert_eq!(Config::load(&path).unwrap(), config);
     }
@@ -430,7 +464,12 @@ mod tests {
         assert_eq!(p.default_prefix, PathBuf::from("/home/u/.local/share/rosemary/prefixes/default"));
 
         let p = Paths::resolve(
-            env(&[("HOME", "/home/u"), ("XDG_CONFIG_HOME", "/cfg"), ("XDG_DATA_HOME", "/data"), ("XDG_CACHE_HOME", "relative")]),
+            env(&[
+                ("HOME", "/home/u"),
+                ("XDG_CONFIG_HOME", "/cfg"),
+                ("XDG_DATA_HOME", "/data"),
+                ("XDG_CACHE_HOME", "relative"),
+            ]),
             false,
         );
         assert_eq!(p.config_dir, PathBuf::from("/cfg/cutmary"));
@@ -470,5 +509,9 @@ mod tests {
         assert_eq!(Decorations::Client.env_value(), "client");
         assert_eq!(PresentMode::Default.env_value(), None);
         assert_eq!(PresentMode::Immediate.env_value(), Some("immediate"));
+        assert_eq!(MenuPlacement::Auto.env_value(true), Some("none"));
+        assert_eq!(MenuPlacement::Auto.env_value(false), None);
+        assert_eq!(MenuPlacement::Strip.env_value(true), Some("strip"));
+        assert_eq!(MenuPlacement::Hidden.env_value(false), Some("none"));
     }
 }

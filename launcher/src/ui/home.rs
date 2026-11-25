@@ -26,10 +26,8 @@ pub fn build(ctl: &Rc<Controller>) -> gtk::Widget {
     progress_box.append(&step);
     progress_box.append(&bar);
     progress_box.append(&detail);
-    let progress = gtk::Revealer::builder()
-        .child(&progress_box)
-        .transition_type(gtk::RevealerTransitionType::SlideDown)
-        .build();
+    let progress =
+        gtk::Revealer::builder().child(&progress_box).transition_type(gtk::RevealerTransitionType::SlideDown).build();
 
     // Actions.
     let primary = gtk::Button::builder().css_classes(["pill", "suggested-action", "cutmary-cta"]).build();
@@ -148,11 +146,7 @@ pub fn build(ctl: &Rc<Controller>) -> gtk::Widget {
         }
     });
 
-    gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .child(&column)
-        .build()
-        .upcast()
+    gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).child(&column).build().upcast()
 }
 
 fn choose_local_dmg(ctl: &Rc<Controller>) {

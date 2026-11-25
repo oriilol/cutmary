@@ -95,15 +95,16 @@ fn read_fully(file: &mut File, buf: &mut [u8]) -> io::Result<usize> {
 pub fn select_x86_64(archs: &[FatArch]) -> Option<FatArch> {
     let mut x86 = archs.iter().filter(|a| a.cputype == CPU_TYPE_X86_64);
     let first = x86.clone().next().copied();
-    x86.find(|a| a.cpusubtype & !CPU_SUBTYPE_MASK != CPU_SUBTYPE_X86_64_H)
-        .copied()
-        .or(first)
+    x86.find(|a| a.cpusubtype & !CPU_SUBTYPE_MASK != CPU_SUBTYPE_X86_64_H).copied().or(first)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThinOutcome {
     /// The file was (or, in a dry run, would be) replaced by its x86_64 slice.
-    Thinned { before: u64, after: u64 },
+    Thinned {
+        before: u64,
+        after: u64,
+    },
     Skipped,
 }
 
@@ -124,8 +125,7 @@ pub fn thin_file(path: &Path, dry_run: bool) -> io::Result<ThinOutcome> {
     let Some(slice) = select_x86_64(&archs) else {
         return Ok(ThinOutcome::Skipped);
     };
-    let in_bounds = slice.size > 0
-        && slice.offset.checked_add(slice.size).is_some_and(|end| end <= meta.len());
+    let in_bounds = slice.size > 0 && slice.offset.checked_add(slice.size).is_some_and(|end| end <= meta.len());
     if !in_bounds {
         return Ok(ThinOutcome::Skipped);
     }
@@ -186,8 +186,8 @@ pub fn thin_bundle(
         if cancel.load(Ordering::Relaxed) {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
         }
-        let outcome = thin_file(path, dry_run)
-            .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
+        let outcome =
+            thin_file(path, dry_run).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
         if let ThinOutcome::Thinned { before, after } = outcome {
             report.binaries_thinned += 1;
             report.bytes_before += before;
@@ -377,7 +377,10 @@ mod tests {
         let make = |fill| {
             fat(
                 FAT_MAGIC,
-                &[(CPU_TYPE_ARM64, 0, slice(CPU_TYPE_ARM64, fill, 6000)), (CPU_TYPE_X86_64, 3, slice(CPU_TYPE_X86_64, fill, 4000))],
+                &[
+                    (CPU_TYPE_ARM64, 0, slice(CPU_TYPE_ARM64, fill, 6000)),
+                    (CPU_TYPE_X86_64, 3, slice(CPU_TYPE_X86_64, fill, 4000)),
+                ],
             )
         };
         write(&macos.join("CapCut"), &make(1), 0o755);

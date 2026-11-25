@@ -52,11 +52,7 @@ impl std::fmt::Display for InstallError {
 
 impl From<io::Error> for InstallError {
     fn from(e: io::Error) -> Self {
-        if e.kind() == io::ErrorKind::Interrupted {
-            Self::Cancelled
-        } else {
-            Self::Failed(e.to_string())
-        }
+        if e.kind() == io::ErrorKind::Interrupted { Self::Cancelled } else { Self::Failed(e.to_string()) }
     }
 }
 
@@ -603,9 +599,7 @@ pub struct InstallSummary {
 }
 
 fn safe_file_component(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
-        .collect()
+    s.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' }).collect()
 }
 
 /// Runs the whole pipeline on the calling (worker) thread.
@@ -759,7 +753,11 @@ fn install_inner(
         let _ = fs::remove_file(&dmg);
     }
     report.force(Step::Finalize, 1.0, "Done".into());
-    log.info(format!("CapCut {} installed at {}", version.as_deref().unwrap_or("(unknown version)"), paths.app_bundle().display()));
+    log.info(format!(
+        "CapCut {} installed at {}",
+        version.as_deref().unwrap_or("(unknown version)"),
+        paths.app_bundle().display()
+    ));
     Ok(InstallSummary { version, symlinks_restored: restored, thin })
 }
 
@@ -796,7 +794,8 @@ mod tests {
 
     #[test]
     fn step_spans_cover_the_bar_monotonically() {
-        let steps = [Step::Resolve, Step::Download, Step::Verify, Step::Extract, Step::Symlinks, Step::Thin, Step::Finalize];
+        let steps =
+            [Step::Resolve, Step::Download, Step::Verify, Step::Extract, Step::Symlinks, Step::Thin, Step::Finalize];
         let mut last = 0.0;
         for s in steps {
             assert!(s.overall(0.0) >= last);
@@ -853,7 +852,13 @@ Size = 1234
             plan("CapCut/CapCut.app/Contents/Frameworks/Qt.framework/Versions/Current", "A"),
             Some(root.join("Contents/Frameworks/Qt.framework/Versions/Current"))
         );
-        assert!(plan("CapCut/CapCut.app/Contents/Resources/qml/QtQuick/Controls/lib.dylib", "../../../../Frameworks/lib.dylib").is_some());
+        assert!(
+            plan(
+                "CapCut/CapCut.app/Contents/Resources/qml/QtQuick/Controls/lib.dylib",
+                "../../../../Frameworks/lib.dylib"
+            )
+            .is_some()
+        );
         assert_eq!(plan("CapCut/Applications", "/Applications"), None, "outside the app");
         assert_eq!(plan("CapCut/CapCut.app/Contents/x", "/usr/lib/libc.dylib"), None, "absolute target");
         assert_eq!(plan("CapCut/CapCut.app/Contents/Frameworks/E.framework/Escape", "../../../../../etc"), None);
@@ -878,7 +883,10 @@ Size = 1234
         assert_eq!(restored, 3);
         assert_eq!(fs::read_link(versions.join("Current")).unwrap(), PathBuf::from("A"));
         assert_eq!(fs::read(app.join("Contents/Frameworks/Qt.framework/Qt")).unwrap(), b"qt");
-        assert!(fs::symlink_metadata(app.join("Contents/Resources/qml/QtQuick/Controls/libqtquickcontrols2plugin.dylib")).is_ok());
+        assert!(
+            fs::symlink_metadata(app.join("Contents/Resources/qml/QtQuick/Controls/libqtquickcontrols2plugin.dylib"))
+                .is_ok()
+        );
         assert!(!dir.path().join("outside").exists());
         assert!(fs::symlink_metadata(app.join("Contents/Frameworks/Evil.framework/Escape")).is_err());
         // Idempotent.
@@ -905,10 +913,7 @@ Size = 1234
         assert_eq!(best_version(None, s("9.9.0.4841")), s("9.9.0.4841"));
 
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::resolve(
-            |k| (k == "HOME").then(|| dir.path().as_os_str().to_owned()),
-            false,
-        );
+        let paths = Paths::resolve(|k| (k == "HOME").then(|| dir.path().as_os_str().to_owned()), false);
         assert_eq!(installed(&paths), None);
         let contents = paths.app_bundle().join("Contents");
         fs::create_dir_all(&contents).unwrap();
