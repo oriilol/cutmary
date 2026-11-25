@@ -1390,7 +1390,7 @@ index a4137b46..084b3c5e 100644
          "_kCGDisplayShowDuplicateLowResolutionModes",
          "kCGDisplayShowDuplicateLowResolutionModes",
 diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
-index 484056dd..cc323944 100644
+index 484056dd..5bb626ab 100644
 --- a/crates/appkit/src/window.rs
 +++ b/crates/appkit/src/window.rs
 @@ -3756,6 +3756,19 @@ unsafe extern "C" fn parent_window(receiver: Id, _sel: Sel) -> Id {
@@ -1413,7 +1413,7 @@ index 484056dd..cc323944 100644
  unsafe extern "C" fn ignored_object(_receiver: Id, _sel: Sel, _object: Id) {}
  
  unsafe extern "C" fn set_titlebar_transparent(receiver: Id, _sel: Sel, flag: u8) {
-@@ -4134,6 +4147,12 @@ pub(crate) fn install() {
+@@ -4134,6 +4147,18 @@ pub(crate) fn install() {
          "firstResponder" => first_responder, c"@16@0:8";
          "makeFirstResponder:" => make_first_responder, c"c24@0:8@16";
          "initialFirstResponder" => initial_first_responder, c"@16@0:8";
@@ -1423,6 +1423,12 @@ index 484056dd..cc323944 100644
 +        "recalculateKeyViewLoop" => ignored_void, c"v16@0:8";
 +        "autorecalculatesKeyViewLoop" => no_flag, c"c16@0:8";
 +        "setAutorecalculatesKeyViewLoop:" => ignored_flag, c"v20@0:8c16";
++        "worksWhenModal" => no_flag, c"c16@0:8";
++        "setWorksWhenModal:" => ignored_flag, c"v20@0:8c16";
++        "becomesKeyOnlyIfNeeded" => no_flag, c"c16@0:8";
++        "setBecomesKeyOnlyIfNeeded:" => ignored_flag, c"v20@0:8c16";
++        "isFloatingPanel" => no_flag, c"c16@0:8";
++        "setFloatingPanel:" => ignored_flag, c"v20@0:8c16";
          "nextResponder" => next_responder, c"@16@0:8";
          "setNextResponder:" => set_next_responder, c"v24@0:8@16";
          "setInitialFirstResponder:" => set_initial_first_responder, c"v24@0:8@16";
