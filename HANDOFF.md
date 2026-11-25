@@ -225,3 +225,18 @@ drawables/s: la composición funciona y el contenido que dibuja AGFX sale negro.
 texturas de entrada vacías (`CVMetalTextureCache` / pipeline Inplace-Vertical-Flip) o el pase final.
 Falta una herramienta para volcar el contenido de un drawable/textura.
 
+**CVDisplayLink: 60 hilos por segundo (resuelto)**
+
+Qt para y arranca su `CVDisplayLink` en cada frame; Rosemary creaba un hilo nuevo en cada
+`CVDisplayLinkStart` (~62 hilos/s). Ahora cada link tiene un hilo persistente que se duerme
+en `Stop` y se despierta en `Start`. Medido en vivo: 312 hilos nuevos en 5 s -> 0. Test
+`a_restarted_link_calls_back_on_the_same_thread`; corevideo 39/39.
+
+**Red de CapCut: nada online funciona (abierto)**
+
+Efectos, Animaciones, Exportar y el certificado C2PA fallan. Trazado en vivo con gdb durante
+4 min pulsando Efectos: **cero** llamadas a `getaddrinfo` y **cero** `connect` TCP. Los hilos
+TTNet (`libsscronet`) están ociosos, no bloqueados: la petición muere dentro de TTNet antes de
+DNS. Descartado: `resolv.conf` (montado), `SCNetworkReachability` (responde reachable con ruta),
+proxy (`CFNetworkCopySystemProxySettings` vacío). Los logs `alog` de CapCut están cifrados.
+

@@ -991,10 +991,22 @@ index 54e4cb04..021d34c3 100644
          "contents" => contents, c"@16@0:8";
          "setContents:" => set_contents, c"v24@0:8@16";
 diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
-index 44ed1219..b181a297 100644
+index 44ed1219..36ce3a83 100644
 --- a/crates/appkit/src/event.rs
 +++ b/crates/appkit/src/event.rs
-@@ -710,6 +710,11 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+@@ -425,6 +425,11 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+             post(window, window::DID_CHANGE_BACKING_PROPERTIES);
+         }
+         Event::WindowMouse { window, entered } => {
++            crate::window::trace(format_args!(
++                "pointer {} SDL window {window} (associated {})",
++                if entered { "entered" } else { "left" },
++                crate::screen::mouse_is_associated()
++            ));
+             // A disassociated pointer never leaves: its cursor is frozen where
+             // it was, and SDL's integrated position reaching a window edge is
+             // not the guest's pointer going anywhere. A guest told it left
+@@ -710,6 +715,11 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
              x,
              y,
          } => {

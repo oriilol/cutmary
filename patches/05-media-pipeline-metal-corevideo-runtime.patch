@@ -3852,11 +3852,32 @@ index aa8cbbfd..4b85d1b1 100644
  darwin.workspace = true
  objc.workspace = true
 diff --git a/crates/corevideo/src/lib.rs b/crates/corevideo/src/lib.rs
-index fc4d6388..5ebc71fa 100644
+index fc4d6388..970f247c 100644
 --- a/crates/corevideo/src/lib.rs
 +++ b/crates/corevideo/src/lib.rs
-@@ -61,10 +61,8 @@ struct Link {
-     running: Option<Arc<AtomicBool>>,
+@@ -4,8 +4,7 @@
+ pub mod pixel_buffer;
+ 
+ use std::ffi::c_void;
+-use std::sync::atomic::{AtomicBool, Ordering};
+-use std::sync::{Arc, Mutex};
++use std::sync::{Arc, Condvar, Mutex};
+ 
+ /// `CVReturn`. Zero is success, and the one failure this reports is
+ /// `kCVReturnInvalidArgument`.
+@@ -56,15 +55,41 @@ type OutputCallback = unsafe extern "C" fn(
+ struct Link {
+     callback: Option<OutputCallback>,
+     context: *mut c_void,
+-    /// Set while the link's thread should keep calling back. Cleared by
+-    /// [`CVDisplayLinkStop`], which is the thread's only stop signal.
+-    running: Option<Arc<AtomicBool>>,
++    /// Whether the link is started.
++    running: bool,
++    /// The link's thread, made by the first start and parked while stopped.
++    /// Qt stops and restarts its link around every frame, which on a Mac is
++    /// cheap; a thread per start would be sixty spawns a second.
++    worker: Option<Arc<Worker>>,
      /// Seconds between frames, from the display SDL reports.
      period: f64,
 -    /// How many times the callback has run, which is the `videoTime` a guest
@@ -3865,10 +3886,35 @@ index fc4d6388..5ebc71fa 100644
 -    started: std::time::Instant,
 +    display: u32,
 +    started: u64,
++}
++
++/// The run state a link's thread waits on.
++#[derive(Default)]
++struct Worker {
++    active: Mutex<bool>,
++    wake: Condvar,
++}
++
++impl Worker {
++    fn set(&self, active: bool) {
++        *self.active.lock().unwrap_or_else(|e| e.into_inner()) = active;
++        self.wake.notify_all();
++    }
++
++    fn is_active(&self) -> bool {
++        *self.active.lock().unwrap_or_else(|e| e.into_inner())
++    }
++
++    fn wait_until_active(&self) {
++        let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
++        while !*active {
++            active = self.wake.wait(active).unwrap_or_else(|e| e.into_inner());
++        }
++    }
  }
  
  // SAFETY: the context is the guest's own pointer and is only ever handed back to
-@@ -92,11 +90,14 @@ fn link_for(handle: *mut c_void) -> Option<Arc<Mutex<Link>>> {
+@@ -92,11 +117,14 @@ fn link_for(handle: *mut c_void) -> Option<Arc<Mutex<Link>>> {
  /// A zero display names the primary display for the active-displays spelling.
  /// Sixty hertz is only a fallback for a host with no SDL video subsystem or no
  /// desktop mode; a real display link follows the mode SDL reports.
@@ -3886,7 +3932,7 @@ index fc4d6388..5ebc71fa 100644
      let refresh_rate = sdl3::video::display_refresh_rate(display).unwrap_or(60.0);
      1.0 / f64::from(refresh_rate)
  }
-@@ -113,13 +114,14 @@ pub unsafe extern "C" fn CVDisplayLinkCreateWithCGDisplay(
+@@ -113,13 +141,15 @@ pub unsafe extern "C" fn CVDisplayLinkCreateWithCGDisplay(
      if out.is_null() {
          return INVALID_ARGUMENT;
      }
@@ -3894,7 +3940,9 @@ index fc4d6388..5ebc71fa 100644
      let link = Arc::new(Mutex::new(Link {
          callback: None,
          context: std::ptr::null_mut(),
-         running: None,
+-        running: None,
++        running: false,
++        worker: None,
          period: display_period(display),
 -        frame: 0,
 -        started: std::time::Instant::now(),
@@ -3903,7 +3951,7 @@ index fc4d6388..5ebc71fa 100644
      }));
      // The handle is the `Mutex`'s address, which the `Arc` in the table keeps
      // alive for as long as the link exists.
-@@ -169,7 +171,58 @@ pub unsafe extern "C" fn CVDisplayLinkSetCurrentCGDisplay(
+@@ -169,7 +199,58 @@ pub unsafe extern "C" fn CVDisplayLinkSetCurrentCGDisplay(
      let Some(link) = link_for(handle) else {
          return INVALID_ARGUMENT;
      };
@@ -3956,23 +4004,144 @@ index fc4d6388..5ebc71fa 100644
 +        return INVALID_ARGUMENT;
 +    }
 +    let link = link.lock().unwrap_or_else(|e| e.into_inner());
-+    if link.running.is_none() {
++    if !link.running {
 +        return DISPLAY_LINK_NOT_RUNNING;
 +    }
 +    unsafe { out.write(timestamp(&link)) };
      SUCCESS
  }
  
-@@ -240,7 +293,7 @@ pub unsafe extern "C" fn CVDisplayLinkStart(handle: *mut c_void) -> i32 {
-         if guard.running.is_some() {
+@@ -230,65 +311,79 @@ pub unsafe extern "C" fn CVDisplayLinkGetNominalOutputVideoRefreshPeriod(
+     }
+ }
+ 
+-/// `CVDisplayLinkStart`: start the thread that calls the guest back.
++/// `CVDisplayLinkStart`: start, or wake, the thread that calls the guest back.
+ pub unsafe extern "C" fn CVDisplayLinkStart(handle: *mut c_void) -> i32 {
+     let Some(link) = link_for(handle) else {
+         return INVALID_ARGUMENT;
+     };
+-    let (period, running) = {
++    let (period, worker) = {
+         let mut guard = link.lock().unwrap_or_else(|e| e.into_inner());
+-        if guard.running.is_some() {
++        if guard.running {
++            return SUCCESS;
++        }
++        guard.started = host_time();
++        guard.running = true;
++        if let Some(worker) = &guard.worker {
++            worker.set(true);
              return SUCCESS;
          }
 -        guard.started = std::time::Instant::now();
-+        guard.started = host_time();
-         let running = Arc::new(AtomicBool::new(true));
-         guard.running = Some(Arc::clone(&running));
-         (guard.period, running)
-@@ -316,27 +369,15 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
+-        let running = Arc::new(AtomicBool::new(true));
+-        guard.running = Some(Arc::clone(&running));
+-        (guard.period, running)
++        let worker = Arc::new(Worker::default());
++        worker.set(true);
++        guard.worker = Some(Arc::clone(&worker));
++        (guard.period, worker)
+     };
+ 
+     let period = std::time::Duration::from_secs_f64(period);
+     let at = handle as usize;
+-    // Detached. A guest may stop its link from inside the callback, and a
+-    // `Stop` that joined would then be the thread waiting for itself.
+-    std::thread::Builder::new()
++    // Detached and never joined: a guest may stop its link from inside the
++    // callback, and a `Stop` that joined would be the thread waiting for itself.
++    let spawned = std::thread::Builder::new()
+         .name("CVDisplayLink".to_string())
+         .spawn(move || {
+             // The callback is guest code, which reads its thread identity off the
+             // thread pointer - its parent's on a new thread until it enters.
+             let _darwin = darwin::tls::DarwinThread::enter();
+-            let mut next = std::time::Instant::now() + period;
+-            while running.load(Ordering::Acquire) {
+-                let now = std::time::Instant::now();
+-                if next > now {
+-                    std::thread::sleep(next - now);
+-                } else {
+-                    // Behind: give up the frames that were missed rather than
+-                    // calling back in a burst to catch up.
+-                    next = now;
+-                }
+-                next += period;
+-                if !running.load(Ordering::Acquire) {
+-                    break;
++            loop {
++                worker.wait_until_active();
++                let mut next = std::time::Instant::now() + period;
++                while worker.is_active() {
++                    let now = std::time::Instant::now();
++                    if next > now {
++                        std::thread::sleep(next - now);
++                    } else {
++                        // Behind: give up the frames that were missed rather
++                        // than calling back in a burst to catch up.
++                        next = now;
++                    }
++                    next += period;
++                    if !worker.is_active() {
++                        break;
++                    }
++                    // SAFETY: `at` is a handle this module made, and the table
++                    // keeps it alive.
++                    unsafe { fire(std::ptr::null(), at as *mut c_void) };
+                 }
+-                // SAFETY: `at` is a handle this module made, and the table keeps
+-                // it alive.
+-                unsafe { fire(std::ptr::null(), at as *mut c_void) };
+             }
+-        })
+-        .map_or(INVALID_ARGUMENT, |_| SUCCESS)
++        });
++    match spawned {
++        Ok(_) => SUCCESS,
++        Err(_) => {
++            let mut guard = link.lock().unwrap_or_else(|e| e.into_inner());
++            guard.running = false;
++            guard.worker = None;
++            INVALID_ARGUMENT
++        }
++    }
+ }
+ 
+ pub unsafe extern "C" fn CVDisplayLinkStop(handle: *mut c_void) -> i32 {
+     let Some(link) = link_for(handle) else {
+         return INVALID_ARGUMENT;
+     };
+-    let running = link
+-        .lock()
+-        .unwrap_or_else(|e| e.into_inner())
+-        .running
+-        .take();
+-    if let Some(running) = running {
+-        running.store(false, Ordering::Release);
++    let mut guard = link.lock().unwrap_or_else(|e| e.into_inner());
++    guard.running = false;
++    if let Some(worker) = &guard.worker {
++        worker.set(false);
+     }
+     SUCCESS
+ }
+@@ -300,12 +395,8 @@ pub unsafe extern "C" fn CVDisplayLinkRetain(handle: *mut c_void) -> *mut c_void
+ pub unsafe extern "C" fn CVDisplayLinkRelease(_handle: *mut c_void) {}
+ 
+ pub unsafe extern "C" fn CVDisplayLinkIsRunning(handle: *mut c_void) -> u8 {
+-    link_for(handle).is_some_and(|link| {
+-        link.lock()
+-            .unwrap_or_else(|e| e.into_inner())
+-            .running
+-            .is_some()
+-    }) as u8
++    link_for(handle).is_some_and(|link| link.lock().unwrap_or_else(|e| e.into_inner()).running)
++        as u8
+ }
+ 
+ /// One turn of the link: build the two timestamps and call the guest.
+@@ -316,27 +407,15 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
          return;
      };
      let (callback, context, now, output) = {
@@ -4003,7 +4172,7 @@ index fc4d6388..5ebc71fa 100644
              ..now
          };
          (callback, guard.context, now, output)
-@@ -351,6 +392,15 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
+@@ -351,6 +430,15 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
  
  exports::exports! {
      functions {
@@ -4019,7 +4188,7 @@ index fc4d6388..5ebc71fa 100644
          "CVDisplayLinkCreateWithCGDisplay" => CVDisplayLinkCreateWithCGDisplay,
          "CVDisplayLinkCreateWithActiveCGDisplays" => CVDisplayLinkCreateWithActiveCGDisplays,
          "CVDisplayLinkSetOutputCallback" => CVDisplayLinkSetOutputCallback,
-@@ -407,6 +457,17 @@ exports::exports! {
+@@ -407,6 +495,17 @@ exports::exports! {
          "CVPixelBufferPoolCreatePixelBuffer" => pixel_buffer::CVPixelBufferPoolCreatePixelBuffer,
          "CVPixelBufferPoolCreatePixelBufferWithAuxAttributes" => pixel_buffer::CVPixelBufferPoolCreatePixelBufferWithAuxAttributes,
          "CVPixelBufferPoolFlush" => pixel_buffer::CVPixelBufferPoolFlush,
@@ -4037,10 +4206,81 @@ index fc4d6388..5ebc71fa 100644
      }
  }
  
-@@ -435,6 +496,39 @@ mod tests {
+@@ -435,6 +534,110 @@ mod tests {
          SUCCESS
      }
  
++    static RESTART_THREADS: Mutex<Vec<std::thread::ThreadId>> = Mutex::new(Vec::new());
++
++    unsafe extern "C" fn note_thread(
++        _link: *mut c_void,
++        _now: *const TimeStamp,
++        _output: *const TimeStamp,
++        _flags: u64,
++        _flags_out: *mut u64,
++        _context: *mut c_void,
++    ) -> i32 {
++        RESTART_THREADS
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .push(std::thread::current().id());
++        SUCCESS
++    }
++
++    fn wait_for_callbacks(count: usize) {
++        for _ in 0..100 {
++            if RESTART_THREADS
++                .lock()
++                .unwrap_or_else(|e| e.into_inner())
++                .len()
++                >= count
++            {
++                return;
++            }
++            std::thread::sleep(std::time::Duration::from_millis(20));
++        }
++        panic!("the link did not call back");
++    }
++
++    /// Qt stops and restarts its link around every frame; each restart must
++    /// wake the link's thread rather than spawn another.
++    #[test]
++    fn a_restarted_link_calls_back_on_the_same_thread() {
++        let mut handle = std::ptr::null_mut();
++        // SAFETY: a writable slot, then a link this test made with a callback
++        // of the right prototype.
++        unsafe {
++            assert_eq!(CVDisplayLinkCreateWithCGDisplay(0, &mut handle), SUCCESS);
++            assert_eq!(
++                CVDisplayLinkSetOutputCallback(
++                    handle,
++                    note_thread as *mut c_void,
++                    std::ptr::null_mut()
++                ),
++                SUCCESS
++            );
++            assert_eq!(CVDisplayLinkStart(handle), SUCCESS);
++        }
++        wait_for_callbacks(1);
++        // SAFETY: the same link.
++        unsafe {
++            assert_eq!(CVDisplayLinkStop(handle), SUCCESS);
++            assert_eq!(CVDisplayLinkStart(handle), SUCCESS);
++        }
++        let before = RESTART_THREADS
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .len();
++        wait_for_callbacks(before + 1);
++        // SAFETY: the same link.
++        assert_eq!(unsafe { CVDisplayLinkStop(handle) }, SUCCESS);
++        let threads = RESTART_THREADS.lock().unwrap_or_else(|e| e.into_inner());
++        assert!(
++            threads.iter().all(|t| *t == threads[0]),
++            "a restart spawned a thread"
++        );
++    }
++
 +    #[test]
 +    fn current_display_and_time_follow_the_link() {
 +        let mut handle = std::ptr::null_mut();
@@ -4673,10 +4913,10 @@ index 00000000..4b4a1085
 +}
 diff --git a/crates/corevideo/src/pixel_buffer/texture_cache.rs b/crates/corevideo/src/pixel_buffer/texture_cache.rs
 new file mode 100644
-index 00000000..2cbb1af5
+index 00000000..1ea156c1
 --- /dev/null
 +++ b/crates/corevideo/src/pixel_buffer/texture_cache.rs
-@@ -0,0 +1,922 @@
+@@ -0,0 +1,910 @@
 +//! `CVMetalTextureCache` and `CVOpenGLTextureCache`: GPU textures made from
 +//! pixel buffers.
 +//!
@@ -4687,8 +4927,8 @@ index 00000000..2cbb1af5
 +
 +use std::collections::HashMap;
 +use std::ffi::c_void;
-+use std::sync::{Mutex, OnceLock};
 +use std::sync::atomic::Ordering;
++use std::sync::{Mutex, OnceLock};
 +
 +use corefoundation::base::CFTypeRef;
 +use objc::class::Class;
@@ -5041,14 +5281,8 @@ index 00000000..2cbb1af5
 +                    tex
 +                }
 +                None => {
-+                    let tex = make_metal_texture(
-+                        cache.device,
-+                        pixel_format,
-+                        width,
-+                        height,
-+                        usage,
-+                        &view,
-+                    );
++                    let tex =
++                        make_metal_texture(cache.device, pixel_format, width, height, usage, &view);
 +                    if !tex.is_null() {
 +                        let mut map = iosurface_textures()
 +                            .lock()
@@ -5099,14 +5333,8 @@ index 00000000..2cbb1af5
 +                    tex
 +                }
 +                None => {
-+                    let tex = make_metal_texture(
-+                        cache.device,
-+                        pixel_format,
-+                        width,
-+                        height,
-+                        usage,
-+                        &view,
-+                    );
++                    let tex =
++                        make_metal_texture(cache.device, pixel_format, width, height, usage, &view);
 +                    if !tex.is_null() {
 +                        let mut list = pb_state
 +                            .metal_textures
