@@ -253,7 +253,7 @@ index 9f459b6a..26746c61 100644
      methods!(window, {
 diff --git a/crates/appkit/src/capcut_globals.rs b/crates/appkit/src/capcut_globals.rs
 new file mode 100644
-index 00000000..06d223bc
+index 00000000..cb5c401b
 --- /dev/null
 +++ b/crates/appkit/src/capcut_globals.rs
 @@ -0,0 +1,506 @@
@@ -529,23 +529,23 @@ index 00000000..06d223bc
 +    ("_kCTFontPriorityAttribute", "kCTFontPriorityAttribute"),
 +    ("_kCTFontStyleNameKey", "kCTFontStyleNameKey"),
 +    ("_kCTFontWidthTrait", "kCTFontWidthTrait"),
-+    ("_kCVImageBufferCleanApertureHeightKey", "kCVImageBufferCleanApertureHeightKey"),
-+    ("_kCVImageBufferCleanApertureHorizontalOffsetKey", "kCVImageBufferCleanApertureHorizontalOffsetKey"),
-+    ("_kCVImageBufferCleanApertureVerticalOffsetKey", "kCVImageBufferCleanApertureVerticalOffsetKey"),
-+    ("_kCVImageBufferCleanApertureWidthKey", "kCVImageBufferCleanApertureWidthKey"),
-+    ("_kCVImageBufferColorPrimaries_DCI_P3", "kCVImageBufferColorPrimaries_DCI_P3"),
-+    ("_kCVImageBufferColorPrimaries_P22", "kCVImageBufferColorPrimaries_P22"),
-+    ("_kCVImageBufferColorPrimaries_P3_D65", "kCVImageBufferColorPrimaries_P3_D65"),
++    ("_kCVImageBufferCleanApertureHeightKey", "Height"),
++    ("_kCVImageBufferCleanApertureHorizontalOffsetKey", "HorizontalOffset"),
++    ("_kCVImageBufferCleanApertureVerticalOffsetKey", "VerticalOffset"),
++    ("_kCVImageBufferCleanApertureWidthKey", "Width"),
++    ("_kCVImageBufferColorPrimaries_DCI_P3", "DCI_P3"),
++    ("_kCVImageBufferColorPrimaries_P22", "P22"),
++    ("_kCVImageBufferColorPrimaries_P3_D65", "P3_D65"),
 +    ("_kCVImageBufferContentLightLevelInfoKey", "kCVImageBufferContentLightLevelInfoKey"),
 +    ("_kCVImageBufferGammaLevelKey", "kCVImageBufferGammaLevelKey"),
 +    ("_kQLThumbnailOptionIconModeKey", "IconMode"),
 +    ("_kCVImageBufferMasteringDisplayColorVolumeKey", "kCVImageBufferMasteringDisplayColorVolumeKey"),
-+    ("_kCVImageBufferTransferFunction_ITU_R_2100_HLG", "kCVImageBufferTransferFunction_ITU_R_2100_HLG"),
-+    ("_kCVImageBufferTransferFunction_Linear", "kCVImageBufferTransferFunction_Linear"),
-+    ("_kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ", "kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ"),
-+    ("_kCVImageBufferTransferFunction_SMPTE_ST_428_1", "kCVImageBufferTransferFunction_SMPTE_ST_428_1"),
-+    ("_kCVImageBufferTransferFunction_UseGamma", "kCVImageBufferTransferFunction_UseGamma"),
-+    ("_kCVImageBufferTransferFunction_sRGB", "kCVImageBufferTransferFunction_sRGB"),
++    ("_kCVImageBufferTransferFunction_ITU_R_2100_HLG", "ITU_R_2100_HLG"),
++    ("_kCVImageBufferTransferFunction_Linear", "Linear"),
++    ("_kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ", "SMPTE_ST_2084_PQ"),
++    ("_kCVImageBufferTransferFunction_SMPTE_ST_428_1", "SMPTE_ST_428_1"),
++    ("_kCVImageBufferTransferFunction_UseGamma", "UseGamma"),
++    ("_kCVImageBufferTransferFunction_sRGB", "sRGB"),
 +    ("_kCVMetalTextureCacheMaximumTextureAgeKey", "kCVMetalTextureCacheMaximumTextureAgeKey"),
 +    ("_kDADiskDescriptionDeviceInternalKey", "kDADiskDescriptionDeviceInternalKey"),
 +    ("_kDADiskDescriptionDeviceRevisionKey", "kDADiskDescriptionDeviceRevisionKey"),
@@ -2978,7 +2978,7 @@ index f5fe44f7..38554e1b 100644
          "launchApplicationAtURL:options:configuration:error:" => launch_application,
              c"@48@0:8@16Q24@32^@40";
 diff --git a/crates/rosemary/src/abi/table.rs b/crates/rosemary/src/abi/table.rs
-index 8f85a506..f29a495f 100644
+index 8f85a506..8367c7c4 100644
 --- a/crates/rosemary/src/abi/table.rs
 +++ b/crates/rosemary/src/abi/table.rs
 @@ -437,6 +437,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
@@ -2997,7 +2997,22 @@ index 8f85a506..f29a495f 100644
      sig!("CGContextSetTextDrawingMode", V, P, I32),
      sig!("CGContextSetGrayFillColor", V, P, F64, F64),
      sig!("CGContextSetShouldSmoothFonts", V, P, BOOL),
-@@ -1105,6 +1107,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -1035,6 +1037,14 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+     sig!("nw_interface_get_index", U32, P),
+     sig!("nw_retain", P, P),
+     sig!("nw_release", V, P),
++    sig!("CVColorPrimariesGetStringForIntegerCodePoint", P, I32),
++    sig!("CVTransferFunctionGetStringForIntegerCodePoint", P, I32),
++    sig!("CVYCbCrMatrixGetStringForIntegerCodePoint", P, I32),
++    sig!("CVBufferHasAttachment", BOOL, P, P),
++    sig!("CVIsCompressedPixelFormatAvailable", BOOL, U32),
++    sig!("CVPixelBufferCreateWithIOSurface", I32, P, P, P, P),
++    sig!("CVDisplayLinkGetCurrentTime", I32, P, P),
++    sig!("CVDisplayLinkGetCurrentCGDisplay", U32, P),
+     sig!("CVDisplayLinkCreateWithActiveCGDisplays", I32, P),
+     sig!("CVDisplayLinkCreateWithCGDisplay", I32, U32, P),
+     sig!("CVDisplayLinkGetActualOutputVideoRefreshPeriod", F64, P),
+@@ -1105,6 +1115,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
      sig!("CVOpenGLTextureCacheRelease", V, P),
      sig!("CVOpenGLTextureGetName", U32, P),
      sig!("CVOpenGLTextureGetTarget", U32, P),
@@ -3005,7 +3020,7 @@ index 8f85a506..f29a495f 100644
      sig!("CVPixelBufferGetBaseAddress", P, P),
      sig!("CVPixelBufferGetBytesPerRow", U64, P),
      sig!("CVPixelBufferGetHeight", U64, P),
-@@ -1615,6 +1618,33 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -1615,6 +1626,33 @@ pub static SIGNATURES: &[FunctionAbi] = &[
      sig!("SecCertificateCreateWithData", P, P, P),
      sig!("SecPolicyCreateBasicX509", P),
      sig!("SecTrustCreateWithCertificates", I32, P, P, P),
@@ -3039,7 +3054,7 @@ index 8f85a506..f29a495f 100644
      sig!("SecTrustSetOptions", I32, P, U32),
      sig!("SecTrustEvaluate", I32, P, P),
      sig!("SecRandomCopyBytes", I32, P, U64, P),
-@@ -3265,6 +3295,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -3265,6 +3303,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
      sig!("posix_spawnattr_setpgroup", I32, P, I32),
      sig!("posix_spawnattr_setbinpref_np", I32, P, U64, P, P),
      sig!("posix_spawnattr_setarchpref_np", I32, P, U64, P, P, P),
@@ -3047,7 +3062,7 @@ index 8f85a506..f29a495f 100644
      // `short flags`, which SysV passes in the low half of a register and
      // AAPCS64 reads back out of one: narrower than the slot on both sides.
      sig!("posix_spawnattr_setflags", I32, P, U32),
-@@ -4018,6 +4049,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -4018,6 +4057,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
          U64,
          P
      ),
@@ -3055,6 +3070,16 @@ index 8f85a506..f29a495f 100644
      sig!("CVMetalTextureGetTexture", P, P),
      sig!("CVPixelBufferCreate", I32, P, U64, U64, U32, P, P),
      sig!("CVPixelBufferGetBaseAddressOfPlane", P, P, U64),
+@@ -4456,6 +4496,9 @@ pub static REFUSED: &[(&str, &str)] = &[
+     // native backend calls both directly, with no marshaller in the way.
+     ("CFAbsoluteTimeGetGregorianDate", AGGREGATE),
+     ("CFGregorianDateGetAbsoluteTime", AGGREGATE),
++    // CGRect CVImageBufferGetCleanRect(CVImageBufferRef): shims::coremedia
++    // handles the hidden x86_64 return pointer before scalar lookup.
++    ("CVImageBufferGetCleanRect", AGGREGATE),
+     ("CGRectContainsPoint", AGGREGATE),
+     ("CGRectInset", AGGREGATE),
+     ("NSMouseInRect", AGGREGATE),
 diff --git a/crates/rosemary/src/fault.rs b/crates/rosemary/src/fault.rs
 index 8d6b8e84..95a0de52 100644
 --- a/crates/rosemary/src/fault.rs

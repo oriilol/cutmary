@@ -140,10 +140,7 @@ línea de tiempo (4 clips), botón Export activo. El panel de Medios ya no se at
   con `4f3bc52`; aún va con retardo al abrirse.
 - La pantalla de inicio no muestra miniaturas de proyectos ni el degradado del botón.
 - El reproductor no reproduce y el editor va muy lento (~1 fps).
-- Vídeo `.mp4`: faltan `CV{ColorPrimaries,TransferFunction,YCbCrMatrix}GetStringForIntegerCodePoint`
-  (FFmpeg/libavutil), `CVBufferHasAttachment`, `CVImageBufferGetCleanRect`,
-  `CVPixelBufferCreateWithIOSurface`, `CVIsCompressedPixelFormatAvailable`,
-  `CVDisplayLinkGetCurrentTime` y `CVDisplayLinkGetCurrentCGDisplay`.
+- Vídeo `.mp4`: implementadas las nueve funciones CoreVideo. La auditoría y el estado de las pruebas están al final.
 - `frameworks::tests` informa 6 símbolos duplicados (`_CFNotificationCenter*` y
   `_NSURLTypeIdentifierKey`, `_kCGImageSourceTypeIdentifierHint`); dos tests de appkit fallan
   (`a_panel_keeps_its_becomes_key_only_if_needed`, `metal_scene_tracks_sibling_order_hiding_and_removal`).
@@ -164,3 +161,30 @@ Con `ROSEMARY_TRACE_WINDOW=1 ROSEMARY_METAL_STATS=1` (líneas con `[ms]` en un m
   falta un muestreador nativo: `ROSEMARY_PROFILE` solo funciona en modo emulado, y gdb
   (lanzando con `PR_SET_PTRACER` para no necesitar `ptrace_scope=0`) la encuentra ociosa.
 
+### Importación MP4 · 25 de noviembre de 2026
+
+Codex implementó los tres conversores de color, la consulta de adjuntos, la apertura limpia, la consulta de formatos comprimidos, las dos consultas del display link y la creación de buffers que comparten un IOSurface. El retorno de CGRect incluye el adaptador para el puntero de resultado oculto de x86_64. El backend admite IOSurface empaquetados BGRA, RGBA y ARGB. Rechaza los formatos planares o comprimidos que carecen de respaldo.
+
+**Verificación de código.** Compilación release con seis trabajos, 38 tests de CoreVideo y un test del retorno de CGRect a memoria del invitado. Se aplicaron los cinco parches en orden sobre la base fijada y el árbol de Git coincidió con el árbol compartido completo (90 rutas modificadas).
+
+**Prueba de interfaz.** Home y un proyecto nuevo abrieron con Xvfb, Mesa EGL y Lavapipe en una copia del prefijo. El selector devolvió una selección vacía antes de entregar el H.264 de prueba (320 × 180, 24 fps, dos segundos). Clio abrió el proyecto existente `1125 (7)` en Wayland con la RTX 5060 Ti. Observó la previsualización en negro y bloqueos al reproducir. Esta sesión documenta un fallo del editor con recursos de imagen. Siguen pendientes la importación y la reproducción de un MP4 de prueba.
+
+**Auditoría estática de libcccreator.dylib, slice x86_64 de CapCut 9.8.0.4799.** Las direcciones son virtuales de la imagen antes de ASLR. Se cruzaron las referencias a clases y selectores de `llvm-objdump --macho --arch=x86_64 --disassemble --symbolize-operands` con las implementaciones de métodos de `--objc-meta-data`.
+
+| Código identificado | Receptor y mensajes relevantes |
+| --- | --- |
+| `IESMMFastVideoImport isSupportFastImport:mediaType:` (0x23800b0) | Crea el asset con `+[AVURLAsset assetWithURL:]`, consulta `tracksWithMediaType:` con `AVMediaTypeVideo` y lee `formatDescriptions` de la primera pista. |
+| `VEVideoFileInfo ffmpegInit:` (0x24230a0) | Además del sondeo FFmpeg, la ruta construye un AVURLAsset con `assetWithURL:` y lee `metadata`. |
+| `AVVideoReaderOCImpl openReader` (0x2fbdb60) e `initVideoReader:` (0x2fbca50) | Usa `+[AVAssetReader assetReaderWithAsset:error:]`, selecciona una pista de vídeo y crea la salida con `+[AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:outputSettings:]`. Configura `setAlwaysCopiesSampleData:` y añade la salida con `-[AVAssetReader addOutput:]`. |
+| `VideoStickerReader createReaderAndDecoder:` (0x6117c0) y `getNextStickFrame` (0x611aba) | Ruta de stickers. Usa `URLAssetWithURL:options:`, `assetReaderWithAsset:error:`, `setTimeRange:`, `canAddOutput:`, `addOutput:` y `startReading`. Consulta `status` en el lector y `copyNextSampleBuffer` en la salida. |
+| `VEAudioReader initAVAssetReader:audioConfig:` (0x2445290) | Ruta de audio. Usa `-[AVURLAsset initWithURL:options:]`, `assetReaderWithAsset:error:` y consulta las capacidades del asset. |
+
+Estas referencias prueban que las rutas existen. La secuencia efectivamente ejecutada por el importador en Wayland queda pendiente de una traza. La inicialización de AVFoundation en este árbol registra AVCaptureDevice y AVAudioFormat. AVURLAsset, AVAssetReader y AVAssetReaderTrackOutput siguen pendientes.
+
+### Reproductor en Wayland · prueba de Clio
+
+- A las 20:11:14 Rosemary registró que otro hilo conservaba el contexto OpenGL y que `eglMakeCurrent` devolvió `EGL_BAD_ACCESS`. A las 20:11:36 falló la creación de framebuffers GLES y a las 20:11:44 falló la consulta de `GL_VERSION`.
+- A las 20:11:46 el motor de efectos falló al crear el pipeline `Inplace-Vertical-Flip` y el renderizador Metal informó de una discrepancia entre geometría y atributos de vértice, mientras procesaba recursos del proyecto, entre ellos una imagen PNG. Los mismos mensajes de EGL y Metal aparecen en la sesión anterior de Claude. El registro actual no identifica la espera que bloquea la reproducción.
+- Prioridad 1: trazar la propiedad de los contextos con `ROSEMARY_GL_DEBUG` y las presentaciones con `ROSEMARY_TRACE_FRAMES` al abrir el proyecto. Revisar con Claude la inicialización del pipeline y la espera durante Play. El fallo de activación del contexto se debe revisar con Antigravity, en AppKit.
+- Prioridad 2: repetir con un proyecto nuevo y un MP4 H.264, comprobando Medios, miniatura, primer fotograma y reproducción. Capturar la primera llamada que falle antes de ampliar AVFoundation.
+- Prioridad 3: seguir con el muestreador nativo, la latencia del editor y la creación de la ventana del menú con alfa.

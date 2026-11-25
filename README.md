@@ -32,7 +32,8 @@ CapCut 9.8.0.4799 was tested on CachyOS x86_64 with KDE Plasma Wayland and an NV
 | Start CapCut and open an existing project | Home and editor render at 1.25× scale. Maximizing the editor fills the window. |
 | Import photos | Several JPGs imported consecutively. Four clips showed thumbnails on the timeline. The Effects panel opened and the Export button became active. Exporting a file still needs a live test. |
 | Open the context menu | Position and transparency verified. Opening took about 150–190 ms in the recorded run, with intermittent opacity on the OpenGL path. |
-| Play the timeline or import MP4 video | Playback and end-to-end MP4 import remain open. Dragging clip edges also lags. |
+| Play the timeline | A live Wayland test on the RTX 5060 Ti reproduced a blank preview and playback stalls in an existing project. |
+| Import MP4 video | Nine CoreVideo APIs are implemented and tested. The full import and playback workflow still needs verification. |
 
 The handoff records the test conditions, measurements and outstanding work. [Verification notes](HANDOFF.md#resultados-cachyos)
 

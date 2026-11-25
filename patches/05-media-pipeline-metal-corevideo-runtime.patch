@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index a239bafe..9de6e1d0 100644
+index a239bafe..bc0a428f 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -8,6 +8,18 @@ version = "0.1.9"
@@ -21,7 +21,15 @@ index a239bafe..9de6e1d0 100644
  [[package]]
  name = "addr2line"
  version = "0.25.1"
-@@ -2666,6 +2678,7 @@ dependencies = [
+@@ -698,6 +710,7 @@ dependencies = [
+  "corefoundation",
+  "darwin",
+  "exports",
++ "iosurface",
+  "libc",
+  "objc",
+  "sdl3",
+@@ -2666,6 +2679,7 @@ dependencies = [
  name = "rosemary"
  version = "0.5.0"
  dependencies = [
@@ -3815,11 +3823,187 @@ index 8c9faaf6..91f7c869 100644
      ]);
      out
  }
+diff --git a/crates/corevideo/Cargo.toml b/crates/corevideo/Cargo.toml
+index aa8cbbfd..4b85d1b1 100644
+--- a/crates/corevideo/Cargo.toml
++++ b/crates/corevideo/Cargo.toml
+@@ -7,6 +7,7 @@ license.workspace = true
+ 
+ [dependencies]
+ exports.workspace = true
++iosurface.workspace = true
+ corefoundation.workspace = true
+ darwin.workspace = true
+ objc.workspace = true
 diff --git a/crates/corevideo/src/lib.rs b/crates/corevideo/src/lib.rs
-index fc4d6388..f0de7da9 100644
+index fc4d6388..5ebc71fa 100644
 --- a/crates/corevideo/src/lib.rs
 +++ b/crates/corevideo/src/lib.rs
-@@ -407,6 +407,17 @@ exports::exports! {
+@@ -61,10 +61,8 @@ struct Link {
+     running: Option<Arc<AtomicBool>>,
+     /// Seconds between frames, from the display SDL reports.
+     period: f64,
+-    /// How many times the callback has run, which is the `videoTime` a guest
+-    /// integrates to get elapsed time.
+-    frame: i64,
+-    started: std::time::Instant,
++    display: u32,
++    started: u64,
+ }
+ 
+ // SAFETY: the context is the guest's own pointer and is only ever handed back to
+@@ -92,11 +90,14 @@ fn link_for(handle: *mut c_void) -> Option<Arc<Mutex<Link>>> {
+ /// A zero display names the primary display for the active-displays spelling.
+ /// Sixty hertz is only a fallback for a host with no SDL video subsystem or no
+ /// desktop mode; a real display link follows the mode SDL reports.
+-fn display_period(display: u32) -> f64 {
+-    let display = match display {
++fn resolve_display(display: u32) -> u32 {
++    match display {
+         0 => sdl3::video::primary_display(),
+         display => display,
+-    };
++    }
++}
++
++fn display_period(display: u32) -> f64 {
+     let refresh_rate = sdl3::video::display_refresh_rate(display).unwrap_or(60.0);
+     1.0 / f64::from(refresh_rate)
+ }
+@@ -113,13 +114,14 @@ pub unsafe extern "C" fn CVDisplayLinkCreateWithCGDisplay(
+     if out.is_null() {
+         return INVALID_ARGUMENT;
+     }
++    let display = resolve_display(display);
+     let link = Arc::new(Mutex::new(Link {
+         callback: None,
+         context: std::ptr::null_mut(),
+         running: None,
+         period: display_period(display),
+-        frame: 0,
+-        started: std::time::Instant::now(),
++        display,
++        started: 0,
+     }));
+     // The handle is the `Mutex`'s address, which the `Arc` in the table keeps
+     // alive for as long as the link exists.
+@@ -169,7 +171,58 @@ pub unsafe extern "C" fn CVDisplayLinkSetCurrentCGDisplay(
+     let Some(link) = link_for(handle) else {
+         return INVALID_ARGUMENT;
+     };
+-    link.lock().unwrap_or_else(|e| e.into_inner()).period = display_period(display);
++    let mut link = link.lock().unwrap_or_else(|e| e.into_inner());
++    link.display = resolve_display(display);
++    link.period = display_period(link.display);
++    SUCCESS
++}
++
++pub extern "C" fn CVDisplayLinkGetCurrentCGDisplay(handle: *mut c_void) -> u32 {
++    link_for(handle).map_or(0, |link| {
++        link.lock().unwrap_or_else(|e| e.into_inner()).display
++    })
++}
++
++const DISPLAY_LINK_NOT_RUNNING: i32 = -6672;
++const VIDEO_TIME_VALID: u64 = 1;
++const HOST_TIME_VALID: u64 = 1 << 1;
++const VIDEO_REFRESH_PERIOD_VALID: u64 = 1 << 3;
++const RATE_SCALAR_VALID: u64 = 1 << 4;
++
++fn host_time() -> u64 {
++    (darwin::mach::media_time() * f64::from(NOMINAL_SCALE)).round() as u64
++}
++
++fn timestamp(link: &Link) -> TimeStamp {
++    let host_time = host_time();
++    // FIXME (ACCURACY): the software display link predicts refreshes from SDL's
++    // nominal display mode, without sampling hardware vblank timestamps.
++    TimeStamp {
++        video_time_scale: NOMINAL_SCALE,
++        video_time: host_time.saturating_sub(link.started) as i64,
++        host_time,
++        rate_scalar: 1.0,
++        video_refresh_period: (link.period * f64::from(NOMINAL_SCALE)).round() as i64,
++        flags: VIDEO_TIME_VALID | HOST_TIME_VALID | VIDEO_REFRESH_PERIOD_VALID | RATE_SCALAR_VALID,
++        ..TimeStamp::default()
++    }
++}
++
++pub unsafe extern "C" fn CVDisplayLinkGetCurrentTime(
++    handle: *mut c_void,
++    out: *mut TimeStamp,
++) -> i32 {
++    let Some(link) = link_for(handle) else {
++        return INVALID_ARGUMENT;
++    };
++    if out.is_null() || unsafe { (*out).version } != 0 {
++        return INVALID_ARGUMENT;
++    }
++    let link = link.lock().unwrap_or_else(|e| e.into_inner());
++    if link.running.is_none() {
++        return DISPLAY_LINK_NOT_RUNNING;
++    }
++    unsafe { out.write(timestamp(&link)) };
+     SUCCESS
+ }
+ 
+@@ -240,7 +293,7 @@ pub unsafe extern "C" fn CVDisplayLinkStart(handle: *mut c_void) -> i32 {
+         if guard.running.is_some() {
+             return SUCCESS;
+         }
+-        guard.started = std::time::Instant::now();
++        guard.started = host_time();
+         let running = Arc::new(AtomicBool::new(true));
+         guard.running = Some(Arc::clone(&running));
+         (guard.period, running)
+@@ -316,27 +369,15 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
+         return;
+     };
+     let (callback, context, now, output) = {
+-        let mut guard = link.lock().unwrap_or_else(|e| e.into_inner());
++        let guard = link.lock().unwrap_or_else(|e| e.into_inner());
+         let Some(callback) = guard.callback else {
+             return;
+         };
+-        guard.frame += 1;
+-        let scale = 1_000_000_000i32;
+-        let elapsed = guard.started.elapsed().as_secs_f64();
+-        let now = TimeStamp {
+-            version: 0,
+-            video_time_scale: scale,
+-            video_time: (elapsed * scale as f64) as i64,
+-            host_time: elapsed.to_bits(),
+-            rate_scalar: 1.0,
+-            video_refresh_period: (guard.period * scale as f64) as i64,
+-            smpte_time: [0; 24],
+-            flags: 0,
+-            reserved: 0,
+-        };
++        let now = timestamp(&guard);
+         // The frame after this one, which is what "output time" means.
+         let output = TimeStamp {
+             video_time: now.video_time + now.video_refresh_period,
++            host_time: now.host_time + now.video_refresh_period as u64,
+             ..now
+         };
+         (callback, guard.context, now, output)
+@@ -351,6 +392,15 @@ unsafe extern "C" fn fire(_timer: *const c_void, info: *mut c_void) {
+ 
+ exports::exports! {
+     functions {
++        "CVColorPrimariesGetStringForIntegerCodePoint" => pixel_buffer::CVColorPrimariesGetStringForIntegerCodePoint,
++        "CVTransferFunctionGetStringForIntegerCodePoint" => pixel_buffer::CVTransferFunctionGetStringForIntegerCodePoint,
++        "CVYCbCrMatrixGetStringForIntegerCodePoint" => pixel_buffer::CVYCbCrMatrixGetStringForIntegerCodePoint,
++        "CVBufferHasAttachment" => pixel_buffer::CVBufferHasAttachment,
++        "CVImageBufferGetCleanRect" => pixel_buffer::CVImageBufferGetCleanRect,
++        "CVPixelBufferCreateWithIOSurface" => pixel_buffer::CVPixelBufferCreateWithIOSurface,
++        "CVIsCompressedPixelFormatAvailable" => pixel_buffer::CVIsCompressedPixelFormatAvailable,
++        "CVDisplayLinkGetCurrentTime" => CVDisplayLinkGetCurrentTime,
++        "CVDisplayLinkGetCurrentCGDisplay" => CVDisplayLinkGetCurrentCGDisplay,
+         "CVDisplayLinkCreateWithCGDisplay" => CVDisplayLinkCreateWithCGDisplay,
+         "CVDisplayLinkCreateWithActiveCGDisplays" => CVDisplayLinkCreateWithActiveCGDisplays,
+         "CVDisplayLinkSetOutputCallback" => CVDisplayLinkSetOutputCallback,
+@@ -407,6 +457,17 @@ exports::exports! {
          "CVPixelBufferPoolCreatePixelBuffer" => pixel_buffer::CVPixelBufferPoolCreatePixelBuffer,
          "CVPixelBufferPoolCreatePixelBufferWithAuxAttributes" => pixel_buffer::CVPixelBufferPoolCreatePixelBufferWithAuxAttributes,
          "CVPixelBufferPoolFlush" => pixel_buffer::CVPixelBufferPoolFlush,
@@ -3837,8 +4021,48 @@ index fc4d6388..f0de7da9 100644
      }
  }
  
+@@ -435,6 +496,39 @@ mod tests {
+         SUCCESS
+     }
+ 
++    #[test]
++    fn current_display_and_time_follow_the_link() {
++        let mut handle = std::ptr::null_mut();
++        let mut now = TimeStamp::default();
++        unsafe {
++            assert_eq!(CVDisplayLinkCreateWithCGDisplay(4, &mut handle), SUCCESS);
++            assert_eq!(CVDisplayLinkGetCurrentCGDisplay(handle), 4);
++            assert_eq!(CVDisplayLinkSetCurrentCGDisplay(handle, 5), SUCCESS);
++            assert_eq!(CVDisplayLinkGetCurrentCGDisplay(handle), 5);
++            assert_eq!(CVDisplayLinkGetCurrentCGDisplay(std::ptr::null_mut()), 0);
++            assert_eq!(
++                CVDisplayLinkGetCurrentTime(handle, &mut now),
++                DISPLAY_LINK_NOT_RUNNING
++            );
++            assert_eq!(CVDisplayLinkStart(handle), SUCCESS);
++            now.version = 1;
++            assert_eq!(
++                CVDisplayLinkGetCurrentTime(handle, &mut now),
++                INVALID_ARGUMENT
++            );
++            now.version = 0;
++            let before = host_time();
++            assert_eq!(CVDisplayLinkGetCurrentTime(handle, &mut now), SUCCESS);
++            assert!((before..=host_time()).contains(&now.host_time));
++            assert_eq!(
++                now.flags & (VIDEO_TIME_VALID | HOST_TIME_VALID),
++                VIDEO_TIME_VALID | HOST_TIME_VALID
++            );
++            assert!(now.video_refresh_period > 0);
++            assert_eq!(CVDisplayLinkStop(handle), SUCCESS);
++        }
++    }
++
+     #[test]
+     fn a_started_link_calls_back_on_its_own_thread() {
+         FIRED.store(0, Ordering::SeqCst);
 diff --git a/crates/corevideo/src/pixel_buffer.rs b/crates/corevideo/src/pixel_buffer.rs
-index a1e29683..886cf0b8 100644
+index a1e29683..d312601f 100644
 --- a/crates/corevideo/src/pixel_buffer.rs
 +++ b/crates/corevideo/src/pixel_buffer.rs
 @@ -28,7 +28,7 @@ const NV12_VIDEO: u32 = u32::from_be_bytes(*b"420v");
@@ -3850,17 +4074,533 @@ index a1e29683..886cf0b8 100644
  const READ_ONLY: u64 = 1;
  const DEFAULT_ALIGNMENT: usize = 64;
  const MAX_STORAGE: usize = 256 * 1024 * 1024;
-@@ -252,8 +252,10 @@ macro_rules! forward_foreign {
+@@ -136,6 +136,7 @@ impl Drop for Release {
+ enum Memory {
+     // Never resized: C clients retain pointers to its pixels until final release.
+     Owned(Storage),
++    Surface(surface::Backing),
+     /// The creator's, handed back through its callback, if any.
+     Lent {
+         base: *mut u8,
+@@ -148,6 +149,7 @@ impl Memory {
+         match self {
+             Memory::Owned(storage) => storage.ptr.as_ptr(),
+             Memory::Lent { base, .. } => *base,
++            Memory::Surface(surface) => surface.base(),
+         }
+     }
+ }
+@@ -251,10 +253,16 @@ macro_rules! forward_foreign {
+ }
  
  mod attachments;
++mod color;
  mod pool;
++mod surface;
 +mod texture_cache;
  
  pub use attachments::*;
-+pub use texture_cache::*;
++pub use color::*;
  pub use pool::*;
++pub use surface::CVPixelBufferCreateWithIOSurface;
++pub use texture_cache::*;
  
  fn aligned(value: usize, alignment: usize) -> Option<usize> {
+     let remainder = value % alignment;
+@@ -987,6 +995,9 @@ pub unsafe extern "C" fn CVPixelBufferLockBaseAddress(buffer: CFTypeRef, flags:
+     let Some(state) = state(buffer) else {
+         return INVALID_ARGUMENT;
+     };
++    if let Memory::Surface(surface) = &state.memory {
++        return surface.lock(&state.locks, flags);
++    }
+     // An overflowing count is refused rather than wrapped back to unlocked.
+     match state
+         .locks
+@@ -1007,6 +1018,9 @@ pub unsafe extern "C" fn CVPixelBufferUnlockBaseAddress(buffer: CFTypeRef, flags
+     let Some(state) = state(buffer) else {
+         return INVALID_ARGUMENT;
+     };
++    if let Memory::Surface(surface) = &state.memory {
++        return surface.unlock(&state.locks, flags);
++    }
+     match state
+         .locks
+         .try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
+@@ -1016,6 +1030,11 @@ pub unsafe extern "C" fn CVPixelBufferUnlockBaseAddress(buffer: CFTypeRef, flags
+     }
+ }
+ 
++/// Rosemary exposes compressed pixel formats only when a backing implementation exists.
++pub extern "C" fn CVIsCompressedPixelFormatAvailable(_format: u32) -> u8 {
++    0
++}
++
+ /// A CPU-allocated CVPixelBuffer has no IOSurface backing.
+ ///
+ /// FIXME (ACCURACY): a buffer created with kCVPixelBufferIOSurfacePropertiesKey
+@@ -1028,7 +1047,10 @@ pub unsafe extern "C" fn CVPixelBufferGetIOSurface(buffer: CFTypeRef) -> CFTypeR
+         fn(CFTypeRef) -> CFTypeRef,
+         (buffer)
+     );
+-    std::ptr::null()
++    match state(buffer).map(|s| &s.memory) {
++        Some(Memory::Surface(surface)) => surface.object,
++        _ => std::ptr::null(),
++    }
+ }
+ 
+ /// A copy of this runtime's `buffer` made by the host CoreVideo, for a host
+@@ -1129,6 +1151,133 @@ mod tests {
+         out
+     }
+ 
++    fn numbers(properties: &[(&str, f64)]) -> CFTypeRef {
++        use corefoundation::callbacks::Policy;
++        use corefoundation::collections::{Number, new_dictionary, new_number};
++        let values: Vec<_> = properties
++            .iter()
++            .map(|(name, n)| (key(name), new_number(Number::Float(*n))))
++            .collect();
++        let policy = Policy::from_type_callbacks();
++        let dictionary = new_dictionary(&values, policy, policy, false);
++        for (_, value) in values {
++            unsafe { corefoundation::api::CFRelease(value) };
++        }
++        dictionary
++    }
++
++    #[test]
++    fn clean_aperture_uses_fractional_offsets_in_quartz_coordinates() {
++        let buffer = create(720, 480, BGRA);
++        let full = CGRect {
++            x: 0.0,
++            y: 0.0,
++            width: 720.0,
++            height: 480.0,
++        };
++        let aperture = numbers(&[
++            ("Width", 704.0),
++            ("Height", 460.0),
++            ("HorizontalOffset", 0.5),
++            ("VerticalOffset", 1.25),
++        ]);
++        unsafe {
++            assert_eq!(
++                CVImageBufferGetCleanRect(std::ptr::null()),
++                CGRect::default()
++            );
++            assert_eq!(CVImageBufferGetCleanRect(buffer), full);
++            CVBufferSetAttachment(buffer, key("CVCleanAperture"), aperture, 1);
++            corefoundation::api::CFRelease(aperture);
++            assert_eq!(
++                CVImageBufferGetCleanRect(buffer),
++                CGRect {
++                    x: 8.5,
++                    y: 8.75,
++                    width: 704.0,
++                    height: 460.0
++                }
++            );
++            CVPixelBufferRelease(buffer);
++        }
++    }
++
++    #[test]
++    fn surface_buffer_keeps_the_same_pixels_and_propagates_cpu_writes() {
++        let props = numbers(&[
++            ("IOSurfaceWidth", 8.0),
++            ("IOSurfaceHeight", 3.0),
++            ("IOSurfaceBytesPerElement", 4.0),
++            ("IOSurfacePixelFormat", f64::from(BGRA)),
++            ("IOSurfaceOffset", 32.0),
++        ]);
++        unsafe {
++            let surface = iosurface::IOSurfaceCreate(props);
++            corefoundation::api::CFRelease(props);
++            let mut buffer = std::ptr::null();
++            assert_eq!(
++                CVPixelBufferCreateWithIOSurface(
++                    std::ptr::null(),
++                    surface,
++                    std::ptr::null(),
++                    &mut buffer
++                ),
++                SUCCESS
++            );
++            assert_eq!(iosurface::IOSurfaceGetUseCount(surface), 1);
++            corefoundation::api::CFRelease(surface);
++            assert_eq!(CVPixelBufferGetIOSurface(buffer), surface);
++            assert_eq!(CVPixelBufferGetWidth(buffer), 8);
++            assert_eq!(
++                CVPixelBufferGetDataSize(buffer),
++                3 * iosurface::IOSurfaceGetBytesPerRow(surface)
++            );
++            assert_eq!(CVPixelBufferLockBaseAddress(buffer, 0), SUCCESS);
++            let base = CVPixelBufferGetBaseAddress(buffer).cast::<u8>();
++            assert_eq!(base, iosurface::IOSurfaceGetBaseAddress(surface).cast());
++            *base = 37;
++            let seed = iosurface::IOSurfaceGetSeed(surface);
++            assert_eq!(CVPixelBufferUnlockBaseAddress(buffer, 0), SUCCESS);
++            assert_ne!(iosurface::IOSurfaceGetSeed(surface), seed);
++            assert_eq!(
++                *iosurface::IOSurfaceGetBaseAddress(surface).cast::<u8>(),
++                37
++            );
++            corefoundation::api::CFRetain(surface);
++            CVPixelBufferRelease(buffer);
++            assert_eq!(iosurface::IOSurfaceGetUseCount(surface), 0);
++            corefoundation::api::CFRelease(surface);
++        }
++    }
++
++    #[test]
++    fn unsupported_surface_and_compressed_formats_are_rejected() {
++        let lossy_bgra = u32::from_be_bytes(*b"-BGA");
++        assert_eq!(CVIsCompressedPixelFormatAvailable(lossy_bgra), 0);
++        let props = numbers(&[
++            ("IOSurfaceWidth", 8.0),
++            ("IOSurfaceHeight", 3.0),
++            ("IOSurfacePixelFormat", f64::from(NV12_VIDEO)),
++        ]);
++        unsafe {
++            let surface = iosurface::IOSurfaceCreate(props);
++            let mut buffer = props;
++            assert_eq!(
++                CVPixelBufferCreateWithIOSurface(
++                    std::ptr::null(),
++                    surface,
++                    std::ptr::null(),
++                    &mut buffer
++                ),
++                INVALID_PIXEL_FORMAT
++            );
++            assert!(buffer.is_null());
++            assert_eq!(iosurface::IOSurfaceGetUseCount(surface), 0);
++            corefoundation::api::CFRelease(surface);
++            corefoundation::api::CFRelease(props);
++        }
++    }
++
+     #[test]
+     fn bgra_stride_lock_and_cf_ownership() {
+         let b = create(7, 5, BGRA);
+diff --git a/crates/corevideo/src/pixel_buffer/attachments.rs b/crates/corevideo/src/pixel_buffer/attachments.rs
+index 4952c0d5..4ae8b2c6 100644
+--- a/crates/corevideo/src/pixel_buffer/attachments.rs
++++ b/crates/corevideo/src/pixel_buffer/attachments.rs
+@@ -99,6 +99,61 @@ pub unsafe extern "C" fn CVBufferSetAttachment(
+     with(buffer, |a| a.set(key, value, mode));
+ }
+ 
++pub unsafe extern "C" fn CVBufferHasAttachment(buffer: CFTypeRef, key: CFTypeRef) -> u8 {
++    refuse_foreign(c"CVBufferHasAttachment", buffer);
++    with(buffer, |a| !key.is_null() && a.get(key).is_some()).unwrap_or(false) as u8
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Default, Debug, PartialEq)]
++pub struct CGRect {
++    pub x: f64,
++    pub y: f64,
++    pub width: f64,
++    pub height: f64,
++}
++
++pub unsafe extern "C" fn CVImageBufferGetCleanRect(buffer: CFTypeRef) -> CGRect {
++    forward_foreign!(
++        c"CVImageBufferGetCleanRect",
++        buffer,
++        fn(CFTypeRef) -> CGRect,
++        (buffer)
++    );
++    let Some(state) = state(buffer) else {
++        return CGRect::default();
++    };
++    let full = CGRect {
++        width: state.width as f64,
++        height: state.height as f64,
++        ..Default::default()
++    };
++    with(buffer, |a| {
++        let (aperture, _) = a.get(super::key("CVCleanAperture"))?;
++        let dict = unsafe { corefoundation::collections::dictionary(aperture) }?;
++        let number = |name| {
++            let value = dict.get(super::key(name))?;
++            unsafe { corefoundation::collections::number(value) }
++                .map(|n| n.as_f64())
++                .filter(|n| n.is_finite())
++        };
++        let width = number("Width")?;
++        let height = number("Height")?;
++        if width <= 0.0 || height <= 0.0 {
++            return None;
++        }
++        // The aperture offset increases downwards; Quartz's origin is bottom left.
++        Some(CGRect {
++            x: (full.width - width) / 2.0 + number("HorizontalOffset").unwrap_or(0.0),
++            y: (full.height - height) / 2.0 - number("VerticalOffset").unwrap_or(0.0),
++            width,
++            height,
++        })
++    })
++    .flatten()
++    .unwrap_or(full)
++}
++
+ /// `CFTypeRef CVBufferGetAttachment(CVBufferRef, CFStringRef key,
+ /// CVAttachmentMode *)`, under the get rule.
+ pub unsafe extern "C" fn CVBufferGetAttachment(
+@@ -273,6 +328,7 @@ mod tests {
+             assert!(CVBufferGetAttachment(b, matrix, std::ptr::null_mut()).is_null());
+             assert!(CVBufferGetAttachments(b, SHOULD_PROPAGATE).is_null());
+             CVBufferSetAttachment(b, matrix, value, SHOULD_PROPAGATE);
++            assert_eq!(CVBufferHasAttachment(b, matrix), 1);
+             let mut mode = 7;
+             assert_eq!(CVBufferGetAttachment(b, matrix, &mut mode), value);
+             assert_eq!(mode, SHOULD_PROPAGATE);
+@@ -292,7 +348,9 @@ mod tests {
+             let copied = CVBufferCopyAttachment(b, matrix, std::ptr::null_mut());
+             assert_eq!(copied, value);
+             corefoundation::api::CFRelease(copied);
++            assert_eq!(CVBufferHasAttachment(b, matrix), 1);
+             CVBufferRemoveAttachment(b, matrix);
++            assert_eq!(CVBufferHasAttachment(b, matrix), 0);
+             assert!(CVBufferGetAttachment(b, matrix, std::ptr::null_mut()).is_null());
+             CVPixelBufferRelease(b);
+         }
+diff --git a/crates/corevideo/src/pixel_buffer/color.rs b/crates/corevideo/src/pixel_buffer/color.rs
+new file mode 100644
+index 00000000..f4b355e4
+--- /dev/null
++++ b/crates/corevideo/src/pixel_buffer/color.rs
+@@ -0,0 +1,72 @@
++//! H.273 / ISO/IEC 23091-2 code points representable by CoreVideo attachment values.
++
++use super::{CFTypeRef, key};
++
++pub extern "C" fn CVColorPrimariesGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
++    key(match code {
++        1 => "ITU_R_709_2",
++        5 => "EBU_3213",
++        6 | 7 => "SMPTE_C",
++        9 => "ITU_R_2020",
++        11 => "DCI_P3",
++        12 => "P3_D65",
++        _ => return std::ptr::null(),
++    })
++}
++
++pub extern "C" fn CVTransferFunctionGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
++    key(match code {
++        1 | 6 => "ITU_R_709_2",
++        4 | 5 => "UseGamma",
++        7 => "SMPTE_240M_1995",
++        8 => "Linear",
++        13 => "sRGB",
++        14 | 15 => "ITU_R_2020",
++        16 => "SMPTE_ST_2084_PQ",
++        17 => "SMPTE_ST_428_1",
++        18 => "ITU_R_2100_HLG",
++        _ => return std::ptr::null(),
++    })
++}
++
++pub extern "C" fn CVYCbCrMatrixGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
++    key(match code {
++        1 => "ITU_R_709_2",
++        5 | 6 => "ITU_R_601_4",
++        7 => "SMPTE_240M_1995",
++        9 => "ITU_R_2020",
++        _ => return std::ptr::null(),
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn code_points_return_borrowed_constants_in_their_own_domain() {
++        for (code, expected) in [(1, "ITU_R_709_2"), (9, "ITU_R_2020"), (12, "P3_D65")] {
++            assert_eq!(
++                CVColorPrimariesGetStringForIntegerCodePoint(code),
++                key(expected)
++            );
++        }
++        assert_eq!(
++            CVTransferFunctionGetStringForIntegerCodePoint(16),
++            key("SMPTE_ST_2084_PQ")
++        );
++        assert_eq!(
++            CVTransferFunctionGetStringForIntegerCodePoint(18),
++            key("ITU_R_2100_HLG")
++        );
++        assert_eq!(
++            CVYCbCrMatrixGetStringForIntegerCodePoint(6),
++            key("ITU_R_601_4")
++        );
++        for code in [-1, 2, 255] {
++            assert!(CVColorPrimariesGetStringForIntegerCodePoint(code).is_null());
++            assert!(CVTransferFunctionGetStringForIntegerCodePoint(code).is_null());
++            assert!(CVYCbCrMatrixGetStringForIntegerCodePoint(code).is_null());
++        }
++    }
++}
+diff --git a/crates/corevideo/src/pixel_buffer/surface.rs b/crates/corevideo/src/pixel_buffer/surface.rs
+new file mode 100644
+index 00000000..e5757e6e
+--- /dev/null
++++ b/crates/corevideo/src/pixel_buffer/surface.rs
+@@ -0,0 +1,148 @@
++//! Pixel buffers sharing the storage and CPU access protocol of an IOSurface.
++
++use super::*;
++use std::sync::Mutex;
++
++pub(super) struct Backing {
++    pub(super) object: CFTypeRef,
++    // Serialize paired updates to the surface and the buffer's own lock count.
++    access: Mutex<()>,
++}
++
++impl Backing {
++    pub(super) fn base(&self) -> *mut u8 {
++        unsafe { iosurface::IOSurfaceGetBaseAddress(self.object).cast() }
++    }
++
++    pub(super) fn lock(&self, count: &AtomicUsize, flags: u64) -> i32 {
++        let _guard = self.access.lock().unwrap_or_else(|e| e.into_inner());
++        let Some(next) = count.load(Ordering::Relaxed).checked_add(1) else {
++            return ERROR;
++        };
++        if unsafe {
++            iosurface::IOSurfaceLock(
++                self.object,
++                (flags & READ_ONLY) as u32,
++                std::ptr::null_mut(),
++            )
++        } != SUCCESS
++        {
++            return ERROR;
++        }
++        count.store(next, Ordering::Release);
++        SUCCESS
++    }
++
++    pub(super) fn unlock(&self, count: &AtomicUsize, flags: u64) -> i32 {
++        let _guard = self.access.lock().unwrap_or_else(|e| e.into_inner());
++        let Some(next) = count.load(Ordering::Relaxed).checked_sub(1) else {
++            return ERROR;
++        };
++        if unsafe {
++            iosurface::IOSurfaceUnlock(
++                self.object,
++                (flags & READ_ONLY) as u32,
++                std::ptr::null_mut(),
++            )
++        } != SUCCESS
++        {
++            return ERROR;
++        }
++        count.store(next, Ordering::Release);
++        SUCCESS
++    }
++}
++
++impl Drop for Backing {
++    fn drop(&mut self) {
++        unsafe {
++            iosurface::IOSurfaceDecrementUseCount(self.object);
++            corefoundation::api::CFRelease(self.object);
++        }
++    }
++}
++
++pub unsafe extern "C" fn CVPixelBufferCreateWithIOSurface(
++    allocator: CFTypeRef,
++    surface: CFTypeRef,
++    attrs: CFTypeRef,
++    out: *mut CFTypeRef,
++) -> i32 {
++    let status = unsafe { check_create(allocator, attrs, out) };
++    if status != SUCCESS {
++        return status;
++    }
++    refuse_foreign(c"CVPixelBufferCreateWithIOSurface", surface);
++    if !iosurface::is_surface(surface) {
++        return INVALID_ARGUMENT;
++    }
++    let (width, height, format, row_bytes, address) = unsafe {
++        (
++            iosurface::IOSurfaceGetWidth(surface),
++            iosurface::IOSurfaceGetHeight(surface),
++            iosurface::IOSurfaceGetPixelFormat(surface),
++            iosurface::IOSurfaceGetBytesPerRow(surface),
++            iosurface::IOSurfaceGetBaseAddress(surface).cast::<u8>(),
++        )
++    };
++    // IOSurfaceCreate currently rejects planar descriptors. Only expose layouts
++    // for which the pixel format and the surface's element geometry agree.
++    const ARGB: u32 = 32;
++    const RGBA: u32 = u32::from_be_bytes(*b"RGBA");
++    if !matches!(format, BGRA | ARGB | RGBA) {
++        return INVALID_PIXEL_FORMAT;
++    }
++    if unsafe {
++        iosurface::IOSurfaceGetBytesPerElement(surface) != 4
++            || iosurface::IOSurfaceGetElementWidth(surface) != 1
++            || iosurface::IOSurfaceGetElementHeight(surface) != 1
++    } || width.checked_mul(4).is_none_or(|n| n > row_bytes)
++    {
++        return INVALID_ATTRIBUTES;
++    }
++    let Some(data_size) = row_bytes.checked_mul(height) else {
++        return INVALID_SIZE;
++    };
++    for (key, actual) in [
++        ("Width", width),
++        ("Height", height),
++        ("PixelFormatType", format as usize),
++    ] {
++        if !attribute(attrs, key).is_null() && numeric_attribute(attrs, key, false) != Ok(actual) {
++            return INVALID_ATTRIBUTES;
++        }
++    }
++    let Ok(alignment) = numeric_attribute(attrs, "BytesPerRowAlignment", true) else {
++        return INVALID_ATTRIBUTES;
++    };
++    if alignment != 0 && !row_bytes.is_multiple_of(alignment) {
++        return INVALID_ATTRIBUTES;
++    }
++    unsafe {
++        corefoundation::api::CFRetain(surface);
++        iosurface::IOSurfaceIncrementUseCount(surface);
++        publish(
++            State {
++                width,
++                height,
++                format,
++                row_bytes,
++                data_size,
++                planes: vec![Plane {
++                    offset: 0,
++                    address,
++                    width,
++                    height,
++                    row_bytes,
++                }],
++                memory: Memory::Surface(Backing {
++                    object: surface,
++                    access: Mutex::new(()),
++                }),
++                locks: AtomicUsize::new(0),
++                attachments: Default::default(),
++            },
++            out,
++        )
++    }
++}
 diff --git a/crates/corevideo/src/pixel_buffer/texture_cache.rs b/crates/corevideo/src/pixel_buffer/texture_cache.rs
 new file mode 100644
 index 00000000..8a28b0fb
@@ -5095,3 +5835,86 @@ index 6f1297e7..3635fee5 100644
  ];
  
  /// CoreFoundation's `CFUserNotification` keys.
+diff --git a/crates/rosemary/src/shims/coregraphics.rs b/crates/rosemary/src/shims/coregraphics.rs
+index e2b753b6..76305731 100644
+--- a/crates/rosemary/src/shims/coregraphics.rs
++++ b/crates/rosemary/src/shims/coregraphics.rs
+@@ -17,7 +17,7 @@ pub(crate) struct CgRect {
+ 
+ impl CgRect {
+     /// The thirty-two bytes the guest expects in its hidden buffer, in order.
+-    fn to_le_bytes(self) -> [u8; 32] {
++    pub(super) fn to_le_bytes(self) -> [u8; 32] {
+         let mut out = [0u8; 32];
+         for (i, v) in [self.x, self.y, self.width, self.height].iter().enumerate() {
+             out[i * 8..(i + 1) * 8].copy_from_slice(&v.to_le_bytes());
+diff --git a/crates/rosemary/src/shims/coremedia.rs b/crates/rosemary/src/shims/coremedia.rs
+index c48b026d..ac3a7b25 100644
+--- a/crates/rosemary/src/shims/coremedia.rs
++++ b/crates/rosemary/src/shims/coremedia.rs
+@@ -188,6 +188,18 @@ fn image_size(symbol: &str, ctx: &mut RegisterContext, _mem: &mut dyn GuestMemor
+     Ok(())
+ }
+ 
++/// CGRect CVImageBufferGetCleanRect(CVImageBufferRef).
++fn clean_rect(symbol: &str, ctx: &mut RegisterContext, mem: &mut dyn GuestMemory) -> Result<()> {
++    if ctx.rdi == 0 {
++        return Err(super::bad_pointer(symbol, 0));
++    }
++    let f = unsafe { entry::<extern "C" fn(u64) -> super::coregraphics::CgRect>(symbol)? };
++    let rect = f(ctx.rsi);
++    mem.write_bytes(ctx.rdi, &rect.to_le_bytes(), symbol)?;
++    ctx.rax = ctx.rdi;
++    Ok(())
++}
++
+ /// `CAFrameRateRange`: three `float`s, which SysV returns two in `xmm0` and one
+ /// in `xmm1`, and AAPCS64 in `s0`-`s2`.
+ #[repr(C)]
+@@ -327,6 +339,7 @@ pub fn shim_for(name: &str) -> Option<Shim> {
+             bind!("VTCompressionSessionEncodeFrame" => encode_frame)
+         }
+         "CVImageBufferGetEncodedSize" => bind!("CVImageBufferGetEncodedSize" => image_size),
++        "CVImageBufferGetCleanRect" => bind!("CVImageBufferGetCleanRect" => clean_rect),
+         "CVImageBufferGetDisplaySize" => bind!("CVImageBufferGetDisplaySize" => image_size),
+         "CAFrameRateRangeMake" => bind!("CAFrameRateRangeMake" => frame_rate_range_make),
+         _ => return None,
+@@ -347,6 +360,38 @@ pub fn callback_shim_for(name: &str) -> Option<crate::signal::Shim> {
+ mod tests {
+     use super::*;
+ 
++    #[cfg(not(target_os = "macos"))]
++    #[test]
++    fn clean_rect_returns_four_doubles_in_the_guests_hidden_buffer() {
++        use corevideo::pixel_buffer::{CVPixelBufferCreate, CVPixelBufferRelease};
++        let mut image = std::ptr::null();
++        assert_eq!(
++            unsafe {
++                CVPixelBufferCreate(
++                    std::ptr::null(),
++                    32,
++                    18,
++                    u32::from_be_bytes(*b"BGRA"),
++                    std::ptr::null(),
++                    &mut image,
++                )
++            },
++            0
++        );
++        let mut out = [f64::NAN; 4];
++        let addr = out.as_mut_ptr() as u64;
++        let range = addr..addr + 32;
++        let mut mem = crate::vm::GuestView::new(vec![range]);
++        let mut ctx = RegisterContext::new();
++        ctx.rdi = addr;
++        ctx.rsi = image as u64;
++        assert!(shim_for("CVImageBufferGetCleanRect").is_some());
++        clean_rect("_CVImageBufferGetCleanRect", &mut ctx, &mut mem).unwrap();
++        assert_eq!(ctx.rax, addr);
++        assert_eq!(out, [0.0, 0.0, 32.0, 18.0]);
++        unsafe { CVPixelBufferRelease(image) };
++    }
++
+     /// The layout claim every function here rests on, which a wrong answer would
+     /// violate silently.
+     #[test]
