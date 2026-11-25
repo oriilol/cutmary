@@ -763,6 +763,30 @@ index 00000000..cb5c401b
 +    out.push(("_malloc_logger".to_string(), corefoundation::base::global_cell("_malloc_logger", 0)));
 +    out
 +}
+diff --git a/crates/appkit/src/classes.rs b/crates/appkit/src/classes.rs
+index 18cd730f..2175c544 100644
+--- a/crates/appkit/src/classes.rs
++++ b/crates/appkit/src/classes.rs
+@@ -39,6 +39,7 @@ static HIERARCHY: &[(&str, Option<&str>, usize)] = &[
+         Some("CALayer"),
+         crate::layer::METAL_INSTANCE_SIZE,
+     ),
++    ("CAEDRMetadata", None, 0),
+     // Basic animations; their state is `crate::coreanimation`'s side tables.
+     ("CAAnimation", None, 0),
+     ("CAPropertyAnimation", Some("CAAnimation"), 0),
+@@ -102,6 +103,11 @@ static HIERARCHY: &[(&str, Option<&str>, usize)] = &[
+         Some("NSView"),
+         crate::opengl::VIEW_INSTANCE_SIZE,
+     ),
++    (
++        "MTKView",
++        Some("NSView"),
++        crate::mtkview::INSTANCE_SIZE,
++    ),
+     ("NSMenu", None, crate::menu::MENU_INSTANCE_SIZE),
+     ("NSMenuItem", None, crate::menu::ITEM_INSTANCE_SIZE),
+     ("NSScreen", None, crate::screen::INSTANCE_SIZE),
 diff --git a/crates/appkit/src/color.rs b/crates/appkit/src/color.rs
 index 2f1f6db1..3ab4e599 100644
 --- a/crates/appkit/src/color.rs
@@ -1812,11 +1836,92 @@ index 81cb1bc6..c10107d1 100644
          "LSOpenCFURLRef" => LSOpenCFURLRef,
          "LSOpenFromURLSpec" => LSOpenFromURLSpec,
      }
+diff --git a/crates/appkit/src/layer.rs b/crates/appkit/src/layer.rs
+index 62a78329..bf65bc1a 100644
+--- a/crates/appkit/src/layer.rs
++++ b/crates/appkit/src/layer.rs
+@@ -45,6 +45,7 @@ struct MetalLayer {
+     pixel_format: u64,
+     /// Set on the guest's render thread and read by the compositor's capture.
+     drawable_size: DrawableSize,
++    maximum_drawable_count: u64,
+     framebuffer_only: u8,
+     display_sync_enabled: u8,
+     /// The inverse of `-allowsNextDrawableTimeout`, so that a layer made with
+@@ -128,6 +129,7 @@ unsafe extern "C" fn new_layer(class: Id, _sel: Sel) -> Id {
+         // opt into alpha through -setOpaque: and the presenter must honor it.
+         metal.layer.opaque = 1;
+         metal.pixel_format = 80; // MTLPixelFormatBGRA8Unorm
++        metal.maximum_drawable_count = 3;
+         metal.framebuffer_only = 1;
+         metal.display_sync_enabled = 1;
+     }
+@@ -660,6 +662,29 @@ unsafe extern "C" fn allows_next_drawable_timeout(receiver: Id, _sel: Sel) -> u8
+     u8::from(metal_layer_of(receiver).no_next_drawable_timeout == 0)
+ }
+ 
++unsafe extern "C" fn set_maximum_drawable_count(receiver: Id, _sel: Sel, count: u64) {
++    metal_layer_of(receiver).maximum_drawable_count = count.clamp(2, 3);
++}
++
++unsafe extern "C" fn maximum_drawable_count(receiver: Id, _sel: Sel) -> u64 {
++    let count = metal_layer_of(receiver).maximum_drawable_count;
++    if count == 0 { 3 } else { count }
++}
++
++unsafe extern "C" fn nil_object(_receiver: Id, _sel: Sel) -> Id {
++    std::ptr::null_mut()
++}
++
++unsafe extern "C" fn hdr10_metadata(
++    _class: Id,
++    _sel: Sel,
++    _min_lum: f32,
++    _max_lum: f32,
++    _scale: f32,
++) -> Id {
++    std::ptr::null_mut()
++}
++
+ pub(crate) fn install() {
+     let class = objc::class::lookup(c"CALayer").expect("declared before its methods");
+     class_methods!(class, {
+@@ -710,14 +735,25 @@ pub(crate) fn install() {
+         "displaySyncEnabled" => display_sync_enabled, c"c16@0:8";
+         "setAllowsNextDrawableTimeout:" => set_allows_next_drawable_timeout, c"v20@0:8c16";
+         "allowsNextDrawableTimeout" => allows_next_drawable_timeout, c"c16@0:8";
++        "setMaximumDrawableCount:" => set_maximum_drawable_count, c"v24@0:8Q16";
++        "maximumDrawableCount" => maximum_drawable_count, c"Q16@0:8";
+         // Presentation here never joins a Core Animation transaction, and
+         // every drawable is presented in the colour space it was drawn in.
+         "setPresentsWithTransaction:" => ignore_flag, c"v20@0:8c16";
++        "colorspace" => nil_object, c"^{CGColorSpace=}16@0:8";
+         "setColorspace:" => ignore_object, c"v24@0:8^{CGColorSpace=}16";
++        "EDRMetadata" => nil_object, c"@16@0:8";
++        "setEDRMetadata:" => ignore_object, c"v24@0:8@16";
+         // FIXME (ACCURACY): presentation is SDR only. SDL sets this on every
+         // swapchain, and to YES only for an HDR composition it asked for.
+         "setWantsExtendedDynamicRangeContent:" => ignore_flag, c"v20@0:8c16";
+     });
++    if let Some(edr) = objc::class::lookup(c"CAEDRMetadata") {
++        class_methods!(edr, {
++            "HDR10MetadataWithMinLuminance:maxLuminance:opticalOutputScale:" => hdr10_metadata, c"@28@0:8f16f20f24";
++            "HLGMetadata" => nil_object, c"@16@0:8";
++        });
++    }
+ }
+ 
+ unsafe extern "C" fn ignore_object(_receiver: Id, _sel: Sel, _value: Id) {}
 diff --git a/crates/appkit/src/lib.rs b/crates/appkit/src/lib.rs
-index a4137b46..a052c984 100644
+index a4137b46..650141f3 100644
 --- a/crates/appkit/src/lib.rs
 +++ b/crates/appkit/src/lib.rs
-@@ -72,6 +72,7 @@ pub mod nib;
+@@ -68,10 +68,12 @@ mod matrix;
+ pub mod menu;
+ pub mod metadata;
+ pub mod monitor;
++mod mtkview;
+ pub mod nib;
  pub mod nsevent;
  pub mod opengl;
  pub mod panel;
@@ -1824,7 +1929,15 @@ index a4137b46..a052c984 100644
  mod paragraph;
  pub mod pasteboard;
  mod pasteboard_manager;
-@@ -169,6 +170,7 @@ pub fn bootstrap() {
+@@ -149,6 +151,7 @@ pub fn bootstrap() {
+         view_animation::install();
+         bezier::install();
+         layer::install();
++        mtkview::install();
+         coreanimation::install();
+         text::install();
+         label::install();
+@@ -169,6 +172,7 @@ pub fn bootstrap() {
  
  exports::exports! {
      functions {
@@ -1832,7 +1945,7 @@ index a4137b46..a052c984 100644
          "NSApplicationMain" => application::NSApplicationMain,
          "NSApplicationLoad" => application::NSApplicationLoad,
          "CAFrameRateRangeMake" => displaylink::CAFrameRateRangeMake,
-@@ -258,6 +260,40 @@ exports::exports! {
+@@ -258,6 +262,40 @@ exports::exports! {
          "CGColorSpaceCreatePattern" => graphics::CGColorSpaceCreatePattern,
          "CGColorSpaceGetNumberOfComponents" => graphics::CGColorSpaceGetNumberOfComponents,
          "CGColorSpaceRelease" => graphics::CGColorSpaceRelease,
@@ -1873,7 +1986,7 @@ index a4137b46..a052c984 100644
          "CGColorSpaceGetName" => graphics::CGColorSpaceGetName,
          "CGColorSpaceCopyName" => graphics::CGColorSpaceCopyName,
          "CGColorSpaceCopyPropertyList" => graphics::CGColorSpaceCopyPropertyList,
-@@ -276,11 +312,25 @@ exports::exports! {
+@@ -276,11 +314,25 @@ exports::exports! {
          "CGImageGetAlphaInfo" => graphics::CGImageGetAlphaInfo,
          "CGImageGetColorSpace" => graphics::CGImageGetColorSpace,
          "CGImageSourceCreateWithData" => graphics::CGImageSourceCreateWithData,
@@ -1899,7 +2012,7 @@ index a4137b46..a052c984 100644
          "CGRectGetWidth" => geometry::CGRectGetWidth,
          "CGRectGetHeight" => geometry::CGRectGetHeight,
          "CGRectGetMinX" => geometry::CGRectGetMinX,
-@@ -378,10 +428,19 @@ pub fn ns_app_cell() -> u64 {
+@@ -378,10 +430,19 @@ pub fn ns_app_cell() -> u64 {
  static CG_AFFINE_TRANSFORM_IDENTITY: [f64; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
  /// `{{-CGFLOAT_MAX / 2, -CGFLOAT_MAX / 2}, {CGFLOAT_MAX, CGFLOAT_MAX}}`.
  static CG_RECT_INFINITE: [f64; 4] = [f64::MAX / -2.0, f64::MAX / -2.0, f64::MAX, f64::MAX];
@@ -1919,7 +2032,7 @@ index a4137b46..a052c984 100644
      out.extend(cgcontext::data_symbols());
      out.push(("_NSApp".to_string(), ns_app_cell()));
      out.push((
-@@ -392,6 +451,14 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+@@ -392,6 +453,14 @@ pub fn data_symbols() -> Vec<(String, u64)> {
          "_CGRectInfinite".to_string(),
          CG_RECT_INFINITE.as_ptr() as usize as u64,
      ));
@@ -1934,7 +2047,7 @@ index a4137b46..a052c984 100644
      let srgb = foundation::notification::name_object("kCGColorSpaceSRGB");
      out.push((
          "_kCGColorSpaceSRGB".to_string(),
-@@ -602,6 +669,22 @@ pub const STRING_GLOBALS: &[(&str, &str)] = &[
+@@ -602,6 +671,22 @@ pub const STRING_GLOBALS: &[(&str, &str)] = &[
      ),
      // SDL's GPU swapchain table reads it whenever the OS version says it exists.
      ("_kCGColorSpaceITUR_2100_PQ", "kCGColorSpaceITUR_2100_PQ"),
@@ -1957,6 +2070,476 @@ index a4137b46..a052c984 100644
      (
          "_kCGDisplayShowDuplicateLowResolutionModes",
          "kCGDisplayShowDuplicateLowResolutionModes",
+diff --git a/crates/appkit/src/mtkview.rs b/crates/appkit/src/mtkview.rs
+new file mode 100644
+index 00000000..c55ce35e
+--- /dev/null
++++ b/crates/appkit/src/mtkview.rs
+@@ -0,0 +1,464 @@
++//! `MTKView` (MetalKit): an `NSView` backed by a `CAMetalLayer`.
++
++use std::ffi::c_void;
++
++use foundation::geometry::{NSRect, NSSize};
++use objc::object::Id;
++use objc::sel::Sel;
++
++use crate::define::methods;
++
++/// `MTLClearColor`: four `double` channels.
++#[repr(C)]
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct ClearColor {
++    pub red: f64,
++    pub green: f64,
++    pub blue: f64,
++    pub alpha: f64,
++}
++
++/// Storage added by `MTKView` immediately after its `NSView` body.
++#[repr(C)]
++struct MtkView {
++    delegate: Id,
++    clear_color: ClearColor,
++    preferred_fps: i64,
++    depth_stencil_pixel_format: u64,
++    sample_count: u64,
++    paused: u8,
++    enable_set_needs_display: u8,
++    auto_resize_drawable: u8,
++}
++
++pub const INSTANCE_SIZE: usize = crate::view::INSTANCE_SIZE + size_of::<MtkView>();
++
++fn mtk_view_of<'a>(receiver: Id) -> &'a mut MtkView {
++    let base = objc::class::lookup(c"NSView")
++        .expect("NSView is declared before MTKView")
++        .instance_size();
++    // SAFETY: MTKView adds exactly this body after NSView's storage, and
++    // subclasses inherit it at the same offset.
++    unsafe { &mut *receiver.cast::<u8>().add(base).cast::<MtkView>() }
++}
++
++unsafe fn send_id(receiver: Id, sel: &str) -> Id {
++    if receiver.is_null() {
++        return std::ptr::null_mut();
++    }
++    let f: unsafe extern "C" fn(Id, Sel) -> Id = unsafe { std::mem::transmute(objc::msg::entry()) };
++    unsafe { darwin::call_as_darwin!(f(receiver, objc::sel::get(sel))) }
++}
++
++unsafe fn send_set_id(receiver: Id, sel: &str, value: Id) {
++    if receiver.is_null() {
++        return;
++    }
++    let f: unsafe extern "C" fn(Id, Sel, Id) = unsafe { std::mem::transmute(objc::msg::entry()) };
++    unsafe { darwin::call_as_darwin!(f(receiver, objc::sel::get(sel), value)) };
++}
++
++unsafe fn send_u64(receiver: Id, sel: &str) -> u64 {
++    if receiver.is_null() {
++        return 0;
++    }
++    let f: unsafe extern "C" fn(Id, Sel) -> u64 = unsafe { std::mem::transmute(objc::msg::entry()) };
++    unsafe { darwin::call_as_darwin!(f(receiver, objc::sel::get(sel))) }
++}
++
++unsafe fn send_set_u64(receiver: Id, sel: &str, value: u64) {
++    if receiver.is_null() {
++        return;
++    }
++    let f: unsafe extern "C" fn(Id, Sel, u64) = unsafe { std::mem::transmute(objc::msg::entry()) };
++    unsafe { darwin::call_as_darwin!(f(receiver, objc::sel::get(sel), value)) };
++}
++
++unsafe fn send_u8(receiver: Id, sel: &str) -> u8 {
++    if receiver.is_null() {
++        return 0;
++    }
++    let f: unsafe extern "C" fn(Id, Sel) -> u8 = unsafe { std::mem::transmute(objc::msg::entry()) };
++    unsafe { darwin::call_as_darwin!(f(receiver, objc::sel::get(sel))) }
++}
++
++unsafe fn send_set_u8(receiver: Id, sel: &str, value: u8) {
++    if receiver.is_null() {
++        return;
++    }
++    let f: unsafe extern "C" fn(Id, Sel, u8) = unsafe { std::mem::transmute(objc::msg::entry()) };
++    unsafe { darwin::call_as_darwin!(f(receiver, objc::sel::get(sel), value)) };
++}
++
++unsafe fn send_size(receiver: Id, sel: &str) -> NSSize {
++    if receiver.is_null() {
++        return NSSize::default();
++    }
++    let f: unsafe extern "C" fn(Id, Sel) -> NSSize =
++        unsafe { std::mem::transmute(objc::msg::entry()) };
++    unsafe { darwin::call_as_darwin!(f(receiver, objc::sel::get(sel))) }
++}
++
++unsafe fn send_set_size(receiver: Id, sel: &str, size: NSSize) {
++    if receiver.is_null() {
++        return;
++    }
++    let f: unsafe extern "C" fn(Id, Sel, NSSize) =
++        unsafe { std::mem::transmute(objc::msg::entry()) };
++    unsafe { darwin::call_as_darwin!(f(receiver, objc::sel::get(sel), size)) };
++}
++
++fn new_metal_layer() -> Id {
++    let Some(class) = objc::class::lookup(c"CAMetalLayer") else {
++        return std::ptr::null_mut();
++    };
++    unsafe { send_id(objc::class::ptr(class) as Id, "layer") }
++}
++
++fn ensure_metal_layer(view: Id) -> Id {
++    let existing = unsafe { send_id(view, "layer") };
++    if !existing.is_null() && crate::layer::is_metal(existing) {
++        return existing;
++    }
++    let metal = new_metal_layer();
++    if !metal.is_null() {
++        unsafe {
++            send_set_id(view, "setLayer:", metal);
++            send_set_u8(view, "setWantsLayer:", 1);
++        }
++    }
++    metal
++}
++
++fn init_body(receiver: Id, frame: NSRect, device: Id) {
++    let body = mtk_view_of(receiver);
++    body.delegate = std::ptr::null_mut();
++    body.clear_color = ClearColor {
++        red: 0.0,
++        green: 0.0,
++        blue: 0.0,
++        alpha: 1.0,
++    };
++    body.preferred_fps = 60;
++    body.depth_stencil_pixel_format = 0;
++    body.sample_count = 1;
++    body.paused = 0;
++    body.enable_set_needs_display = 0;
++    body.auto_resize_drawable = 1;
++
++    let layer = ensure_metal_layer(receiver);
++    if !layer.is_null() {
++        if !device.is_null() {
++            unsafe { send_set_id(layer, "setDevice:", device) };
++        }
++        if frame.size.width > 0.0 && frame.size.height > 0.0 {
++            unsafe { send_set_size(layer, "setDrawableSize:", frame.size) };
++        }
++    }
++}
++
++/// `-[MTKView initWithFrame:device:]`.
++unsafe extern "C" fn init_with_frame_device(
++    receiver: Id,
++    _sel: Sel,
++    frame: NSRect,
++    device: Id,
++) -> Id {
++    let receiver =
++        unsafe { crate::view::init_with_frame(receiver, objc::sel::get("initWithFrame:"), frame) };
++    if !receiver.is_null() {
++        init_body(receiver, frame, device);
++    }
++    receiver
++}
++
++/// `-[MTKView initWithFrame:]`.
++unsafe extern "C" fn init_with_frame(receiver: Id, sel: Sel, frame: NSRect) -> Id {
++    unsafe { init_with_frame_device(receiver, sel, frame, std::ptr::null_mut()) }
++}
++
++/// `-[MTKView initWithCoder:]`.
++unsafe extern "C" fn init_with_coder(receiver: Id, _sel: Sel, _coder: Id) -> Id {
++    let frame = NSRect::default();
++    let receiver =
++        unsafe { crate::view::init_with_frame(receiver, objc::sel::get("initWithFrame:"), frame) };
++    if !receiver.is_null() {
++        init_body(receiver, frame, std::ptr::null_mut());
++    }
++    receiver
++}
++
++/// `-[MTKView makeBackingLayer]`.
++unsafe extern "C" fn make_backing_layer(_receiver: Id, _sel: Sel) -> Id {
++    new_metal_layer()
++}
++
++unsafe extern "C" fn device(receiver: Id, _sel: Sel) -> Id {
++    let layer = ensure_metal_layer(receiver);
++    unsafe { send_id(layer, "device") }
++}
++
++unsafe extern "C" fn set_device(receiver: Id, _sel: Sel, device: Id) {
++    let layer = ensure_metal_layer(receiver);
++    unsafe { send_set_id(layer, "setDevice:", device) };
++}
++
++unsafe extern "C" fn color_pixel_format(receiver: Id, _sel: Sel) -> u64 {
++    let layer = ensure_metal_layer(receiver);
++    unsafe { send_u64(layer, "pixelFormat") }
++}
++
++unsafe extern "C" fn set_color_pixel_format(receiver: Id, _sel: Sel, format: u64) {
++    let layer = ensure_metal_layer(receiver);
++    unsafe { send_set_u64(layer, "setPixelFormat:", format) };
++}
++
++unsafe extern "C" fn drawable_size(receiver: Id, _sel: Sel) -> NSSize {
++    let layer = ensure_metal_layer(receiver);
++    unsafe { send_size(layer, "drawableSize") }
++}
++
++unsafe extern "C" fn set_drawable_size(receiver: Id, _sel: Sel, size: NSSize) {
++    let layer = ensure_metal_layer(receiver);
++    unsafe { send_set_size(layer, "setDrawableSize:", size) };
++}
++
++unsafe extern "C" fn framebuffer_only(receiver: Id, _sel: Sel) -> u8 {
++    let layer = ensure_metal_layer(receiver);
++    unsafe { send_u8(layer, "framebufferOnly") }
++}
++
++unsafe extern "C" fn set_framebuffer_only(receiver: Id, _sel: Sel, value: u8) {
++    let layer = ensure_metal_layer(receiver);
++    unsafe { send_set_u8(layer, "setFramebufferOnly:", value) };
++}
++
++unsafe extern "C" fn colorspace(receiver: Id, _sel: Sel) -> Id {
++    let layer = ensure_metal_layer(receiver);
++    unsafe { send_id(layer, "colorspace") }
++}
++
++unsafe extern "C" fn set_colorspace(receiver: Id, _sel: Sel, cs: Id) {
++    let layer = ensure_metal_layer(receiver);
++    unsafe { send_set_id(layer, "setColorspace:", cs) };
++}
++
++unsafe extern "C" fn current_drawable(receiver: Id, _sel: Sel) -> Id {
++    let layer = ensure_metal_layer(receiver);
++    unsafe { send_id(layer, "nextDrawable") }
++}
++
++unsafe extern "C" fn current_render_pass_descriptor(receiver: Id, _sel: Sel) -> Id {
++    let drawable = unsafe { current_drawable(receiver, objc::sel::get("currentDrawable")) };
++    if drawable.is_null() {
++        return std::ptr::null_mut();
++    }
++    let texture = unsafe { send_id(drawable, "texture") };
++    if texture.is_null() {
++        return std::ptr::null_mut();
++    }
++    let Some(rpd_cls) = objc::class::lookup(c"MTLRenderPassDescriptor") else {
++        return std::ptr::null_mut();
++    };
++    let desc = unsafe { send_id(objc::class::ptr(rpd_cls) as Id, "renderPassDescriptor") };
++    if desc.is_null() {
++        return std::ptr::null_mut();
++    }
++    let attachments = unsafe { send_id(desc, "colorAttachments") };
++    if !attachments.is_null() {
++        let indexed: unsafe extern "C" fn(Id, Sel, u64) -> Id =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let att0 = unsafe {
++            darwin::call_as_darwin!(indexed(
++                attachments,
++                objc::sel::get("objectAtIndexedSubscript:"),
++                0
++            ))
++        };
++        if !att0.is_null() {
++            unsafe {
++                send_set_id(att0, "setTexture:", texture);
++                send_set_u64(att0, "setLoadAction:", 2); // MTLLoadActionClear
++                send_set_u64(att0, "setStoreAction:", 1); // MTLStoreActionStore
++                let set_clear: unsafe extern "C" fn(Id, Sel, ClearColor) =
++                    std::mem::transmute(objc::msg::entry());
++                darwin::call_as_darwin!(set_clear(
++                    att0,
++                    objc::sel::get("setClearColor:"),
++                    mtk_view_of(receiver).clear_color
++                ));
++            }
++        }
++    }
++    desc
++}
++
++unsafe extern "C" fn delegate(receiver: Id, _sel: Sel) -> Id {
++    mtk_view_of(receiver).delegate
++}
++
++unsafe extern "C" fn set_delegate(receiver: Id, _sel: Sel, value: Id) {
++    mtk_view_of(receiver).delegate = value;
++}
++
++unsafe extern "C" fn clear_color(receiver: Id, _sel: Sel) -> ClearColor {
++    mtk_view_of(receiver).clear_color
++}
++
++unsafe extern "C" fn set_clear_color(receiver: Id, _sel: Sel, color: ClearColor) {
++    mtk_view_of(receiver).clear_color = color;
++}
++
++unsafe extern "C" fn preferred_fps(receiver: Id, _sel: Sel) -> i64 {
++    mtk_view_of(receiver).preferred_fps
++}
++
++unsafe extern "C" fn set_preferred_fps(receiver: Id, _sel: Sel, fps: i64) {
++    mtk_view_of(receiver).preferred_fps = fps;
++}
++
++unsafe extern "C" fn is_paused(receiver: Id, _sel: Sel) -> u8 {
++    mtk_view_of(receiver).paused
++}
++
++unsafe extern "C" fn set_paused(receiver: Id, _sel: Sel, value: u8) {
++    mtk_view_of(receiver).paused = u8::from(value != 0);
++}
++
++unsafe extern "C" fn enable_set_needs_display(receiver: Id, _sel: Sel) -> u8 {
++    mtk_view_of(receiver).enable_set_needs_display
++}
++
++unsafe extern "C" fn set_enable_set_needs_display(receiver: Id, _sel: Sel, value: u8) {
++    mtk_view_of(receiver).enable_set_needs_display = u8::from(value != 0);
++}
++
++unsafe extern "C" fn auto_resize_drawable(receiver: Id, _sel: Sel) -> u8 {
++    mtk_view_of(receiver).auto_resize_drawable
++}
++
++unsafe extern "C" fn set_auto_resize_drawable(receiver: Id, _sel: Sel, value: u8) {
++    mtk_view_of(receiver).auto_resize_drawable = u8::from(value != 0);
++}
++
++unsafe extern "C" fn sample_count(receiver: Id, _sel: Sel) -> u64 {
++    mtk_view_of(receiver).sample_count.max(1)
++}
++
++unsafe extern "C" fn set_sample_count(receiver: Id, _sel: Sel, count: u64) {
++    mtk_view_of(receiver).sample_count = count.max(1);
++}
++
++unsafe extern "C" fn depth_stencil_pixel_format(receiver: Id, _sel: Sel) -> u64 {
++    mtk_view_of(receiver).depth_stencil_pixel_format
++}
++
++unsafe extern "C" fn set_depth_stencil_pixel_format(receiver: Id, _sel: Sel, format: u64) {
++    mtk_view_of(receiver).depth_stencil_pixel_format = format;
++}
++
++unsafe extern "C" fn draw(receiver: Id, _sel: Sel) {
++    let delegate = mtk_view_of(receiver).delegate;
++    if !delegate.is_null() {
++        let responds: unsafe extern "C" fn(Id, Sel, Sel) -> u8 =
++            unsafe { std::mem::transmute(objc::msg::entry()) };
++        let draw_sel = objc::sel::get("drawInMTKView:");
++        if unsafe {
++            darwin::call_as_darwin!(responds(
++                delegate,
++                objc::sel::get("respondsToSelector:"),
++                draw_sel
++            ))
++        } != 0
++        {
++            unsafe { send_set_id(delegate, "drawInMTKView:", receiver) };
++        }
++    }
++}
++
++unsafe extern "C" fn release_drawables(_receiver: Id, _sel: Sel) {}
++
++pub(crate) fn install() {
++    let class = objc::class::lookup(c"MTKView").expect("MTKView is declared before its methods");
++    methods!(class, {
++        "initWithFrame:" => init_with_frame, c"@48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16";
++        "initWithFrame:device:" => init_with_frame_device, c"@56@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16@48";
++        "initWithCoder:" => init_with_coder, c"@24@0:8@16";
++        "makeBackingLayer" => make_backing_layer, c"@16@0:8";
++        "device" => device, c"@16@0:8";
++        "setDevice:" => set_device, c"v24@0:8@16";
++        "colorPixelFormat" => color_pixel_format, c"Q16@0:8";
++        "setColorPixelFormat:" => set_color_pixel_format, c"v24@0:8Q16";
++        "drawableSize" => drawable_size, c"{CGSize=dd}16@0:8";
++        "setDrawableSize:" => set_drawable_size, c"v32@0:8{CGSize=dd}16";
++        "framebufferOnly" => framebuffer_only, c"c16@0:8";
++        "setFramebufferOnly:" => set_framebuffer_only, c"v20@0:8c16";
++        "colorspace" => colorspace, c"^{CGColorSpace=}16@0:8";
++        "setColorspace:" => set_colorspace, c"v24@0:8^{CGColorSpace=}16";
++        "currentDrawable" => current_drawable, c"@16@0:8";
++        "currentRenderPassDescriptor" => current_render_pass_descriptor, c"@16@0:8";
++        "delegate" => delegate, c"@16@0:8";
++        "setDelegate:" => set_delegate, c"v24@0:8@16";
++        "clearColor" => clear_color, c"{?=dddd}16@0:8";
++        "setClearColor:" => set_clear_color, c"v48@0:8{?=dddd}16";
++        "preferredFramesPerSecond" => preferred_fps, c"q16@0:8";
++        "setPreferredFramesPerSecond:" => set_preferred_fps, c"v24@0:8q16";
++        "isPaused" => is_paused, c"c16@0:8";
++        "paused" => is_paused, c"c16@0:8";
++        "setPaused:" => set_paused, c"v20@0:8c16";
++        "enableSetNeedsDisplay" => enable_set_needs_display, c"c16@0:8";
++        "setEnableSetNeedsDisplay:" => set_enable_set_needs_display, c"v20@0:8c16";
++        "autoResizeDrawable" => auto_resize_drawable, c"c16@0:8";
++        "setAutoResizeDrawable:" => set_auto_resize_drawable, c"v20@0:8c16";
++        "sampleCount" => sample_count, c"Q16@0:8";
++        "setSampleCount:" => set_sample_count, c"v24@0:8Q16";
++        "depthStencilPixelFormat" => depth_stencil_pixel_format, c"Q16@0:8";
++        "setDepthStencilPixelFormat:" => set_depth_stencil_pixel_format, c"v24@0:8Q16";
++        "draw" => draw, c"v16@0:8";
++        "releaseDrawables" => release_drawables, c"v16@0:8";
++    });
++    let _ = std::ptr::null::<c_void>();
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use foundation::geometry::NSPoint;
++
++    #[test]
++    fn mtk_view_creates_metal_backing_layer_and_forwards_properties() {
++        crate::bootstrap();
++        let class = objc::class::lookup(c"MTKView").expect("MTKView");
++        let view = objc::object::create_instance(class, 0);
++        let frame = NSRect {
++            origin: NSPoint { x: 0.0, y: 0.0 },
++            size: NSSize {
++                width: 640.0,
++                height: 360.0,
++            },
++        };
++        let view = unsafe { init_with_frame(view, objc::sel::get("initWithFrame:"), frame) };
++        assert!(!view.is_null());
++
++        let layer = unsafe { send_id(view, "layer") };
++        assert!(!layer.is_null(), "MTKView must have a backing layer");
++        assert!(
++            crate::layer::is_metal(layer),
++            "MTKView backing layer must be a CAMetalLayer"
++        );
++        assert_eq!(unsafe { send_u8(view, "wantsLayer") }, 1);
++        assert_eq!(
++            unsafe { send_size(view, "drawableSize") },
++            NSSize {
++                width: 640.0,
++                height: 360.0,
++            }
++        );
++
++        unsafe { send_set_u64(view, "setColorPixelFormat:", 115) };
++        assert_eq!(unsafe { send_u64(layer, "pixelFormat") }, 115);
++        assert_eq!(unsafe { send_u64(view, "colorPixelFormat") }, 115);
++
++        objc::arc::release(view);
++    }
++}
 diff --git a/crates/appkit/src/opengl.rs b/crates/appkit/src/opengl.rs
 index a1151f4f..07da0ae0 100644
 --- a/crates/appkit/src/opengl.rs
@@ -2869,7 +3452,7 @@ index 978f00ea..1c2f11fd 100644
      // dictionary's retain is the only one that matters. Mixing an owned value
      // in with autoreleased ones is how a leak or a double release gets written.
 diff --git a/crates/appkit/src/view.rs b/crates/appkit/src/view.rs
-index 221c3265..c8683004 100644
+index 221c3265..1ccabfcf 100644
 --- a/crates/appkit/src/view.rs
 +++ b/crates/appkit/src/view.rs
 @@ -470,6 +470,34 @@ pub(crate) fn surface_poll_visits_for_test() -> usize {
@@ -2907,7 +3490,32 @@ index 221c3265..c8683004 100644
  fn capture_surface_poll_owners(window: sdl3::Window) {
      let mut owners = Vec::new();
      if crate::coreanimation::has_surface_publications() {
-@@ -2614,6 +2642,9 @@ pub unsafe fn superview_of(view: Id) -> Id {
+@@ -1322,6 +1350,24 @@ fn publish_metal_scene_at(sdl: sdl3::Window, now: f64, force: bool) {
+     let differs = changed
+         .as_ref()
+         .is_none_or(|old| !same_metal_scene(old, &scene));
++    if differs && crate::window::tracing() {
++        let layers: Vec<String> = scene
++            .iter()
++            .map(|l| {
++                format!(
++                    "{:#x} {}x{}@{},{} opacity {} native {}",
++                    l.layer,
++                    l.frame.width,
++                    l.frame.height,
++                    l.frame.x,
++                    l.frame.y,
++                    l.opacity,
++                    l.native_pixels.is_some()
++                )
++            })
++            .collect();
++        crate::window::trace(format_args!("SDL window {sdl:p} metal scene: {layers:?}"));
++    }
+     if (differs || force)
+         && let Some(hook) = METAL_SCENE_CHANGED.get()
+     {
+@@ -2614,6 +2660,9 @@ pub unsafe fn superview_of(view: Id) -> Id {
  /// not set that flag leaves the guest drawing a point-sized viewport into a
  /// pixel-sized surface.
  fn scale(receiver: Id) -> f64 {
@@ -2917,7 +3525,7 @@ index 221c3265..c8683004 100644
      // SAFETY: a view of this crate's.
      let window = unsafe { window_of(receiver) };
      // SAFETY: null or a window this crate made.
-@@ -3573,6 +3604,19 @@ unsafe extern "C" fn ignored(_receiver: Id, _sel: Sel) {}
+@@ -3573,6 +3622,19 @@ unsafe extern "C" fn ignored(_receiver: Id, _sel: Sel) {}
  
  unsafe extern "C" fn ignored_object(_receiver: Id, _sel: Sel, _object: Id) {}
  
@@ -2937,7 +3545,7 @@ index 221c3265..c8683004 100644
  unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _flag: u8) {}
  
  unsafe extern "C" fn ignored_integer(_receiver: Id, _sel: Sel, _value: isize) {}
-@@ -3714,6 +3758,8 @@ pub(crate) fn install() {
+@@ -3714,6 +3776,8 @@ pub(crate) fn install() {
          // no observable result other than which future drag messages arrive.
          "registerForDraggedTypes:" => ignored_object, c"v24@0:8@16";
          "unregisterDraggedTypes" => ignored, c"v16@0:8";

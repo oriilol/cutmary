@@ -277,7 +277,7 @@ index da6e9496..04ebb32e 100644
  }
  
 diff --git a/crates/darwin/src/dispatch/queue.rs b/crates/darwin/src/dispatch/queue.rs
-index 34fbd146..f324609b 100644
+index 34fbd146..55735b72 100644
 --- a/crates/darwin/src/dispatch/queue.rs
 +++ b/crates/darwin/src/dispatch/queue.rs
 @@ -1,6 +1,6 @@
@@ -289,7 +289,37 @@ index 34fbd146..f324609b 100644
  use std::sync::{Arc, Condvar, Mutex, OnceLock};
  
  use super::block;
-@@ -99,7 +99,7 @@ pub struct Queue {
+@@ -17,6 +17,18 @@ enum Work {
+     /// releasing it here would be one release too many.
+     Borrowed(u64),
+     Function(Function, u64),
++    /// `dispatch_sync`'s place in the queue: the worker that reaches it hands
++    /// the queue to the waiting caller and holds it until the caller is done.
++    Handoff(Arc<Handoff>),
++}
++
++/// A serial turn lent to a `dispatch_sync` caller, which runs its block on its
++/// own thread as libdispatch does - code that checks which thread it is on, or
++/// that calls back to the caller's queue, depends on it.
++#[derive(Default)]
++struct Handoff {
++    granted: Done,
++    finished: Done,
+ }
+ 
+ impl Work {
+@@ -40,6 +52,10 @@ impl Work {
+             },
+             Work::Borrowed(b) => unsafe { block::invoke(b) },
+             Work::Function(f, context) => unsafe { f(context as *mut c_void) },
++            Work::Handoff(turn) => {
++                turn.granted.signal();
++                turn.finished.wait();
++            }
+         }
+     }
+ }
+@@ -99,7 +115,7 @@ pub struct Queue {
      label: CString,
      concurrent: bool,
      main: bool,
@@ -298,7 +328,7 @@ index 34fbd146..f324609b 100644
      state: Mutex<State>,
  }
  
-@@ -114,6 +114,8 @@ struct State {
+@@ -114,6 +130,8 @@ struct State {
      enqueued: bool,
      /// `dispatch_suspend`s not yet balanced by a resume. Work stays queued.
      suspended: u32,
@@ -307,7 +337,7 @@ index 34fbd146..f324609b 100644
  }
  
  /// The queue a handle names, if it names a live one.
-@@ -135,12 +137,13 @@ fn new(label: &str, concurrent: bool, main: bool) -> u64 {
+@@ -135,12 +153,13 @@ fn new(label: &str, concurrent: bool, main: bool) -> u64 {
          label: CString::new(label).unwrap_or_default(),
          concurrent,
          main,
@@ -322,7 +352,7 @@ index 34fbd146..f324609b 100644
          }),
      });
      Box::into_raw(queue) as u64
-@@ -566,23 +569,109 @@ pub unsafe extern "C" fn queue_create_with_target(
+@@ -566,23 +585,118 @@ pub unsafe extern "C" fn queue_create_with_target(
      target: u64,
  ) -> u64 {
      let handle = unsafe { queue_create(label, attr) };
@@ -332,7 +362,9 @@ index 34fbd146..f324609b 100644
 +    if target != 0 {
 +        object::retain(target);
 +        unsafe {
-+            (*(handle as *const Queue)).target.store(target, Ordering::Release);
++            (*(handle as *const Queue))
++                .target
++                .store(target, Ordering::Release);
 +        }
      }
      handle
@@ -351,11 +383,18 @@ index 34fbd146..f324609b 100644
 +    }
 +}
 +
-+pub unsafe extern "C" fn queue_attr_make_with_autorelease_frequency(attr: u64, _frequency: u64) -> u64 {
++pub unsafe extern "C" fn queue_attr_make_with_autorelease_frequency(
++    attr: u64,
++    _frequency: u64,
++) -> u64 {
 +    attr
 +}
 +
-+pub unsafe extern "C" fn queue_attr_make_with_qos_class(attr: u64, _qos_class: u32, _relative_priority: i32) -> u64 {
++pub unsafe extern "C" fn queue_attr_make_with_qos_class(
++    attr: u64,
++    _qos_class: u32,
++    _relative_priority: i32,
++) -> u64 {
 +    attr
 +}
 +
@@ -438,6 +477,87 @@ index 34fbd146..f324609b 100644
  }
  
  unsafe extern "C" fn run_targeted(context: *mut c_void) {
+@@ -717,6 +831,29 @@ fn sync_work(handle: u64, work: Work) {
+         // SAFETY: guest work whose pointers are thunks.
+         return run_tracked(handle, || unsafe { work.run() });
+     }
++    // Any queue but the main one runs a synchronous block on the caller's
++    // thread once its turn comes, keeping the queue's order and exclusion.
++    if !q.main {
++        let turn = Arc::new(Handoff::default());
++        submit(
++            handle,
++            Item {
++                work: Work::Handoff(Arc::clone(&turn)),
++                done: None,
++            },
++        );
++        turn.granted.wait();
++        // Released even if the work unwinds, so the queue is never left held.
++        struct Release(Arc<Handoff>);
++        impl Drop for Release {
++            fn drop(&mut self) {
++                self.0.finished.signal();
++            }
++        }
++        let _release = Release(Arc::clone(&turn));
++        // SAFETY: guest work whose pointers are thunks.
++        return run_tracked(handle, || unsafe { work.run() });
++    }
+     let done = Arc::new(Done::default());
+     submit(
+         handle,
+@@ -959,6 +1096,50 @@ mod tests {
+         unsafe { object::release(q) };
+     }
+ 
++    static SYNC_LOG: Mutex<Vec<(u64, std::thread::ThreadId)>> = Mutex::new(Vec::new());
++
++    unsafe extern "C" fn log_thread(context: *mut c_void) {
++        std::thread::sleep(std::time::Duration::from_millis(5));
++        SYNC_LOG
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .push((context as u64, std::thread::current().id()));
++    }
++
++    /// libdispatch runs a `dispatch_sync` block on the caller's thread once the
++    /// queue's earlier work is done. CapCut's video engine relies on it: a
++    /// block synced from the main thread that finds itself elsewhere waits on
++    /// the main thread, which is waiting for it.
++    #[test]
++    fn dispatch_sync_runs_on_the_callers_thread_in_order() {
++        SYNC_LOG.lock().unwrap_or_else(|e| e.into_inner()).clear();
++        let q = create_serial("sync handoff test");
++        // SAFETY: a live queue and host functions.
++        unsafe {
++            for i in 1..=3u64 {
++                async_f(q, i, log_thread as *const () as usize as u64);
++            }
++            sync_f(q, 4, log_thread as *const () as usize as u64);
++        }
++        let log = SYNC_LOG.lock().unwrap_or_else(|e| e.into_inner()).clone();
++        assert_eq!(
++            log.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
++            [1, 2, 3, 4]
++        );
++        assert_eq!(
++            log[3].1,
++            std::thread::current().id(),
++            "the synced block ran on the caller"
++        );
++        assert_ne!(
++            log[0].1,
++            std::thread::current().id(),
++            "async work ran on a worker"
++        );
++        // SAFETY: giving up the create reference.
++        unsafe { object::release(q) };
++    }
++
+     unsafe extern "C" fn block_until_released(context: *mut c_void) {
+         // SAFETY: the test passes a live `(AtomicU32, AtomicU32)`: started, released.
+         let (started, released) = unsafe { &*(context as *const (AtomicU32, AtomicU32)) };
 diff --git a/crates/darwin/src/dispatch/source.rs b/crates/darwin/src/dispatch/source.rs
 index 08e77ef0..5bcf0e8a 100644
 --- a/crates/darwin/src/dispatch/source.rs
@@ -1069,15 +1189,76 @@ index 2c9cf27d..2923cef4 100644
      }
  }
 diff --git a/crates/darwin/src/net/resolve.rs b/crates/darwin/src/net/resolve.rs
-index 2afb73cc..b6847ee3 100644
+index 2afb73cc..b6798f9e 100644
 --- a/crates/darwin/src/net/resolve.rs
 +++ b/crates/darwin/src/net/resolve.rs
-@@ -481,6 +481,153 @@ unsafe extern "C" fn gethostbyaddr(addr: *const c_void, len: u32, af: i32) -> *m
+@@ -481,6 +481,225 @@ unsafe extern "C" fn gethostbyaddr(addr: *const c_void, len: u32, af: i32) -> *m
      unsafe { in_darwins_shape(host_gethostbyaddr(addr, len, af)) }
  }
  
++/// Parse IPv4 and IPv6 nameserver addresses from `/etc/resolv.conf`.
++fn resolv_conf_nameservers() -> Vec<std::net::IpAddr> {
++    let content = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
++    let mut servers = Vec::new();
++    for line in content.lines() {
++        let line = line.trim();
++        let Some(rest) = line.strip_prefix("nameserver") else {
++            continue;
++        };
++        let ip_str = rest.trim().split_whitespace().next().unwrap_or("");
++        if let Ok(ip) = ip_str.parse::<std::net::IpAddr>() {
++            servers.push(ip);
++        }
++    }
++    servers
++}
++
 +/// `int res_9_ninit(res_state statp)`
-+unsafe extern "C" fn res_9_ninit(_statp: *mut c_void) -> i32 {
++///
++/// Populates Darwin's `struct __res_9_state` (`0x228` bytes on x86_64) enough
++/// for callers such as Chromium/Cronet (`DnsConfigServicePosix`) that inspect
++/// `options & RES_INIT`, `retrans`, `retry`, `nscount`, `nsaddr_list`, and
++/// `ndots` before calling `res_9_getservers`.
++unsafe extern "C" fn res_9_ninit(statp: *mut c_void) -> i32 {
++    if statp.is_null() {
++        return -1;
++    }
++    const RES_TIMEOUT: i32 = 5;
++    const RES_DFLRETRY: i32 = 4;
++    // RES_INIT (0x1) | RES_RECURSE (0x40) | RES_DEFNAMES (0x80) | RES_DNSRCH (0x200)
++    const RES_DEFAULT: u64 = 0x0000_02c1;
++    let base = statp as *mut u8;
++    let servers = resolv_conf_nameservers();
++    let mut v4_count = 0i32;
++    unsafe {
++        std::ptr::write_bytes(base, 0, 0x228);
++        base.add(0x00).cast::<i32>().write_unaligned(RES_TIMEOUT);
++        base.add(0x04).cast::<i32>().write_unaligned(RES_DFLRETRY);
++        base.add(0x08).cast::<u64>().write_unaligned(RES_DEFAULT);
++        for ip in &servers {
++            if v4_count >= 3 {
++                break;
++            }
++            if let std::net::IpAddr::V4(v4) = ip {
++                let slot = base.add(0x14 + (v4_count as usize) * 16);
++                *slot.add(0) = 16; // sin_len
++                *slot.add(1) = 2; // AF_INET
++                let port = 53u16.to_be_bytes();
++                *slot.add(2) = port[0];
++                *slot.add(3) = port[1];
++                std::ptr::copy_nonoverlapping(v4.octets().as_ptr(), slot.add(4), 4);
++                v4_count += 1;
++            }
++        }
++        let nscount = if v4_count > 0 {
++            v4_count
++        } else {
++            servers.len().min(3) as i32
++        };
++        base.add(0x10).cast::<i32>().write_unaligned(nscount);
++        // ndots:4 bitfield at offset 0x188 (default 1)
++        *base.add(0x188) = 1;
++    }
 +    0
 +}
 +
@@ -1090,32 +1271,43 @@ index 2afb73cc..b6847ee3 100644
 +    if set.is_null() || cnt <= 0 {
 +        return 0;
 +    }
-+    let content = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
++    let servers = resolv_conf_nameservers();
 +    let mut written = 0i32;
 +    let base = set as *mut u8;
-+    for line in content.lines() {
++    for ip in servers {
 +        if written >= cnt {
 +            break;
 +        }
-+        let line = line.trim();
-+        let Some(rest) = line.strip_prefix("nameserver") else {
-+            continue;
-+        };
-+        let ip_str = rest.trim().split_whitespace().next().unwrap_or("");
-+        if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
-+            let slot = unsafe { base.add((written as usize) * 128) };
-+            unsafe {
-+                std::ptr::write_bytes(slot, 0, 128);
-+                // Darwin struct sockaddr_in: sin_len (16), sin_family (AF_INET=2), sin_port (53 BE), sin_addr
-+                *slot.add(0) = 16;
-+                *slot.add(1) = 2;
-+                let port = 53u16.to_be_bytes();
-+                *slot.add(2) = port[0];
-+                *slot.add(3) = port[1];
-+                let octets = ip.octets();
-+                std::ptr::copy_nonoverlapping(octets.as_ptr(), slot.add(4), 4);
++        let slot = unsafe { base.add((written as usize) * 128) };
++        match ip {
++            std::net::IpAddr::V4(v4) => {
++                unsafe {
++                    std::ptr::write_bytes(slot, 0, 128);
++                    // Darwin struct sockaddr_in: sin_len (16), sin_family (AF_INET=2), sin_port (53 BE), sin_addr
++                    *slot.add(0) = 16;
++                    *slot.add(1) = 2;
++                    let port = 53u16.to_be_bytes();
++                    *slot.add(2) = port[0];
++                    *slot.add(3) = port[1];
++                    let octets = v4.octets();
++                    std::ptr::copy_nonoverlapping(octets.as_ptr(), slot.add(4), 4);
++                }
++                written += 1;
 +            }
-+            written += 1;
++            std::net::IpAddr::V6(v6) => {
++                unsafe {
++                    std::ptr::write_bytes(slot, 0, 128);
++                    // Darwin struct sockaddr_in6: sin6_len (28), sin6_family (AF_INET6=30), sin6_port (53 BE), flowinfo (0), sin6_addr
++                    *slot.add(0) = 28;
++                    *slot.add(1) = 30;
++                    let port = 53u16.to_be_bytes();
++                    *slot.add(2) = port[0];
++                    *slot.add(3) = port[1];
++                    let octets = v6.octets();
++                    std::ptr::copy_nonoverlapping(octets.as_ptr(), slot.add(8), 16);
++                }
++                written += 1;
++            }
 +        }
 +    }
 +    written
@@ -1226,7 +1418,7 @@ index 2afb73cc..b6847ee3 100644
  exports::exports! {
      functions {
          "getaddrinfo" => getaddrinfo,
-@@ -490,6 +637,21 @@ exports::exports! {
+@@ -490,6 +709,21 @@ exports::exports! {
          "gethostbyname" => gethostbyname,
          "gethostbyname2" => gethostbyname2,
          "gethostbyaddr" => gethostbyaddr,

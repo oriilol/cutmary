@@ -390,10 +390,57 @@ index 22c1a9cf..11d9e489 100644
  /// bytes an `NSString` caller asks for.
  ///
 diff --git a/crates/corefoundation/src/sysconfig.rs b/crates/corefoundation/src/sysconfig.rs
-index 295160ae..a191bb48 100644
+index 295160ae..8366a4a7 100644
 --- a/crates/corefoundation/src/sysconfig.rs
 +++ b/crates/corefoundation/src/sysconfig.rs
-@@ -832,9 +832,17 @@ const KEY_STRINGS: &[(&str, &str)] = &[
+@@ -693,6 +693,37 @@ pub unsafe extern "C" fn SCDynamicStoreCopyValue(_store: CFTypeRef, key: CFTypeR
+     let Some(key) = (unsafe { text_of(key) }) else {
+         return std::ptr::null();
+     };
++    if key == b"State:/Network/Global/DNS" {
++        let content = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
++        let mut servers: Vec<CFTypeRef> = Vec::new();
++        for line in content.lines() {
++            let line = line.trim();
++            if let Some(rest) = line.strip_prefix("nameserver")
++                && let Some(ip) = rest.trim().split_whitespace().next()
++                && !ip.is_empty()
++            {
++                servers.push(crate::string::from_bytes(ip.as_bytes(), false));
++            }
++        }
++        if servers.is_empty() {
++            return std::ptr::null();
++        }
++        let array = crate::collections::new_array(&servers, Policy::from_type_callbacks(), false);
++        for s in servers {
++            unsafe { crate::api::CFRelease(s) };
++        }
++        let value = crate::collections::new_dictionary(
++            &[(
++                crate::base::interned_name("ServerAddresses") as CFTypeRef,
++                array,
++            )],
++            Policy::from_key_callbacks(),
++            Policy::from_type_callbacks(),
++            false,
++        );
++        unsafe { crate::api::CFRelease(array) };
++        return value;
++    }
+     if key != b"State:/Network/Global/IPv4" {
+         return std::ptr::null();
+     }
+@@ -798,6 +829,8 @@ const KEY_STRINGS: &[(&str, &str)] = &[
+     ("_kSCDynamicStorePropNetPrimaryService", "PrimaryService"),
+     ("_kSCEntNetIPv4", "IPv4"),
+     ("_kSCEntNetIPv6", "IPv6"),
++    ("_kSCEntNetDNS", "DNS"),
++    ("_kSCPropNetDNSServerAddresses", "ServerAddresses"),
+     ("_kSCEntNetInterface", "Interface"),
+     ("_kSCEntNetLink", "Link"),
+     ("_kSCPrefNetworkServices", "NetworkServices"),
+@@ -832,9 +865,17 @@ const KEY_STRINGS: &[(&str, &str)] = &[
          "_kSCPropNetProxiesProxyAutoConfigURLString",
          "ProxyAutoConfigURLString",
      ),
@@ -411,7 +458,7 @@ index 295160ae..a191bb48 100644
  ];
  
  /// The `kSC*` globals, as `(Mach-O name, address)`.
-@@ -854,8 +862,28 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+@@ -854,8 +895,28 @@ pub fn data_symbols() -> Vec<(String, u64)> {
          .collect()
  }
  

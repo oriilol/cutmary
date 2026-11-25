@@ -206,3 +206,22 @@ Estas referencias prueban que las rutas existen. La secuencia efectivamente ejec
 - Prioridad 1: revisar con Claude la inicialización del pipeline Metal (`Inplace-Vertical-Flip` / atributos de vértice) y la espera durante Play.
 - Prioridad 2: repetir con un proyecto nuevo y un MP4 H.264, comprobando Medios, miniatura, primer fotograma y reproducción. Capturar la primera llamada que falle antes de ampliar AVFoundation.
 - Prioridad 3: seguir con el muestreador nativo, la latencia del editor y la creación de la ventana del menú con alfa.
+
+**Congelación al reproducir: resuelta (verificada en vivo)**
+
+Era un interbloqueo: el hilo principal llamaba a `VERunSynchronouslyOnContextQueueWithParam`
+(`dispatch_sync` a la cola de contexto del motor de vídeo) y Rosemary ejecutaba ese bloque en
+un trabajador del pool; dentro, `libAGFX` volvía a pedir trabajo al hilo principal, que esperaba.
+libdispatch ejecuta el bloque de `dispatch_sync` en el hilo que llama cuando le toca el turno.
+Ahora `darwin::dispatch::queue` hace lo mismo (`Work::Handoff`) para toda cola salvo la principal,
+conservando orden y exclusión; test `dispatch_sync_runs_on_the_callers_thread_in_order`.
+Suite de `darwin`: 922/922.
+
+**Reproductor en negro (siguiente)**
+
+Con `ROSEMARY_TRACE_WINDOW=1` la escena Metal del editor contiene la capa de la vista previa
+(`VEPreviewMetalView`, p. ej. `780x439@653,79`, opaca) encima de la de Qt, y se presentan ~42
+drawables/s: la composición funciona y el contenido que dibuja AGFX sale negro. Sospechas:
+texturas de entrada vacías (`CVMetalTextureCache` / pipeline Inplace-Vertical-Flip) o el pase final.
+Falta una herramienta para volcar el contenido de un drawable/textura.
+

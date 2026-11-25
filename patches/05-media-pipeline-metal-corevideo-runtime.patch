@@ -5700,6 +5700,114 @@ index e3039156..a7336c14 100644
              "currentAllocatedSize" => current_allocated_size, c"Q16@0:8";
              "newFence" => new_fence, c"@16@0:8";
              "newEvent" => new_event, c"@16@0:8";
+diff --git a/crates/metal/src/native.rs b/crates/metal/src/native.rs
+index 5fcab840..41bcfb9e 100644
+--- a/crates/metal/src/native.rs
++++ b/crates/metal/src/native.rs
+@@ -1206,6 +1206,7 @@ mod tests {
+                 array_length: 1,
+                 storage_mode: 0,
+                 usage: 3,
++                swizzle: Default::default(),
+             },
+         );
+         let texture = unsafe { texture::new_texture(device, std::ptr::null(), descriptor) };
+@@ -1270,6 +1271,7 @@ mod tests {
+                 array_length: 2,
+                 storage_mode: 0,
+                 usage: 3,
++                swizzle: Default::default(),
+             },
+         );
+         let guest = unsafe { texture::new_texture(device, std::ptr::null(), descriptor) };
+@@ -1335,6 +1337,7 @@ mod tests {
+             array_length: 1,
+             storage_mode: 0,
+             usage: 3,
++            swizzle: Default::default(),
+         };
+         for (width, height, depth) in [
+             (u32::MAX as u64, u32::MAX as u64, 1),
+@@ -1426,6 +1429,7 @@ mod tests {
+                             array_length: 1,
+                             storage_mode: 0,
+                             usage: 3,
++                            swizzle: Default::default(),
+                         },
+                     );
+                     assert!(!descriptor.is_null());
+@@ -1532,6 +1536,7 @@ mod tests {
+                 array_length: 1,
+                 storage_mode: 0,
+                 usage: 3,
++                swizzle: Default::default(),
+             },
+         );
+         let source = unsafe { texture::new_texture(device, std::ptr::null(), desc) };
+@@ -1679,6 +1684,7 @@ mod tests {
+                 array_length: 1,
+                 storage_mode: 0,
+                 usage: 4,
++                swizzle: Default::default(),
+             },
+         );
+         let texture = unsafe { texture::new_texture(device, std::ptr::null(), descriptor) };
+@@ -1740,6 +1746,7 @@ mod tests {
+                 array_length: 1,
+                 storage_mode: 0,
+                 usage: 3,
++                swizzle: Default::default(),
+             },
+         );
+         let texture = unsafe { texture::new_texture(device, std::ptr::null(), desc) };
+@@ -2804,6 +2811,7 @@ mod tests {
+                 array_length: 1,
+                 storage_mode: 0,
+                 usage: 1,
++                swizzle: Default::default(),
+             },
+         );
+         let texture = unsafe { texture::new_texture(device, std::ptr::null(), tex_desc) };
+@@ -3056,6 +3064,7 @@ mod tests {
+                     array_length: 1,
+                     storage_mode: storage,
+                     usage: 4,
++                    swizzle: Default::default(),
+                 },
+             );
+             let tex = unsafe { texture::new_texture(device, std::ptr::null(), desc) };
+@@ -3296,6 +3305,7 @@ mod tests {
+                 array_length: 1,
+                 storage_mode: 0,
+                 usage: 4,
++                swizzle: Default::default(),
+             },
+         );
+         let target = unsafe { texture::new_texture(device, std::ptr::null(), tex_desc) };
+@@ -3453,6 +3463,7 @@ mod tests {
+                     array_length: 1,
+                     storage_mode: 0,
+                     usage: MTL_TEXTURE_USAGE_RENDER_TARGET,
++                    swizzle: Default::default(),
+                 },
+             );
+             let target = unsafe { texture::new_texture(device, std::ptr::null(), descriptor) };
+@@ -3719,6 +3730,7 @@ mod tests {
+                 array_length: 1,
+                 storage_mode: 0,
+                 usage: MTL_TEXTURE_USAGE_SHADER_READ,
++                swizzle: Default::default(),
+             },
+         );
+         let image = unsafe { texture::new_texture(target.device, std::ptr::null(), descriptor) };
+@@ -3921,6 +3933,7 @@ mod tests {
+                 array_length: 1,
+                 storage_mode: 0,
+                 usage: MTL_TEXTURE_USAGE_SHADER_READ,
++                swizzle: Default::default(),
+             },
+         );
+         let image = unsafe { texture::new_texture(device, std::ptr::null(), descriptor) };
 diff --git a/crates/metal/src/pipeline/compute_descriptor.rs b/crates/metal/src/pipeline/compute_descriptor.rs
 index d5298462..d5cd5a78 100644
 --- a/crates/metal/src/pipeline/compute_descriptor.rs
@@ -6140,6 +6248,126 @@ index 00000000..ccf6460a
 +        "dealloc" => reflection_dealloc, c"v16@0:8";
 +    });
 +}
+diff --git a/crates/metal/src/resource/heap.rs b/crates/metal/src/resource/heap.rs
+index 102d6611..4506d6b2 100644
+--- a/crates/metal/src/resource/heap.rs
++++ b/crates/metal/src/resource/heap.rs
+@@ -583,6 +583,7 @@ mod tests {
+             array_length: 1,
+             storage_mode: MTL_STORAGE_MODE_PRIVATE,
+             usage: 0,
++            swizzle: Default::default(),
+         }
+     }
+ 
+diff --git a/crates/metal/src/resource/mod.rs b/crates/metal/src/resource/mod.rs
+index 3ef87001..826a4791 100644
+--- a/crates/metal/src/resource/mod.rs
++++ b/crates/metal/src/resource/mod.rs
+@@ -120,6 +120,8 @@ pub(crate) fn install() {
+         // as it is Metal's when this is left at its default.
+         "allowGPUOptimizedContents" => crate::device::yes, c"B16@0:8";
+         "setAllowGPUOptimizedContents:" => crate::no_op, c"v20@0:8c16";
++        "swizzle" => texture::descriptor_swizzle, c"{MTLTextureSwizzleChannels=CCCC}16@0:8";
++        "setSwizzle:" => texture::set_descriptor_swizzle, c"v20@0:8{MTLTextureSwizzleChannels=CCCC}16";
+     });
+     methods!(descriptor.metaclass(), {
+         "texture2DDescriptorWithPixelFormat:width:height:mipmapped:"
+@@ -193,6 +195,7 @@ pub(crate) fn install() {
+         "newTextureViewWithPixelFormat:textureType:levels:slices:swizzle:"
+             => texture::new_texture_view_swizzled,
+             c"@68@0:8Q16Q24{_NSRange=QQ}32{_NSRange=QQ}48{MTLTextureSwizzleChannels=CCCC}64";
++        "swizzle" => texture::texture_swizzle, c"{MTLTextureSwizzleChannels=CCCC}16@0:8";
+     });
+     methods!(texture, {
+         "parentTexture" => texture_parent, c"@16@0:8";
+diff --git a/crates/metal/src/resource/texture.rs b/crates/metal/src/resource/texture.rs
+index f983d3c7..f1bc595e 100644
+--- a/crates/metal/src/resource/texture.rs
++++ b/crates/metal/src/resource/texture.rs
+@@ -73,6 +73,7 @@ pub(crate) struct TextureDescriptor {
+     pub array_length: u64,
+     pub storage_mode: u64,
+     pub usage: u64,
++    pub swizzle: SwizzleChannels,
+ }
+ 
+ impl TextureDescriptor {
+@@ -89,6 +90,7 @@ impl TextureDescriptor {
+             array_length: 1,
+             storage_mode: MTL_STORAGE_MODE_MANAGED,
+             usage: gpu::USAGE_SHADER_READ,
++            swizzle: IDENTITY_SWIZZLE,
+         }
+     }
+ 
+@@ -297,7 +299,11 @@ pub(crate) fn image_description(descriptor: &TextureDescriptor) -> Option<ImageD
+         samples: descriptor.sample_count,
+         usage: descriptor.usage,
+         cube,
+-        components: gpu::pixel_format_components(descriptor.pixel_format),
++        components: compose_swizzle(
++            gpu::pixel_format_components(descriptor.pixel_format),
++            descriptor.swizzle,
++        )
++        .unwrap_or_else(|| gpu::pixel_format_components(descriptor.pixel_format)),
+     })
+ }
+ 
+@@ -315,6 +321,7 @@ pub(crate) fn drawable_texture(gpu: &'static Gpu, image: GpuImage, pixel_format:
+         array_length: 1,
+         storage_mode: 2,
+         usage: gpu::USAGE_RENDER_TARGET | gpu::USAGE_SHADER_READ,
++        swizzle: IDENTITY_SWIZZLE,
+     };
+     object::make(
+         c"RosemaryMTLTexture",
+@@ -908,12 +915,39 @@ pub(super) unsafe extern "C" fn new_texture_view_range(
+ 
+ /// `MTLTextureSwizzleChannels`: each output channel's `MTLTextureSwizzle`.
+ #[repr(C)]
+-#[derive(Clone, Copy)]
+-pub(super) struct SwizzleChannels {
+-    red: u8,
+-    green: u8,
+-    blue: u8,
+-    alpha: u8,
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub(crate) struct SwizzleChannels {
++    pub red: u8,
++    pub green: u8,
++    pub blue: u8,
++    pub alpha: u8,
++}
++
++impl Default for SwizzleChannels {
++    fn default() -> Self {
++        IDENTITY_SWIZZLE
++    }
++}
++
++pub(super) unsafe extern "C" fn descriptor_swizzle(receiver: Id, _sel: Sel) -> SwizzleChannels {
++    // SAFETY: a texture descriptor of this crate's.
++    unsafe { object::body::<TextureDescriptor>(receiver) }.swizzle
++}
++
++pub(super) unsafe extern "C" fn set_descriptor_swizzle(
++    receiver: Id,
++    _sel: Sel,
++    swizzle: SwizzleChannels,
++) {
++    // SAFETY: a texture descriptor of this crate's.
++    unsafe { object::body::<TextureDescriptor>(receiver) }.swizzle = swizzle;
++}
++
++pub(super) unsafe extern "C" fn texture_swizzle(receiver: Id, _sel: Sel) -> SwizzleChannels {
++    // SAFETY: a texture of this crate's.
++    unsafe { object::body_ref::<Texture>(receiver) }
++        .descriptor
++        .swizzle
+ }
+ 
+ const MTL_TEXTURE_SWIZZLE_ZERO: u8 = 0;
 diff --git a/crates/metal/src/swapchain/mod.rs b/crates/metal/src/swapchain/mod.rs
 index 1d278874..c89fd69d 100644
 --- a/crates/metal/src/swapchain/mod.rs
@@ -6228,7 +6456,7 @@ index 1d278874..c89fd69d 100644
              Ok(suboptimal) => {
                  if suboptimal {
 diff --git a/crates/metal/src/tests.rs b/crates/metal/src/tests.rs
-index 67d1296e..1f54b43d 100644
+index 67d1296e..45e3ef45 100644
 --- a/crates/metal/src/tests.rs
 +++ b/crates/metal/src/tests.rs
 @@ -651,6 +651,7 @@ fn a_translated_kernel_runs_on_the_gpu() {
@@ -6239,6 +6467,218 @@ index 67d1296e..1f54b43d 100644
          send_with_object(encoder, "setComputePipelineState:", pipeline);
          set_buffer_at(encoder, buffer, 0, 0);
          dispatch(encoder, 1);
+@@ -970,6 +971,7 @@ fn a_texture_bound_again_in_one_command_buffer_is_the_one_read() {
+                     array_length: 1,
+                     storage_mode: 0,
+                     usage: gpu::USAGE_SHADER_READ,
++                    swizzle: Default::default(),
+                 },
+             );
+             replace_region(texture, [0, 0, 1, 1], &value.to_le_bytes(), 4);
+@@ -1508,6 +1510,7 @@ fn check_render_target_gap(device: Id) {
+                 array_length: 1,
+                 storage_mode: 2,
+                 usage: gpu::USAGE_RENDER_TARGET,
++                swizzle: Default::default(),
+             },
+         )
+     };
+@@ -1687,6 +1690,7 @@ fn check_depth_resolve(device: Id) {
+                 array_length: 1,
+                 storage_mode: 2,
+                 usage: gpu::USAGE_RENDER_TARGET,
++                swizzle: Default::default(),
+             },
+         )
+     };
+@@ -2139,6 +2143,7 @@ fn a_translated_triangle_draws_on_the_gpu() {
+             array_length: 1,
+             storage_mode: 2,
+             usage: gpu::USAGE_RENDER_TARGET,
++            swizzle: Default::default(),
+         },
+     );
+     assert!(!target.is_null());
+@@ -2225,6 +2230,7 @@ fn replaced_texels_reach_the_next_command_buffer() {
+         array_length: 1,
+         storage_mode: 0,
+         usage: gpu::USAGE_SHADER_READ,
++        swizzle: Default::default(),
+     };
+     let texture = resource::new_texture(gpu, descriptor);
+     assert!(!texture.is_null());
+@@ -2290,6 +2296,7 @@ fn get_bytes_reads_back_replaced_texels() {
+             array_length: 1,
+             storage_mode: 0,
+             usage: gpu::USAGE_SHADER_READ,
++            swizzle: Default::default(),
+         },
+     );
+     assert!(!texture.is_null());
+@@ -2386,6 +2393,7 @@ fn a_later_copy_over_the_same_texels_lands_after_an_earlier_one() {
+                 array_length: 1,
+                 storage_mode: 0,
+                 usage: gpu::USAGE_SHADER_READ,
++                swizzle: Default::default(),
+             },
+         )
+     };
+@@ -2451,6 +2459,7 @@ fn streaming_upload_cost() {
+                         array_length: 1,
+                         storage_mode: 0,
+                         usage: gpu::USAGE_SHADER_READ,
++                        swizzle: Default::default(),
+                     },
+                 )
+             })
+@@ -2515,6 +2524,7 @@ fn a_texture_released_before_its_upload_runs_outlives_it() {
+             array_length: 1,
+             storage_mode: 0,
+             usage: gpu::USAGE_SHADER_READ,
++            swizzle: Default::default(),
+         },
+     );
+     assert!(!texture.is_null());
+@@ -2861,6 +2871,7 @@ fn recording_cost() {
+                 array_length: 1,
+                 storage_mode: 2,
+                 usage: gpu::USAGE_RENDER_TARGET,
++                swizzle: Default::default(),
+             },
+         );
+         let pass = object::make(
+@@ -3032,6 +3043,7 @@ fn recording_cost_with_resources() {
+                     array_length: 1,
+                     storage_mode: 2,
+                     usage,
++                    swizzle: Default::default(),
+                 },
+             )
+         };
+@@ -3184,6 +3196,7 @@ fn encoder_barrier_device_cost() {
+                     array_length: 1,
+                     storage_mode: 2,
+                     usage: gpu::USAGE_RENDER_TARGET | gpu::USAGE_SHADER_READ,
++                    swizzle: Default::default(),
+                 },
+             )
+         };
+@@ -3342,6 +3355,7 @@ fn a_pass_samples_what_the_pass_before_drew() {
+                     array_length: 1,
+                     storage_mode: 2,
+                     usage: gpu::USAGE_RENDER_TARGET | gpu::USAGE_SHADER_READ,
++                    swizzle: Default::default(),
+                 },
+             )
+         };
+@@ -3506,6 +3520,7 @@ fragment float4 mark(float4 position [[position]], device uint* out [[buffer(0)]
+                 array_length: 1,
+                 storage_mode: 2,
+                 usage: gpu::USAGE_RENDER_TARGET,
++                swizzle: Default::default(),
+             },
+         );
+         let corners: [f32; 12] = [
+@@ -3607,6 +3622,7 @@ impl SamplingDraw {
+                 array_length: 1,
+                 storage_mode: 2,
+                 usage: gpu::USAGE_RENDER_TARGET | gpu::USAGE_SHADER_READ,
++                swizzle: Default::default(),
+             },
+         )
+     }
+@@ -4196,6 +4212,7 @@ fn covering_draw_with_formats(
+             array_length: 1,
+             storage_mode: 2,
+             usage: gpu::USAGE_RENDER_TARGET,
++            swizzle: Default::default(),
+         },
+     );
+     // SAFETY: the same calls the guest makes.
+@@ -4304,6 +4321,7 @@ fn check_separate_depth_and_stencil_attachments(device: Id) {
+                 array_length: 1,
+                 storage_mode: MTL_STORAGE_MODE_PRIVATE,
+                 usage: gpu::USAGE_RENDER_TARGET,
++                swizzle: Default::default(),
+             },
+         )
+     };
+@@ -4535,6 +4553,7 @@ fn repeated_depth_bias_preserves_changed_depth_tests() {
+             array_length: 1,
+             storage_mode: MTL_STORAGE_MODE_PRIVATE,
+             usage: gpu::USAGE_RENDER_TARGET,
++            swizzle: Default::default(),
+         },
+     );
+     assert!(!depth.is_null());
+@@ -5240,6 +5259,7 @@ fn generating_mipmaps_waits_only_between_levels() {
+             array_length: 1,
+             storage_mode: 0,
+             usage: gpu::USAGE_SHADER_READ,
++            swizzle: Default::default(),
+         },
+     );
+     assert!(!texture.is_null());
+@@ -5442,6 +5462,7 @@ fn readable_texture(device: Id, texture_type: u64, pixel_format: u64, size: [u64
+             array_length: 1,
+             storage_mode: 0,
+             usage: gpu::USAGE_SHADER_READ,
++            swizzle: Default::default(),
+         },
+     );
+     assert!(!texture.is_null());
+@@ -6099,6 +6120,7 @@ fn a_new_texture_reads_zero_over_a_range_texels_were_written_to() {
+                     array_length: 1,
+                     storage_mode: 0,
+                     usage: gpu::USAGE_SHADER_READ,
++                    swizzle: Default::default(),
+                 },
+             );
+             assert!(!texture.is_null());
+diff --git a/crates/metal/src/tests/depth_stencil.rs b/crates/metal/src/tests/depth_stencil.rs
+index 99a11a89..168533de 100644
+--- a/crates/metal/src/tests/depth_stencil.rs
++++ b/crates/metal/src/tests/depth_stencil.rs
+@@ -35,6 +35,7 @@ fn multisampled_depth_and_stencil_can_use_aliases_of_one_texture() {
+                 array_length: 1,
+                 storage_mode: MTL_STORAGE_MODE_PRIVATE,
+                 usage,
++                swizzle: Default::default(),
+             },
+         )
+     };
+diff --git a/crates/metal/src/tests/texture_threads.rs b/crates/metal/src/tests/texture_threads.rs
+index 34c6d1a4..428938ce 100644
+--- a/crates/metal/src/tests/texture_threads.rs
++++ b/crates/metal/src/tests/texture_threads.rs
+@@ -20,6 +20,7 @@ fn shared_texture_attachments_reuse_views_across_recording_threads() {
+             array_length: 4,
+             storage_mode: 2,
+             usage: gpu::USAGE_RENDER_TARGET,
++            swizzle: Default::default(),
+         },
+     );
+     assert!(!texture.is_null());
+diff --git a/crates/metal/src/tests/viewports.rs b/crates/metal/src/tests/viewports.rs
+index 3b70a725..0ed67c98 100644
+--- a/crates/metal/src/tests/viewports.rs
++++ b/crates/metal/src/tests/viewports.rs
+@@ -26,6 +26,7 @@ fn single_element_viewport_and_scissor_arrays_clip_the_rendered_pixels() {
+                 array_length: 1,
+                 storage_mode: 2,
+                 usage: gpu::USAGE_RENDER_TARGET,
++                swizzle: Default::default(),
+             },
+         );
+         let vertices = new_buffer(device, std::ptr::null(), 48, 0);
+@@ -158,6 +159,7 @@ fn render_indexed_viewports(device: Id, encode: impl FnOnce(Id)) -> Vec<u8> {
+                 array_length: 1,
+                 storage_mode: 2,
+                 usage: gpu::USAGE_RENDER_TARGET,
++                swizzle: Default::default(),
+             },
+         );
+         let vertices = new_buffer(device, std::ptr::null(), 48, 0);
 diff --git a/crates/metal_translate/src/air/metadata/mod.rs b/crates/metal_translate/src/air/metadata/mod.rs
 index 0d385de6..b7569d47 100644
 --- a/crates/metal_translate/src/air/metadata/mod.rs
@@ -7189,9 +7629,22 @@ index 7c27abf6..41dd56a6 100644
  /// out.
  fn launch_dependencies() -> &'static [MappedImage] {
 diff --git a/crates/rosemary/src/frameworks.rs b/crates/rosemary/src/frameworks.rs
-index 6f1297e7..3635fee5 100644
+index 6f1297e7..d2e5422a 100644
 --- a/crates/rosemary/src/frameworks.rs
 +++ b/crates/rosemary/src/frameworks.rs
+@@ -187,9 +187,9 @@ static FRAMEWORKS: &[Framework] = &[
+     Framework {
+         leaf: "AppKit",
+         version: 'C',
+-        // AppKit's crate also implements Quartz, so a `dlopen` of
+-        // CoreGraphics by path has to find these too.
+-        umbrellas: &["Cocoa", "CoreGraphics"],
++        // AppKit's crate also implements Quartz and MetalKit (`MTKView`), so a
++        // `dlopen` of CoreGraphics or MetalKit by path has to find these too.
++        umbrellas: &["Cocoa", "CoreGraphics", "MetalKit"],
+         provide: Some(appkit::provide),
+         data: Some(appkit::data_symbols),
+         symbol: Some(appkit::symbol),
 @@ -501,6 +501,23 @@ static FRAMEWORKS: &[Framework] = &[
              ],
          },
