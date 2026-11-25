@@ -635,10 +635,90 @@ index ef770d50..24e38ba0 100644
          class_methods!(class, {
              "mainBundle" => main_bundle, c"@16@0:8";
 diff --git a/crates/foundation/src/collections.rs b/crates/foundation/src/collections.rs
-index c40a60fa..20d67cf9 100644
+index c40a60fa..4fcb3669 100644
 --- a/crates/foundation/src/collections.rs
 +++ b/crates/foundation/src/collections.rs
-@@ -2143,6 +2143,92 @@ unsafe extern "C" fn data_init_with_base64_string(
+@@ -924,6 +924,79 @@ unsafe extern "C" fn write_to_file(receiver: Id, _sel: Sel, path: Id, atomically
+     write_bytes_to_file(&path, bytes, atomically != 0).is_ok() as u8
+ }
+ 
++/// `-[NSData writeToFile:options:error:]`.
++unsafe extern "C" fn write_to_file_options_error(
++    receiver: Id,
++    _sel: Sel,
++    path: Id,
++    options: u64,
++    error: *mut Id,
++) -> u8 {
++    const NS_DATA_WRITING_ATOMIC: u64 = 1 << 0;
++    const NS_DATA_WRITING_WITHOUT_OVERWRITING: u64 = 1 << 1;
++
++    let set_error = |code: i64, msg: &str| {
++        if !error.is_null() {
++            unsafe {
++                *error = crate::error::make("NSCocoaErrorDomain", code, msg);
++            }
++        }
++    };
++
++    let path_bytes = unsafe { crate::string::bytes(path) };
++    let Ok(path_str) = String::from_utf8(path_bytes) else {
++        set_error(512, "Invalid file path.");
++        return 0;
++    };
++    let Some(bytes) = (unsafe { collections::data(receiver as CFTypeRef) }) else {
++        set_error(512, "Invalid NSData receiver.");
++        return 0;
++    };
++    if (options & NS_DATA_WRITING_WITHOUT_OVERWRITING) != 0
++        && prefix::ns::host_path(&path_str).exists()
++    {
++        set_error(516, "The file already exists.");
++        return 0;
++    }
++    let atomically = (options & NS_DATA_WRITING_ATOMIC) != 0;
++    match write_bytes_to_file(&path_str, bytes, atomically) {
++        Ok(()) => {
++            if !error.is_null() {
++                unsafe { *error = std::ptr::null_mut() };
++            }
++            1
++        }
++        Err(e) => {
++            set_error(512, &e.to_string());
++            0
++        }
++    }
++}
++
++/// `-[NSData writeToURL:atomically:]`.
++unsafe extern "C" fn write_to_url(receiver: Id, sel: Sel, url: Id, atomically: u8) -> u8 {
++    let path = unsafe {
++        let f: unsafe extern "C" fn(Id, Sel) -> Id = std::mem::transmute(objc::msg::entry());
++        f(url, objc::sel::get("path"))
++    };
++    unsafe { write_to_file(receiver, sel, path, atomically) }
++}
++
++/// `-[NSData writeToURL:options:error:]`.
++unsafe extern "C" fn write_to_url_options_error(
++    receiver: Id,
++    sel: Sel,
++    url: Id,
++    options: u64,
++    error: *mut Id,
++) -> u8 {
++    let path = unsafe {
++        let f: unsafe extern "C" fn(Id, Sel) -> Id = std::mem::transmute(objc::msg::entry());
++        f(url, objc::sel::get("path"))
++    };
++    unsafe { write_to_file_options_error(receiver, sel, path, options, error) }
++}
++
+ /// `-[NSArray writeToFile:atomically:]` and `-[NSDictionary ...]`: an XML
+ /// property list, or NO for contents that are not property list types.
+ unsafe extern "C" fn write_plist_to_file(receiver: Id, _sel: Sel, path: Id, atomically: u8) -> u8 {
+@@ -2143,6 +2216,92 @@ unsafe extern "C" fn data_init_with_base64_string(
      }
  }
  
@@ -731,7 +811,13 @@ index c40a60fa..20d67cf9 100644
  unsafe extern "C" fn data_init_with_capacity(receiver: Id, _sel: Sel, capacity: usize) -> Id {
      replace_receiver(receiver, Vec::with_capacity(capacity.min(1 << 24)))
  }
-@@ -3107,6 +3193,11 @@ pub(crate) fn install() {
+@@ -3104,9 +3263,17 @@ pub(crate) fn install() {
+     });
+     methods!(data, {
+         "writeToFile:atomically:" => write_to_file, c"B28@0:8@16c24";
++        "writeToFile:options:error:" => write_to_file_options_error, c"B40@0:8@16Q24^@32";
++        "writeToURL:atomically:" => write_to_url, c"B28@0:8@16c24";
++        "writeToURL:options:error:" => write_to_url_options_error, c"B40@0:8@16Q24^@32";
          "init" => data_init, c"@16@0:8";
          "initWithData:" => data_init_with_data, c"@24@0:8@16";
          "initWithBase64EncodedString:options:" => data_init_with_base64_string, c"@32@0:8@16Q24";
