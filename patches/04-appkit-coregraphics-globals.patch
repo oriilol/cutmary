@@ -1,6 +1,191 @@
+diff --git a/crates/appkit/src/backing.rs b/crates/appkit/src/backing.rs
+index 9f459b6a..70a43f58 100644
+--- a/crates/appkit/src/backing.rs
++++ b/crates/appkit/src/backing.rs
+@@ -4729,10 +4729,116 @@ unsafe extern "C" fn zero(_receiver: Id, _sel: Sel) -> isize {
+     0
+ }
+ 
++struct ColorSpaceState {
++    icc_data: usize,
++    model: isize,
++    components: isize,
++}
++
++static COLOR_SPACES: std::sync::OnceLock<Mutex<HashMap<usize, ColorSpaceState>>> =
++    std::sync::OnceLock::new();
++
++fn color_spaces() -> &'static Mutex<HashMap<usize, ColorSpaceState>> {
++    COLOR_SPACES.get_or_init(|| Mutex::new(HashMap::new()))
++}
++
++fn parse_icc_model_and_components(bytes: &[u8]) -> (isize, isize) {
++    if bytes.len() >= 40 && &bytes[36..40] == b"acsp" {
++        return match &bytes[16..20] {
++            b"GRAY" => (0, 1), // NSColorSpaceModelGray
++            b"RGB " => (1, 3), // NSColorSpaceModelRGB
++            b"CMYK" => (2, 4), // NSColorSpaceModelCMYK
++            b"Lab " => (3, 3), // NSColorSpaceModelLAB
++            _ => (1, 3),
++        };
++    }
++    (1, 3)
++}
++
+ pub(crate) unsafe extern "C" fn shared_color_space(_receiver: Id, _sel: Sel) -> Id {
+     shared_instance(c"NSColorSpace")
+ }
+ 
++/// `-[NSColorSpace initWithICCProfileData:]`: parses the ICC color space model
++/// and retains an immutable copy of the profile bytes (falling back to sRGB if
++/// the caller passes empty or non-CFData input).
++unsafe extern "C" fn color_space_init_with_icc(receiver: Id, _sel: Sel, icc_data: Id) -> Id {
++    if receiver.is_null() {
++        return std::ptr::null_mut();
++    }
++    if icc_data.is_null() {
++        objc::arc::release(receiver);
++        return std::ptr::null_mut();
++    }
++    // SAFETY: `icc_data` is non-null and expected to be an `NSData` / `CFData`.
++    let bytes = unsafe { corefoundation::collections::data(icc_data as *const c_void) }
++        .filter(|b| !b.is_empty())
++        .cloned()
++        .unwrap_or_else(crate::icc::srgb_profile);
++    let (model, components) = parse_icc_model_and_components(&bytes);
++    let owned_data = corefoundation::collections::new_data(bytes) as usize;
++    let prev = color_spaces()
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .insert(
++            receiver as usize,
++            ColorSpaceState {
++                icc_data: owned_data,
++                model,
++                components,
++            },
++        );
++    if let Some(old) = prev {
++        // SAFETY: `old.icc_data` was created by `new_data` above.
++        unsafe { corefoundation::api::CFRelease(old.icc_data as *const c_void) };
++    }
++    receiver
++}
++
++/// `-[NSColorSpace initWithCGColorSpace:]`.
++unsafe extern "C" fn color_space_init_with_cg(
++    receiver: Id,
++    _sel: Sel,
++    cg_space: *const c_void,
++) -> Id {
++    if receiver.is_null() {
++        return std::ptr::null_mut();
++    }
++    if cg_space.is_null() {
++        objc::arc::release(receiver);
++        return std::ptr::null_mut();
++    }
++    let bytes = crate::icc::srgb_profile();
++    let owned_data = corefoundation::collections::new_data(bytes) as usize;
++    let prev = color_spaces()
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .insert(
++            receiver as usize,
++            ColorSpaceState {
++                icc_data: owned_data,
++                model: 1,
++                components: 3,
++            },
++        );
++    if let Some(old) = prev {
++        unsafe { corefoundation::api::CFRelease(old.icc_data as *const c_void) };
++    }
++    receiver
++}
++
++unsafe extern "C" fn color_space_dealloc(receiver: Id, _sel: Sel) {
++    let removed = color_spaces()
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .remove(&(receiver as usize));
++    if let Some(state) = removed {
++        // SAFETY: `state.icc_data` was owned by this entry.
++        unsafe { corefoundation::api::CFRelease(state.icc_data as *const c_void) };
++    }
++    objc::arc::finalize(receiver);
++}
++
+ /// `-[NSColorSpace CGColorSpace]`, which the caller does not own.
+ unsafe extern "C" fn cg_color_space(_receiver: Id, _sel: Sel) -> *const c_void {
+     static SPACE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+@@ -4741,14 +4847,37 @@ unsafe extern "C" fn cg_color_space(_receiver: Id, _sel: Sel) -> *const c_void {
+         as *const c_void
+ }
+ 
+-/// `-[NSColorSpace ICCProfileData]`: the one space's sRGB profile, kept for
+-/// the process like the space itself.
+-unsafe extern "C" fn icc_profile_data(_receiver: Id, _sel: Sel) -> Id {
++/// `-[NSColorSpace ICCProfileData]`: returns the instance's ICC profile data if
++/// initialized with one, otherwise the shared sRGB profile.
++unsafe extern "C" fn icc_profile_data(receiver: Id, _sel: Sel) -> Id {
++    if let Some(state) = color_spaces()
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .get(&(receiver as usize))
++    {
++        return state.icc_data as Id;
++    }
+     static DATA: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+     *DATA.get_or_init(|| corefoundation::collections::new_data(crate::icc::srgb_profile()) as usize)
+         as Id
+ }
+ 
++unsafe extern "C" fn color_space_model(receiver: Id, _sel: Sel) -> isize {
++    color_spaces()
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .get(&(receiver as usize))
++        .map_or(1, |s| s.model)
++}
++
++unsafe extern "C" fn color_space_components(receiver: Id, _sel: Sel) -> isize {
++    color_spaces()
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .get(&(receiver as usize))
++        .map_or(3, |s| s.components)
++}
++
+ pub(crate) fn install() {
+     let view = objc::class::lookup(c"NSView").expect("declared before its methods");
+     methods!(view, {
+@@ -4786,10 +4915,22 @@ pub(crate) fn install() {
+         "sRGBColorSpace" => shared_color_space, c"@16@0:8";
+         "deviceRGBColorSpace" => shared_color_space, c"@16@0:8";
+         "genericRGBColorSpace" => shared_color_space, c"@16@0:8";
++        "extendedSRGBColorSpace" => shared_color_space, c"@16@0:8";
++        "displayP3ColorSpace" => shared_color_space, c"@16@0:8";
++        "adobeRGB1998ColorSpace" => shared_color_space, c"@16@0:8";
++        "genericGrayColorSpace" => shared_color_space, c"@16@0:8";
++        "deviceGrayColorSpace" => shared_color_space, c"@16@0:8";
++        "genericCMYKColorSpace" => shared_color_space, c"@16@0:8";
++        "deviceCMYKColorSpace" => shared_color_space, c"@16@0:8";
+     });
+     methods!(space, {
++        "initWithICCProfileData:" => color_space_init_with_icc, c"@24@0:8@16";
++        "initWithCGColorSpace:" => color_space_init_with_cg, c"@24@0:8^{CGColorSpace=}16";
++        "dealloc" => color_space_dealloc, c"v16@0:8";
+         "CGColorSpace" => cg_color_space, c"^v16@0:8";
+         "ICCProfileData" => icc_profile_data, c"@16@0:8";
++        "colorSpaceModel" => color_space_model, c"q16@0:8";
++        "numberOfColorComponents" => color_space_components, c"q16@0:8";
+     });
+     let window = objc::class::lookup(c"NSWindow").expect("declared");
+     methods!(window, {
 diff --git a/crates/appkit/src/capcut_globals.rs b/crates/appkit/src/capcut_globals.rs
 new file mode 100644
-index 0000000..f589a64
+index 00000000..f589a647
 --- /dev/null
 +++ b/crates/appkit/src/capcut_globals.rs
 @@ -0,0 +1,500 @@
@@ -505,7 +690,7 @@ index 0000000..f589a64
 +    out
 +}
 diff --git a/crates/appkit/src/color.rs b/crates/appkit/src/color.rs
-index 2f1f6db..3ab4e59 100644
+index 2f1f6db1..3ab4e599 100644
 --- a/crates/appkit/src/color.rs
 +++ b/crates/appkit/src/color.rs
 @@ -618,6 +618,80 @@ pub extern "C" fn NSRectFill(rect: NSRect) {
@@ -613,7 +798,7 @@ index 2f1f6db..3ab4e59 100644
      });
      methods!(class, {
 diff --git a/crates/appkit/src/graphics.rs b/crates/appkit/src/graphics.rs
-index 77c23d3..223535f 100644
+index 77c23d3c..223535f9 100644
 --- a/crates/appkit/src/graphics.rs
 +++ b/crates/appkit/src/graphics.rs
 @@ -783,6 +783,308 @@ pub unsafe extern "C" fn CGColorSpaceRelease(space: CFTypeRef) {
@@ -926,7 +1111,7 @@ index 77c23d3..223535f 100644
  mod tests {
      use super::*;
 diff --git a/crates/appkit/src/launchservices.rs b/crates/appkit/src/launchservices.rs
-index 81cb1bc..c10107d 100644
+index 81cb1bc6..c10107d1 100644
 --- a/crates/appkit/src/launchservices.rs
 +++ b/crates/appkit/src/launchservices.rs
 @@ -348,6 +348,16 @@ pub unsafe extern "C" fn LSOpenFromURLSpec(
@@ -955,7 +1140,7 @@ index 81cb1bc..c10107d 100644
          "LSOpenFromURLSpec" => LSOpenFromURLSpec,
      }
 diff --git a/crates/appkit/src/lib.rs b/crates/appkit/src/lib.rs
-index a4137b4..084b3c5 100644
+index a4137b46..084b3c5e 100644
 --- a/crates/appkit/src/lib.rs
 +++ b/crates/appkit/src/lib.rs
 @@ -258,6 +258,40 @@ exports::exports! {
@@ -1058,7 +1243,7 @@ index a4137b4..084b3c5 100644
          "_kCGDisplayShowDuplicateLowResolutionModes",
          "kCGDisplayShowDuplicateLowResolutionModes",
 diff --git a/crates/appkit/src/workspace.rs b/crates/appkit/src/workspace.rs
-index f5fe44f..38554e1 100644
+index f5fe44f7..38554e1b 100644
 --- a/crates/appkit/src/workspace.rs
 +++ b/crates/appkit/src/workspace.rs
 @@ -567,10 +567,17 @@ pub(crate) fn install() {
@@ -1080,7 +1265,7 @@ index f5fe44f..38554e1 100644
          "launchApplicationAtURL:options:configuration:error:" => launch_application,
              c"@48@0:8@16Q24@32^@40";
 diff --git a/crates/rosemary/src/fault.rs b/crates/rosemary/src/fault.rs
-index 8d6b8e8..95a0de5 100644
+index 8d6b8e84..95a0de52 100644
 --- a/crates/rosemary/src/fault.rs
 +++ b/crates/rosemary/src/fault.rs
 @@ -630,6 +630,9 @@ extern "C" fn report(signal: i32, info: *mut libc::siginfo_t, context: *mut libc
