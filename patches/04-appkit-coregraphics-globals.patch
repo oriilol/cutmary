@@ -1,3 +1,19 @@
+diff --git a/crates/appkit/Cargo.toml b/crates/appkit/Cargo.toml
+index 89bdaa43..dae6b672 100644
+--- a/crates/appkit/Cargo.toml
++++ b/crates/appkit/Cargo.toml
+@@ -21,10 +21,10 @@ iosurface.workspace = true
+ static_init.workspace = true
+ owned_ttf_parser.workspace = true
+ tiny-skia.workspace = true
++libc.workspace = true
+ 
+ [dev-dependencies]
+ sdl3 = { workspace = true, features = ["test-support"] }
+-libc.workspace = true
+ 
+ [lints]
+ workspace = true
 diff --git a/crates/appkit/src/backing.rs b/crates/appkit/src/backing.rs
 index 9f459b6a..26746c61 100644
 --- a/crates/appkit/src/backing.rs
@@ -237,10 +253,10 @@ index 9f459b6a..26746c61 100644
      methods!(window, {
 diff --git a/crates/appkit/src/capcut_globals.rs b/crates/appkit/src/capcut_globals.rs
 new file mode 100644
-index 00000000..f589a647
+index 00000000..08f36cae
 --- /dev/null
 +++ b/crates/appkit/src/capcut_globals.rs
-@@ -0,0 +1,500 @@
+@@ -0,0 +1,507 @@
 +//! Additional Apple framework constant globals needed by CEF and CapCut.
 +
 +pub const STRING_GLOBALS: &[(&str, &str)] = &[
@@ -450,31 +466,37 @@ index 00000000..f589a647
 +    ("_kCGDisplayStreamPreserveAspectRatio", "kCGDisplayStreamPreserveAspectRatio"),
 +    ("_kCGDisplayStreamShowCursor", "kCGDisplayStreamShowCursor"),
 +    ("_kCGImageDestinationLossyCompressionQuality", "kCGImageDestinationLossyCompressionQuality"),
-+    ("_kCGImagePropertyDPIHeight", "kCGImagePropertyDPIHeight"),
-+    ("_kCGImagePropertyDPIWidth", "kCGImagePropertyDPIWidth"),
-+    ("_kCGImagePropertyDepth", "kCGImagePropertyDepth"),
-+    ("_kCGImagePropertyExifDateTimeOriginal", "kCGImagePropertyExifDateTimeOriginal"),
-+    ("_kCGImagePropertyExifDictionary", "kCGImagePropertyExifDictionary"),
-+    ("_kCGImagePropertyExifUserComment", "kCGImagePropertyExifUserComment"),
-+    ("_kCGImagePropertyGIFDelayTime", "kCGImagePropertyGIFDelayTime"),
-+    ("_kCGImagePropertyGIFDictionary", "kCGImagePropertyGIFDictionary"),
-+    ("_kCGImagePropertyGIFHasGlobalColorMap", "kCGImagePropertyGIFHasGlobalColorMap"),
-+    ("_kCGImagePropertyGIFLoopCount", "kCGImagePropertyGIFLoopCount"),
-+    ("_kCGImagePropertyGIFUnclampedDelayTime", "kCGImagePropertyGIFUnclampedDelayTime"),
-+    ("_kCGImagePropertyGPSDictionary", "kCGImagePropertyGPSDictionary"),
-+    ("_kCGImagePropertyGPSLatitude", "kCGImagePropertyGPSLatitude"),
-+    ("_kCGImagePropertyGPSLatitudeRef", "kCGImagePropertyGPSLatitudeRef"),
-+    ("_kCGImagePropertyGPSLongitude", "kCGImagePropertyGPSLongitude"),
-+    ("_kCGImagePropertyGPSLongitudeRef", "kCGImagePropertyGPSLongitudeRef"),
-+    ("_kCGImagePropertyHasAlpha", "kCGImagePropertyHasAlpha"),
-+    ("_kCGImagePropertyOrientation", "kCGImagePropertyOrientation"),
-+    ("_kCGImagePropertyPixelHeight", "kCGImagePropertyPixelHeight"),
-+    ("_kCGImagePropertyPixelWidth", "kCGImagePropertyPixelWidth"),
-+    ("_kCGImagePropertyTIFFDateTime", "kCGImagePropertyTIFFDateTime"),
-+    ("_kCGImagePropertyTIFFDictionary", "kCGImagePropertyTIFFDictionary"),
++    ("_kCGImagePropertyDPIHeight", "DPIHeight"),
++    ("_kCGImagePropertyDPIWidth", "DPIWidth"),
++    ("_kCGImagePropertyDepth", "Depth"),
++    ("_kCGImagePropertyExifDateTimeOriginal", "DateTimeOriginal"),
++    ("_kCGImagePropertyExifDictionary", "{Exif}"),
++    ("_kCGImagePropertyExifUserComment", "UserComment"),
++    ("_kCGImagePropertyGIFCanvasPixelHeight", "CanvasPixelHeight"),
++    ("_kCGImagePropertyGIFCanvasPixelWidth", "CanvasPixelWidth"),
++    ("_kCGImagePropertyGIFDelayTime", "DelayTime"),
++    ("_kCGImagePropertyGIFDictionary", "{GIF}"),
++    ("_kCGImagePropertyGIFHasGlobalColorMap", "HasGlobalColorMap"),
++    ("_kCGImagePropertyGIFLoopCount", "LoopCount"),
++    ("_kCGImagePropertyGIFUnclampedDelayTime", "UnclampedDelayTime"),
++    ("_kCGImagePropertyGPSDictionary", "{GPS}"),
++    ("_kCGImagePropertyGPSLatitude", "Latitude"),
++    ("_kCGImagePropertyGPSLatitudeRef", "LatitudeRef"),
++    ("_kCGImagePropertyGPSLongitude", "Longitude"),
++    ("_kCGImagePropertyGPSLongitudeRef", "LongitudeRef"),
++    ("_kCGImagePropertyHasAlpha", "HasAlpha"),
++    ("_kCGImagePropertyOrientation", "Orientation"),
++    ("_kCGImagePropertyPixelHeight", "PixelHeight"),
++    ("_kCGImagePropertyPixelWidth", "PixelWidth"),
++    ("_kCGImagePropertyTIFFDateTime", "DateTime"),
++    ("_kCGImagePropertyTIFFDictionary", "{TIFF}"),
++    ("_kCGImagePropertyWebPDelayTime", "DelayTime"),
++    ("_kCGImagePropertyWebPDictionary", "{WebP}"),
++    ("_kCGImagePropertyWebPUnclampedDelayTime", "UnclampedDelayTime"),
 +    ("_kCGImageSourceCreateThumbnailFromImageAlways", "kCGImageSourceCreateThumbnailFromImageAlways"),
 +    ("_kCGImageSourceCreateThumbnailWithTransform", "kCGImageSourceCreateThumbnailWithTransform"),
 +    ("_kCGImageSourceThumbnailMaxPixelSize", "kCGImageSourceThumbnailMaxPixelSize"),
++    ("_kCGImageSourceTypeIdentifierHint", "kCGImageSourceTypeIdentifierHint"),
 +    ("_kCIAttributeClass", "kCIAttributeClass"),
 +    ("_kCIAttributeDefault", "kCIAttributeDefault"),
 +    ("_kCIAttributeSliderMax", "kCIAttributeSliderMax"),
@@ -517,6 +539,7 @@ index 00000000..f589a647
 +    ("_kCVImageBufferColorPrimaries_P3_D65", "kCVImageBufferColorPrimaries_P3_D65"),
 +    ("_kCVImageBufferContentLightLevelInfoKey", "kCVImageBufferContentLightLevelInfoKey"),
 +    ("_kCVImageBufferGammaLevelKey", "kCVImageBufferGammaLevelKey"),
++    ("_kQLThumbnailOptionIconModeKey", "IconMode"),
 +    ("_kCVImageBufferMasteringDisplayColorVolumeKey", "kCVImageBufferMasteringDisplayColorVolumeKey"),
 +    ("_kCVImageBufferTransferFunction_ITU_R_2100_HLG", "kCVImageBufferTransferFunction_ITU_R_2100_HLG"),
 +    ("_kCVImageBufferTransferFunction_Linear", "kCVImageBufferTransferFunction_Linear"),
@@ -607,17 +630,17 @@ index 00000000..f589a647
 +    ("_kSecPrivateKeyAttrs", "kSecPrivateKeyAttrs"),
 +    ("_kSecUseAuthenticationContext", "kSecUseAuthenticationContext"),
 +    ("_kSecValueRef", "kSecValueRef"),
-+    ("_kUTTypeApplication", "kUTTypeApplication"),
-+    ("_kUTTypeBMP", "kUTTypeBMP"),
-+    ("_kUTTypeBundle", "kUTTypeBundle"),
-+    ("_kUTTypeContent", "kUTTypeContent"),
-+    ("_kUTTypeGIF", "kUTTypeGIF"),
-+    ("_kUTTypeHTML", "kUTTypeHTML"),
-+    ("_kUTTypeICO", "kUTTypeICO"),
-+    ("_kUTTypeInternetLocation", "kUTTypeInternetLocation"),
-+    ("_kUTTypeJPEG", "kUTTypeJPEG"),
-+    ("_kUTTypeScalableVectorGraphics", "kUTTypeScalableVectorGraphics"),
-+    ("_kUTTypeTIFF", "kUTTypeTIFF"),
++    ("_kUTTypeApplication", "com.apple.application"),
++    ("_kUTTypeBMP", "com.microsoft.bmp"),
++    ("_kUTTypeBundle", "com.apple.bundle"),
++    ("_kUTTypeContent", "public.content"),
++    ("_kUTTypeGIF", "com.compuserve.gif"),
++    ("_kUTTypeHTML", "public.html"),
++    ("_kUTTypeICO", "com.microsoft.ico"),
++    ("_kUTTypeInternetLocation", "com.apple.internet-location"),
++    ("_kUTTypeJPEG", "public.jpeg"),
++    ("_kUTTypeScalableVectorGraphics", "public.svg-image"),
++    ("_kUTTypeTIFF", "public.tiff"),
 +    ("_kVTCompressionPropertyKey_ColorPrimaries", "kVTCompressionPropertyKey_ColorPrimaries"),
 +    ("_kVTCompressionPropertyKey_DataRateLimits", "kVTCompressionPropertyKey_DataRateLimits"),
 +    ("_kVTCompressionPropertyKey_EncoderID", "kVTCompressionPropertyKey_EncoderID"),
@@ -945,10 +968,439 @@ index 54e4cb04..021d34c3 100644
          "contents" => contents, c"@16@0:8";
          "setContents:" => set_contents, c"v24@0:8@16";
 diff --git a/crates/appkit/src/graphics.rs b/crates/appkit/src/graphics.rs
-index 77c23d3c..223535f9 100644
+index 77c23d3c..c23fab39 100644
 --- a/crates/appkit/src/graphics.rs
 +++ b/crates/appkit/src/graphics.rs
-@@ -783,6 +783,308 @@ pub unsafe extern "C" fn CGColorSpaceRelease(space: CFTypeRef) {
+@@ -54,6 +54,18 @@ struct ImageSource {
+     data: CFTypeRef,
+ }
+ 
++/// An ImageIO destination that encodes added `CGImage`s to PNG, JPEG, or TIFF
++/// and writes them to either a `CFMutableData` or a guest file URL on finalize.
++#[repr(C)]
++struct ImageDestination {
++    isa: *const c_void,
++    target_data: CFTypeRef,
++    target_url: CFTypeRef,
++    uti: CFTypeRef,
++    image: CFTypeRef,
++    quality: f64,
++}
++
+ pub fn install() {
+     let space =
+         corefoundation::base::register(c"__CGColorSpace", None, size_of::<ColorSpace>(), true);
+@@ -82,6 +94,17 @@ pub fn install() {
+         image_source_dealloc as *const c_void,
+         c"v16@0:8",
+     );
++    let destination = corefoundation::base::register(
++        c"__CGImageDestination",
++        None,
++        size_of::<ImageDestination>(),
++        true,
++    );
++    destination.replace_method(
++        objc::sel::get("dealloc"),
++        image_destination_dealloc as *const c_void,
++        c"v16@0:8",
++    );
+ }
+ 
+ /// Hands the bytes back to their owner, which is how Qt learns that the
+@@ -134,6 +157,39 @@ unsafe extern "C" fn image_source_dealloc(receiver: objc::object::Id, _sel: objc
+     }
+ }
+ 
++unsafe extern "C" fn image_destination_dealloc(receiver: objc::object::Id, _sel: objc::sel::Sel) {
++    // SAFETY: `-dealloc` of a `__CGImageDestination`, whose body is `ImageDestination`.
++    unsafe {
++        let dst = &mut *(receiver as *mut ImageDestination);
++        for slot in [
++            &mut dst.target_data,
++            &mut dst.target_url,
++            &mut dst.uti,
++            &mut dst.image,
++        ] {
++            let obj = std::mem::replace(slot, std::ptr::null());
++            if !obj.is_null() {
++                corefoundation::api::CFRelease(obj);
++            }
++        }
++        objc::arc::finalize(receiver);
++    }
++}
++
++/// Makes an ImageIO source over a `CGDataProviderRef`.
++pub unsafe extern "C" fn CGImageSourceCreateWithDataProvider(
++    provider: CFTypeRef,
++    options: CFTypeRef,
++) -> CFTypeRef {
++    let Some(bytes) = provider_bytes(provider) else {
++        return std::ptr::null();
++    };
++    let data = corefoundation::collections::new_data(bytes.to_vec());
++    let source = unsafe { CGImageSourceCreateWithData(data, options) };
++    unsafe { corefoundation::api::CFRelease(data) };
++    source
++}
++
+ /// Makes an ImageIO source over encoded image data.
+ pub unsafe extern "C" fn CGImageSourceCreateWithData(
+     data: CFTypeRef,
+@@ -174,25 +230,331 @@ pub unsafe extern "C" fn CGImageSourceCopyTypeIdentifiers() -> CFTypeRef {
+     array
+ }
+ 
+-/// `CFArrayRef CGImageDestinationCopyTypeIdentifiers(void)`: empty, because
+-/// there is no encoder here - see [`CGImageDestinationCreateWithData`].
++/// `CFArrayRef CGImageDestinationCopyTypeIdentifiers(void)`: the formats
++/// [`CGImageDestinationFinalize`] can encode.
+ pub unsafe extern "C" fn CGImageDestinationCopyTypeIdentifiers() -> CFTypeRef {
+-    corefoundation::collections::new_array(
+-        &[],
++    let identifiers: Vec<CFTypeRef> = ["public.png", "public.jpeg", "public.tiff"]
++        .iter()
++        .map(|identifier| corefoundation::string::from_bytes(identifier.as_bytes(), false))
++        .collect();
++    let array = corefoundation::collections::new_array(
++        &identifiers,
+         corefoundation::callbacks::Policy::from_type_callbacks(),
+         false,
+-    )
++    );
++    for identifier in identifiers {
++        unsafe { corefoundation::api::CFRelease(identifier) };
++    }
++    array
++}
++
++fn destination_of<'a>(dst: CFTypeRef) -> Option<&'a mut ImageDestination> {
++    let class = objc::class::lookup(c"__CGImageDestination")?;
++    if dst.is_null() || !unsafe { corefoundation::base::is_kind_of(dst, class) } {
++        return None;
++    }
++    Some(unsafe { &mut *(dst as *mut ImageDestination) })
++}
++
++fn make_destination(target_data: CFTypeRef, target_url: CFTypeRef, uti: CFTypeRef) -> CFTypeRef {
++    let class = objc::class::lookup(c"__CGImageDestination").expect("installed during bootstrap");
++    let dst = unsafe { corefoundation::base::allocate::<ImageDestination>(class) };
++    unsafe {
++        (*dst).target_data = if target_data.is_null() {
++            std::ptr::null()
++        } else {
++            corefoundation::api::CFRetain(target_data)
++        };
++        (*dst).target_url = if target_url.is_null() {
++            std::ptr::null()
++        } else {
++            corefoundation::api::CFRetain(target_url)
++        };
++        (*dst).uti = if uti.is_null() {
++            std::ptr::null()
++        } else {
++            corefoundation::api::CFRetain(uti)
++        };
++        (*dst).image = std::ptr::null();
++        (*dst).quality = 0.85;
++    }
++    dst as CFTypeRef
+ }
+ 
+-/// `CGImageDestinationRef CGImageDestinationCreateWithData(CFMutableDataRef,
+-/// CFStringRef type, size_t count, CFDictionaryRef options)`, and its
+-/// data-consumer spelling: null, the documented failure, for every type, as
+-/// [`CGImageDestinationCopyTypeIdentifiers`] lists none.
+ pub unsafe extern "C" fn CGImageDestinationCreateWithData(
+-    _data: CFTypeRef,
+-    _type: CFTypeRef,
++    data: CFTypeRef,
++    uti: CFTypeRef,
++    _count: usize,
++    _options: CFTypeRef,
++) -> CFTypeRef {
++    if data.is_null() {
++        return std::ptr::null();
++    }
++    make_destination(data, std::ptr::null(), uti)
++}
++
++pub unsafe extern "C" fn CGImageDestinationCreateWithURL(
++    url: CFTypeRef,
++    uti: CFTypeRef,
+     _count: usize,
+     _options: CFTypeRef,
++) -> CFTypeRef {
++    if url.is_null() {
++        return std::ptr::null();
++    }
++    make_destination(std::ptr::null(), url, uti)
++}
++
++pub unsafe extern "C" fn CGImageDestinationAddImage(
++    dst: CFTypeRef,
++    image: CFTypeRef,
++    _properties: CFTypeRef,
++) {
++    let Some(dst) = destination_of(dst) else {
++        return;
++    };
++    if image.is_null() {
++        return;
++    }
++    let old = std::mem::replace(&mut dst.image, unsafe {
++        corefoundation::api::CFRetain(image)
++    });
++    if !old.is_null() {
++        unsafe { corefoundation::api::CFRelease(old) };
++    }
++}
++
++pub unsafe extern "C" fn CGImageDestinationAddImageFromSource(
++    dst: CFTypeRef,
++    isrc: CFTypeRef,
++    index: usize,
++    properties: CFTypeRef,
++) {
++    let image = unsafe { CGImageSourceCreateImageAtIndex(isrc, index, properties) };
++    if !image.is_null() {
++        unsafe { CGImageDestinationAddImage(dst, image, properties) };
++        unsafe { CGImageRelease(image) };
++    }
++}
++
++pub unsafe extern "C" fn CGImageDestinationSetProperties(
++    _dst: CFTypeRef,
++    _properties: CFTypeRef,
++) {
++}
++
++pub unsafe extern "C" fn CGImageDestinationFinalize(dst: CFTypeRef) -> u8 {
++    let Some(dst) = destination_of(dst) else {
++        return 0;
++    };
++    let Some((width, height, bgra)) = image_bgra(dst.image) else {
++        return 0;
++    };
++    // Convert premultiplied BGRA to straight RGBA for encoders.
++    let mut rgba = Vec::with_capacity(width * height * 4);
++    for px in bgra.chunks_exact(4) {
++        let (b, g, r, a) = (px[0], px[1], px[2], px[3]);
++        if a == 0 || a == 255 {
++            rgba.extend_from_slice(&[r, g, b, a]);
++        } else {
++            let un = |c: u8| ((u16::from(c) * 255 + u16::from(a) / 2) / u16::from(a)).min(255) as u8;
++            rgba.extend_from_slice(&[un(r), un(g), un(b), a]);
++        }
++    }
++    let bitmap = crate::raster::Bitmap {
++        width: width as u32,
++        height: height as u32,
++        pixels: rgba,
++    };
++    let uti = if dst.uti.is_null() {
++        String::new()
++    } else {
++        String::from_utf8_lossy(&unsafe { foundation::string::bytes(dst.uti as _) })
++            .to_ascii_lowercase()
++    };
++    let encoded = if uti.contains("jpeg") || uti.contains("jpg") {
++        crate::raster::encode_jpeg(&bitmap, (dst.quality * 100.0).round() as i32)
++            .unwrap_or_else(|| crate::raster::encode_png(&bitmap))
++    } else if uti.contains("tiff") {
++        crate::raster::encode_tiff(&bitmap)
++    } else {
++        crate::raster::encode_png(&bitmap)
++    };
++    if !dst.target_data.is_null() {
++        unsafe {
++            corefoundation::api::CFDataAppendBytes(
++                dst.target_data,
++                encoded.as_ptr(),
++                encoded.len() as isize,
++            );
++        }
++        return 1;
++    }
++    if !dst.target_url.is_null() {
++        let Some(path) =
++            (unsafe { corefoundation::url::as_url(dst.target_url) }).and_then(|u| u.file_path())
++        else {
++            return 0;
++        };
++        let host = prefix::ns::host_path(&path);
++        if let Some(parent) = host.parent() {
++            let _ = std::fs::create_dir_all(parent);
++        }
++        return u8::from(std::fs::write(host, &encoded).is_ok());
++    }
++    0
++}
++
++unsafe fn image_source_bytes<'a>(source: CFTypeRef) -> Option<&'a [u8]> {
++    let class = objc::class::lookup(c"__CGImageSource")?;
++    if source.is_null() || !unsafe { corefoundation::base::is_kind_of(source, class) } {
++        return None;
++    }
++    let data = unsafe { (*(source as *const ImageSource)).data };
++    let length = usize::try_from(unsafe { corefoundation::api::CFDataGetLength(data) }).ok()?;
++    let bytes = unsafe { corefoundation::api::CFDataGetBytePtr(data) };
++    if bytes.is_null() {
++        return None;
++    }
++    Some(unsafe { std::slice::from_raw_parts(bytes, length) })
++}
++
++pub unsafe extern "C" fn CGImageSourceGetStatus(source: CFTypeRef) -> i32 {
++    match unsafe { image_source_bytes(source) } {
++        Some(bytes) if !bytes.is_empty() => 0, // kCGImageStatusComplete
++        _ => -3,                               // kCGImageStatusUnknownType
++    }
++}
++
++pub unsafe extern "C" fn CGImageSourceGetStatusAtIndex(source: CFTypeRef, index: usize) -> i32 {
++    if index != 0 {
++        return -5; // kCGImageStatusInvalidData
++    }
++    unsafe { CGImageSourceGetStatus(source) }
++}
++
++pub unsafe extern "C" fn CGImageSourceGetCount(source: CFTypeRef) -> usize {
++    let Some(bytes) = (unsafe { image_source_bytes(source) }) else {
++        return 0;
++    };
++    usize::from(crate::raster::decode(bytes).is_some())
++}
++
++pub unsafe extern "C" fn CGImageSourceGetType(source: CFTypeRef) -> CFTypeRef {
++    let Some(bytes) = (unsafe { image_source_bytes(source) }) else {
++        return std::ptr::null();
++    };
++    let uti: Option<&str> = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
++        Some("public.png")
++    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
++        Some("public.jpeg")
++    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
++        Some("com.compuserve.gif")
++    } else if bytes.starts_with(b"BM") {
++        Some("com.microsoft.bmp")
++    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
++        Some("org.webmproject.webp")
++    } else if bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*") {
++        Some("public.tiff")
++    } else {
++        None
++    };
++    match uti {
++        Some(name) => foundation::notification::name_object(name) as CFTypeRef,
++        None => std::ptr::null(),
++    }
++}
++
++pub unsafe extern "C" fn CGImageSourceCreateThumbnailAtIndex(
++    source: CFTypeRef,
++    index: usize,
++    options: CFTypeRef,
++) -> CFTypeRef {
++    unsafe { CGImageSourceCreateImageAtIndex(source, index, options) }
++}
++
++pub unsafe extern "C" fn CGImageSourceCopyProperties(
++    source: CFTypeRef,
++    _options: CFTypeRef,
++) -> CFTypeRef {
++    if unsafe { image_source_bytes(source) }.is_none() {
++        return std::ptr::null();
++    }
++    corefoundation::collections::new_dictionary(
++        &[],
++        corefoundation::callbacks::Policy::from_key_callbacks(),
++        corefoundation::callbacks::Policy::from_type_callbacks(),
++        false,
++    )
++}
++
++pub unsafe extern "C" fn CGImageSourceCopyPropertiesAtIndex(
++    source: CFTypeRef,
++    index: usize,
++    _options: CFTypeRef,
++) -> CFTypeRef {
++    if index != 0 {
++        return std::ptr::null();
++    }
++    let Some(bytes) = (unsafe { image_source_bytes(source) }) else {
++        return std::ptr::null();
++    };
++    let mut entries: Vec<(CFTypeRef, CFTypeRef)> = Vec::new();
++    let mut owned: Vec<CFTypeRef> = Vec::new();
++    if let Some(bitmap) = crate::raster::decode(bytes) {
++        let kw = corefoundation::string::from_bytes(b"PixelWidth", false);
++        let vw = corefoundation::collections::new_number(
++            corefoundation::collections::Number::Integer(bitmap.width as i64),
++        );
++        let kh = corefoundation::string::from_bytes(b"PixelHeight", false);
++        let vh = corefoundation::collections::new_number(
++            corefoundation::collections::Number::Integer(bitmap.height as i64),
++        );
++        let ko = corefoundation::string::from_bytes(b"Orientation", false);
++        let vo = corefoundation::collections::new_number(
++            corefoundation::collections::Number::Integer(1),
++        );
++        let kd = corefoundation::string::from_bytes(b"Depth", false);
++        let vd = corefoundation::collections::new_number(
++            corefoundation::collections::Number::Integer(8),
++        );
++        let kdw = corefoundation::string::from_bytes(b"DPIWidth", false);
++        let vdw = corefoundation::collections::new_number(
++            corefoundation::collections::Number::Integer(72),
++        );
++        let kdh = corefoundation::string::from_bytes(b"DPIHeight", false);
++        let vdh = corefoundation::collections::new_number(
++            corefoundation::collections::Number::Integer(72),
++        );
++        let kha = corefoundation::string::from_bytes(b"HasAlpha", false);
++        let vha = corefoundation::collections::boolean(true);
++        entries.extend([
++            (kw, vw),
++            (kh, vh),
++            (ko, vo),
++            (kd, vd),
++            (kdw, vdw),
++            (kdh, vdh),
++            (kha, vha),
++        ]);
++        owned.extend([kw, vw, kh, vh, ko, vo, kd, vd, kdw, vdw, kdh, vdh, kha]);
++    }
++    let dict = corefoundation::collections::new_dictionary(
++        &entries,
++        corefoundation::callbacks::Policy::from_key_callbacks(),
++        corefoundation::callbacks::Policy::from_type_callbacks(),
++        false,
++    );
++    for obj in owned {
++        unsafe { corefoundation::api::CFRelease(obj) };
++    }
++    dict
++}
++
++pub unsafe extern "C" fn CGImageSourceCopyMetadataAtIndex(
++    _source: CFTypeRef,
++    _index: usize,
++    _options: CFTypeRef,
+ ) -> CFTypeRef {
+     std::ptr::null()
+ }
+@@ -227,7 +589,7 @@ pub unsafe extern "C" fn CGImageSourceCreateImageAtIndex(
+ 
+ /// The bytes a data provider of this runtime's serves, or `None` for anything
+ /// else.
+-pub(crate) fn provider_bytes(provider: CFTypeRef) -> Option<&'static [u8]> {
++pub fn provider_bytes(provider: CFTypeRef) -> Option<&'static [u8]> {
+     let class = objc::class::lookup(c"__CGDataProvider")?;
+     // SAFETY: null or an object this runtime allocated; type-checked.
+     if !unsafe { corefoundation::base::is_kind_of(provider, class) } {
+@@ -783,6 +1145,308 @@ pub unsafe extern "C" fn CGColorSpaceRelease(space: CFTypeRef) {
      }
  }
  
@@ -1257,6 +1709,65 @@ index 77c23d3c..223535f9 100644
  #[cfg(test)]
  mod tests {
      use super::*;
+@@ -864,4 +1528,58 @@ mod tests {
+             assert_eq!(RELEASED.load(std::sync::atomic::Ordering::SeqCst), 8);
+         }
+     }
++
++    #[test]
++    fn image_destination_and_source_roundtrip_png_and_jpeg() {
++        crate::bootstrap();
++        let bitmap = crate::raster::Bitmap {
++            width: 4,
++            height: 3,
++            pixels: vec![0x80, 0x40, 0xc0, 0xff].repeat(12),
++        };
++        for uti in [b"public.png".as_slice(), b"public.jpeg".as_slice()] {
++            unsafe {
++                let image = image_from_bitmap(bitmap.clone());
++                assert!(!image.is_null());
++                let out = corefoundation::api::CFDataCreateMutable(std::ptr::null(), 0);
++                let kind = corefoundation::string::from_bytes(uti, false);
++                let dst = CGImageDestinationCreateWithData(out, kind, 1, std::ptr::null());
++                assert!(!dst.is_null());
++                CGImageDestinationAddImage(dst, image, std::ptr::null());
++                assert_eq!(CGImageDestinationFinalize(dst), 1);
++                assert!(corefoundation::api::CFDataGetLength(out) > 0);
++
++                let src = CGImageSourceCreateWithData(out, std::ptr::null());
++                assert!(!src.is_null());
++                assert_eq!(CGImageSourceGetStatus(src), 0);
++                assert_eq!(CGImageSourceGetCount(src), 1);
++                let props = CGImageSourceCopyPropertiesAtIndex(src, 0, std::ptr::null());
++                assert!(!props.is_null());
++                let kw = corefoundation::string::from_bytes(b"PixelWidth", false);
++                let vw = corefoundation::api::CFDictionaryGetValue(props, kw);
++                assert!(!vw.is_null());
++                let mut width: i64 = 0;
++                assert_ne!(
++                    corefoundation::api::CFNumberGetValue(
++                        vw,
++                        4, // kCFNumberSInt64Type
++                        (&mut width as *mut i64).cast()
++                    ),
++                    0
++                );
++                assert_eq!(width, 4);
++                let decoded = CGImageSourceCreateImageAtIndex(src, 0, std::ptr::null());
++                assert_eq!((CGImageGetWidth(decoded), CGImageGetHeight(decoded)), (4, 3));
++
++                CGImageRelease(decoded);
++                corefoundation::api::CFRelease(kw);
++                corefoundation::api::CFRelease(props);
++                corefoundation::api::CFRelease(src);
++                corefoundation::api::CFRelease(dst);
++                corefoundation::api::CFRelease(kind);
++                corefoundation::api::CFRelease(out);
++                CGImageRelease(image);
++            }
++        }
++    }
+ }
 diff --git a/crates/appkit/src/launchservices.rs b/crates/appkit/src/launchservices.rs
 index 81cb1bc6..c10107d1 100644
 --- a/crates/appkit/src/launchservices.rs
@@ -1287,10 +1798,26 @@ index 81cb1bc6..c10107d1 100644
          "LSOpenFromURLSpec" => LSOpenFromURLSpec,
      }
 diff --git a/crates/appkit/src/lib.rs b/crates/appkit/src/lib.rs
-index a4137b46..084b3c5e 100644
+index a4137b46..a052c984 100644
 --- a/crates/appkit/src/lib.rs
 +++ b/crates/appkit/src/lib.rs
-@@ -258,6 +258,40 @@ exports::exports! {
+@@ -72,6 +72,7 @@ pub mod nib;
+ pub mod nsevent;
+ pub mod opengl;
+ pub mod panel;
++mod quicklook;
+ mod paragraph;
+ pub mod pasteboard;
+ mod pasteboard_manager;
+@@ -169,6 +170,7 @@ pub fn bootstrap() {
+ 
+ exports::exports! {
+     functions {
++        "QLThumbnailImageCreate" => quicklook::QLThumbnailImageCreate,
+         "NSApplicationMain" => application::NSApplicationMain,
+         "NSApplicationLoad" => application::NSApplicationLoad,
+         "CAFrameRateRangeMake" => displaylink::CAFrameRateRangeMake,
+@@ -258,6 +260,40 @@ exports::exports! {
          "CGColorSpaceCreatePattern" => graphics::CGColorSpaceCreatePattern,
          "CGColorSpaceGetNumberOfComponents" => graphics::CGColorSpaceGetNumberOfComponents,
          "CGColorSpaceRelease" => graphics::CGColorSpaceRelease,
@@ -1331,7 +1858,33 @@ index a4137b46..084b3c5e 100644
          "CGColorSpaceGetName" => graphics::CGColorSpaceGetName,
          "CGColorSpaceCopyName" => graphics::CGColorSpaceCopyName,
          "CGColorSpaceCopyPropertyList" => graphics::CGColorSpaceCopyPropertyList,
-@@ -378,10 +412,19 @@ pub fn ns_app_cell() -> u64 {
+@@ -276,11 +312,25 @@ exports::exports! {
+         "CGImageGetAlphaInfo" => graphics::CGImageGetAlphaInfo,
+         "CGImageGetColorSpace" => graphics::CGImageGetColorSpace,
+         "CGImageSourceCreateWithData" => graphics::CGImageSourceCreateWithData,
++        "CGImageSourceCreateWithDataProvider" => graphics::CGImageSourceCreateWithDataProvider,
+         "CGImageSourceCopyTypeIdentifiers" => graphics::CGImageSourceCopyTypeIdentifiers,
+         "CGImageDestinationCopyTypeIdentifiers" => graphics::CGImageDestinationCopyTypeIdentifiers,
+         "CGImageDestinationCreateWithData" => graphics::CGImageDestinationCreateWithData,
+         "CGImageDestinationCreateWithDataConsumer" => graphics::CGImageDestinationCreateWithData,
++        "CGImageDestinationCreateWithURL" => graphics::CGImageDestinationCreateWithURL,
++        "CGImageDestinationAddImage" => graphics::CGImageDestinationAddImage,
++        "CGImageDestinationAddImageFromSource" => graphics::CGImageDestinationAddImageFromSource,
++        "CGImageDestinationSetProperties" => graphics::CGImageDestinationSetProperties,
++        "CGImageDestinationFinalize" => graphics::CGImageDestinationFinalize,
+         "CGImageSourceCreateImageAtIndex" => graphics::CGImageSourceCreateImageAtIndex,
++        "CGImageSourceCreateThumbnailAtIndex" => graphics::CGImageSourceCreateThumbnailAtIndex,
++        "CGImageSourceGetStatus" => graphics::CGImageSourceGetStatus,
++        "CGImageSourceGetStatusAtIndex" => graphics::CGImageSourceGetStatusAtIndex,
++        "CGImageSourceGetCount" => graphics::CGImageSourceGetCount,
++        "CGImageSourceGetType" => graphics::CGImageSourceGetType,
++        "CGImageSourceCopyProperties" => graphics::CGImageSourceCopyProperties,
++        "CGImageSourceCopyPropertiesAtIndex" => graphics::CGImageSourceCopyPropertiesAtIndex,
++        "CGImageSourceCopyMetadataAtIndex" => graphics::CGImageSourceCopyMetadataAtIndex,
+         "CGRectGetWidth" => geometry::CGRectGetWidth,
+         "CGRectGetHeight" => geometry::CGRectGetHeight,
+         "CGRectGetMinX" => geometry::CGRectGetMinX,
+@@ -378,10 +428,19 @@ pub fn ns_app_cell() -> u64 {
  static CG_AFFINE_TRANSFORM_IDENTITY: [f64; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
  /// `{{-CGFLOAT_MAX / 2, -CGFLOAT_MAX / 2}, {CGFLOAT_MAX, CGFLOAT_MAX}}`.
  static CG_RECT_INFINITE: [f64; 4] = [f64::MAX / -2.0, f64::MAX / -2.0, f64::MAX, f64::MAX];
@@ -1351,7 +1904,7 @@ index a4137b46..084b3c5e 100644
      out.extend(cgcontext::data_symbols());
      out.push(("_NSApp".to_string(), ns_app_cell()));
      out.push((
-@@ -392,6 +435,14 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+@@ -392,6 +451,14 @@ pub fn data_symbols() -> Vec<(String, u64)> {
          "_CGRectInfinite".to_string(),
          CG_RECT_INFINITE.as_ptr() as usize as u64,
      ));
@@ -1366,7 +1919,7 @@ index a4137b46..084b3c5e 100644
      let srgb = foundation::notification::name_object("kCGColorSpaceSRGB");
      out.push((
          "_kCGColorSpaceSRGB".to_string(),
-@@ -602,6 +653,22 @@ pub const STRING_GLOBALS: &[(&str, &str)] = &[
+@@ -602,6 +669,22 @@ pub const STRING_GLOBALS: &[(&str, &str)] = &[
      ),
      // SDL's GPU swapchain table reads it whenever the OS version says it exists.
      ("_kCGColorSpaceITUR_2100_PQ", "kCGColorSpaceITUR_2100_PQ"),
@@ -1389,11 +1942,663 @@ index a4137b46..084b3c5e 100644
      (
          "_kCGDisplayShowDuplicateLowResolutionModes",
          "kCGDisplayShowDuplicateLowResolutionModes",
+diff --git a/crates/appkit/src/opengl.rs b/crates/appkit/src/opengl.rs
+index a1151f4f..0f72114d 100644
+--- a/crates/appkit/src/opengl.rs
++++ b/crates/appkit/src/opengl.rs
+@@ -1382,12 +1382,17 @@ unsafe extern "C" fn make_current_context(receiver: Id, _sel: Sel) {
+ 
+     // Still bound from before this thread's last clear - see
+     // `clear_current_context` - so there is nothing to ask the driver for.
+-    let bound = bind_native_context(receiver, window, sdl).unwrap_or_else(|| {
+-        objc::fail!(
+-            "-[NSOpenGLContext makeCurrentContext]: SDL could not make the context current: {}",
+-            sdl3::error()
+-        )
+-    });
++    let Some(bound) = bind_native_context(receiver, window, sdl) else {
++        static WARNED: std::sync::Once = std::sync::Once::new();
++        WARNED.call_once(|| {
++            eprintln!(
++                "rosemary: appkit: -[NSOpenGLContext makeCurrentContext]: SDL could not make \
++                 the context current ({}); ignoring to avoid aborting multi-threaded GL caller",
++                sdl3::error()
++            );
++        });
++        return;
++    };
+     chrome_blit::fit_viewport(drawable_window(context), window, sdl);
+ 
+     if holds_primary {
+@@ -2420,6 +2425,41 @@ mod chrome_blit {
+         (x, y, w, (clip.y + clip.h - top).clamp(0, h))
+     }
+ 
++    /// `ROSEMARY_TRACE_WINDOW`: the viewport the guest left bound, against the
++    /// drawable it should cover, whenever either changes.
++    fn trace_viewport(
++        object: objc::object::Id,
++        context: sdl3::GlContext,
++        points: (i32, i32),
++        pixels: (i32, i32),
++        target: (i32, i32, i32, i32),
++    ) {
++        static GET: std::sync::OnceLock<Option<unsafe extern "C" fn(u32, *mut i32)>> =
++            std::sync::OnceLock::new();
++        static LAST: std::sync::Mutex<Vec<(usize, String)>> = std::sync::Mutex::new(Vec::new());
++        let Some(get) = *GET.get_or_init(|| {
++            // SAFETY: glGetIntegerv has a stable C signature.
++            sdl3::video::gl_proc_address(c"glGetIntegerv")
++                .map(|f| unsafe { std::mem::transmute(f) })
++        }) else {
++            return;
++        };
++        let mut viewport = [0i32; 4];
++        // SAFETY: the context is bound on the calling thread.
++        unsafe { get(VIEWPORT, viewport.as_mut_ptr()) };
++        let line = format!(
++            "{object:p} gl viewport {viewport:?} on drawable {}x{} px ({}x{} pt), default {target:?}",
++            pixels.0, pixels.1, points.0, points.1
++        );
++        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
++        match last.iter_mut().find(|(c, _)| *c == context as usize) {
++            Some((_, previous)) if *previous == line => return,
++            Some((_, previous)) => *previous = line.clone(),
++            None => last.push((context as usize, line.clone())),
++        }
++        crate::window::trace(format_args!("{line}"));
++    }
++
+     /// Initialize GL's default viewport for AppKit's drawable, and adjust it
+     /// when AppKit's logical content changes without rebinding the context.
+     /// If the guest explicitly replaces that viewport, leave its GL state alone.
+@@ -2448,6 +2488,9 @@ mod chrome_blit {
+             crate::window::content_inset(object),
+         );
+         let whole = target == (0, 0, pixels.0, pixels.1);
++        if crate::window::tracing() {
++            trace_viewport(object, context, (width, height), pixels, target);
++        }
+         let mut fitted = FITTED.lock().unwrap_or_else(|e| e.into_inner());
+         // A viewport belongs to the context and survives SDL window rebinding.
+         let item = fitted
+diff --git a/crates/appkit/src/panel.rs b/crates/appkit/src/panel.rs
+index e1c81b94..3ff64f36 100644
+--- a/crates/appkit/src/panel.rs
++++ b/crates/appkit/src/panel.rs
+@@ -115,9 +115,15 @@ unsafe extern "C" fn run_modal(receiver: Id, _sel: Sel) -> i64 {
+             (false, true) => sdl3::dialog::Kind::Folder { many: panel.many },
+             (false, false) => sdl3::dialog::Kind::Open { many: panel.many },
+         };
+-        let filters = match panel.types.is_empty() {
++        let clean_types: Vec<&str> = panel
++            .types
++            .iter()
++            .map(|t| t.trim().trim_start_matches('.'))
++            .filter(|t| !t.is_empty() && !t.contains(';'))
++            .collect();
++        let filters = match clean_types.is_empty() {
+             true => Vec::new(),
+-            false => vec![("Allowed files".to_string(), panel.types.join(";"))],
++            false => vec![("Allowed files".to_string(), clean_types.join(";"))],
+         };
+         let mut start = panel.directory.as_deref().map(|guest| {
+             prefix::ns::host_path(guest)
+@@ -177,6 +183,11 @@ unsafe extern "C" fn run_modal(receiver: Id, _sel: Sel) -> i64 {
+         })
+         .collect();
+     let response = if chosen.is_empty() { CANCEL } else { OK };
++    if std::env::var_os("ROSEMARY_TRACE_PANEL").is_some() {
++        eprintln!(
++            "rosemary: appkit: NSOpenPanel/NSSavePanel response={response} chosen={chosen:?}"
++        );
++    }
+     with(receiver, |panel| panel.chosen = chosen);
+     response
+ }
+diff --git a/crates/appkit/src/quicklook.rs b/crates/appkit/src/quicklook.rs
+new file mode 100644
+index 00000000..47c59d63
+--- /dev/null
++++ b/crates/appkit/src/quicklook.rs
+@@ -0,0 +1,20 @@
++//! QuickLook's thumbnail call, which a program asks before drawing its own.
++
++use std::ffi::c_void;
++
++use foundation::geometry::NSSize;
++
++/// CGImageRef QLThumbnailImageCreate(CFAllocatorRef, CFURLRef, CGSize maxThumbnailSize,
++/// CFDictionaryRef options).
++///
++/// FIXME (ACCURACY): there are no thumbnail generators here, so every file
++/// gets the answer macOS gives a file no generator handles: NULL, after which
++/// a program draws the thumbnail itself.
++pub unsafe extern "C" fn QLThumbnailImageCreate(
++    _allocator: *const c_void,
++    _url: *const c_void,
++    _max_size: NSSize,
++    _options: *const c_void,
++) -> *const c_void {
++    std::ptr::null()
++}
+diff --git a/crates/appkit/src/raster.rs b/crates/appkit/src/raster.rs
+index 3b83472c..2916d82d 100644
+--- a/crates/appkit/src/raster.rs
++++ b/crates/appkit/src/raster.rs
+@@ -37,6 +37,8 @@ pub const TYPE_IDENTIFIERS: &[&str] = &[
+     "com.microsoft.bmp",
+     "public.tiff",
+     "public.png",
++    "public.jpeg",
++    "org.webmproject.webp",
+     "com.apple.icns",
+ ];
+ 
+@@ -51,12 +53,307 @@ pub fn decode(bytes: &[u8]) -> Option<Bitmap> {
+     if bytes.starts_with(PNG_SIGNATURE) {
+         return png(bytes);
+     }
++    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
++        return jpeg(bytes);
++    }
++    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
++        return webp(bytes);
++    }
+     if bytes.starts_with(b"icns") {
+         return icns(bytes);
+     }
+     None
+ }
+ 
++struct TurboJpeg {
++    init_decompress: unsafe extern "C" fn() -> *mut std::ffi::c_void,
++    decompress_header3: unsafe extern "C" fn(
++        *mut std::ffi::c_void,
++        *const u8,
++        libc::c_ulong,
++        *mut libc::c_int,
++        *mut libc::c_int,
++        *mut libc::c_int,
++        *mut libc::c_int,
++    ) -> libc::c_int,
++    decompress2: unsafe extern "C" fn(
++        *mut std::ffi::c_void,
++        *const u8,
++        libc::c_ulong,
++        *mut u8,
++        libc::c_int,
++        libc::c_int,
++        libc::c_int,
++        libc::c_int,
++        libc::c_int,
++    ) -> libc::c_int,
++    init_compress: unsafe extern "C" fn() -> *mut std::ffi::c_void,
++    compress2: unsafe extern "C" fn(
++        *mut std::ffi::c_void,
++        *const u8,
++        libc::c_int,
++        libc::c_int,
++        libc::c_int,
++        libc::c_int,
++        *mut *mut u8,
++        *mut libc::c_ulong,
++        libc::c_int,
++        libc::c_int,
++        libc::c_int,
++    ) -> libc::c_int,
++    free: unsafe extern "C" fn(*mut u8),
++    destroy: unsafe extern "C" fn(*mut std::ffi::c_void) -> libc::c_int,
++}
++
++fn turbojpeg() -> Option<&'static TurboJpeg> {
++    static API: std::sync::OnceLock<Option<TurboJpeg>> = std::sync::OnceLock::new();
++    API.get_or_init(|| unsafe {
++        let mut handle = std::ptr::null_mut();
++        for name in [c"libturbojpeg.so.0", c"libturbojpeg.so"] {
++            handle = libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
++            if !handle.is_null() {
++                break;
++            }
++        }
++        if handle.is_null() {
++            return None;
++        }
++        let load = |sym: &std::ffi::CStr| {
++            let p = libc::dlsym(handle, sym.as_ptr());
++            (!p.is_null()).then_some(p)
++        };
++        Some(TurboJpeg {
++            init_decompress: std::mem::transmute(load(c"tjInitDecompress")?),
++            decompress_header3: std::mem::transmute(load(c"tjDecompressHeader3")?),
++            decompress2: std::mem::transmute(load(c"tjDecompress2")?),
++            init_compress: std::mem::transmute(load(c"tjInitCompress")?),
++            compress2: std::mem::transmute(load(c"tjCompress2")?),
++            free: std::mem::transmute(load(c"tjFree")?),
++            destroy: std::mem::transmute(load(c"tjDestroy")?),
++        })
++    })
++    .as_ref()
++}
++
++/// Decode a JPEG image into RGBA via system `libturbojpeg.so.0`.
++fn jpeg(bytes: &[u8]) -> Option<Bitmap> {
++    const TJPF_RGBA: libc::c_int = 7;
++    let tj = turbojpeg()?;
++    unsafe {
++        let handle = (tj.init_decompress)();
++        if handle.is_null() {
++            return None;
++        }
++        let mut width: libc::c_int = 0;
++        let mut height: libc::c_int = 0;
++        let mut subsamp: libc::c_int = 0;
++        let mut colorspace: libc::c_int = 0;
++        let ok = (tj.decompress_header3)(
++            handle,
++            bytes.as_ptr(),
++            bytes.len() as libc::c_ulong,
++            &mut width,
++            &mut height,
++            &mut subsamp,
++            &mut colorspace,
++        );
++        if ok != 0 || width <= 0 || height <= 0 {
++            (tj.destroy)(handle);
++            return None;
++        }
++        let (w, h) = (width as u32, height as u32);
++        let len = (w as usize).checked_mul(h as usize)?.checked_mul(4)?;
++        let mut pixels = vec![0u8; len];
++        let rc = (tj.decompress2)(
++            handle,
++            bytes.as_ptr(),
++            bytes.len() as libc::c_ulong,
++            pixels.as_mut_ptr(),
++            width,
++            0,
++            height,
++            TJPF_RGBA,
++            0,
++        );
++        (tj.destroy)(handle);
++        if rc != 0 {
++            return None;
++        }
++        Some(Bitmap {
++            width: w,
++            height: h,
++            pixels,
++        })
++    }
++}
++
++/// Encode an RGBA bitmap to JPEG via system `libturbojpeg.so.0`.
++pub fn encode_jpeg(bitmap: &Bitmap, quality: i32) -> Option<Vec<u8>> {
++    const TJPF_RGBA: libc::c_int = 7;
++    const TJSAMP_420: libc::c_int = 2;
++    let tj = turbojpeg()?;
++    if bitmap.width == 0 || bitmap.height == 0 {
++        return None;
++    }
++    unsafe {
++        let handle = (tj.init_compress)();
++        if handle.is_null() {
++            return None;
++        }
++        let mut out_buf: *mut u8 = std::ptr::null_mut();
++        let mut out_size: libc::c_ulong = 0;
++        let rc = (tj.compress2)(
++            handle,
++            bitmap.pixels.as_ptr(),
++            bitmap.width as libc::c_int,
++            0,
++            bitmap.height as libc::c_int,
++            TJPF_RGBA,
++            &mut out_buf,
++            &mut out_size,
++            TJSAMP_420,
++            quality.clamp(1, 100),
++            0,
++        );
++        (tj.destroy)(handle);
++        if rc != 0 || out_buf.is_null() || out_size == 0 {
++            if !out_buf.is_null() {
++                (tj.free)(out_buf);
++            }
++            return None;
++        }
++        let vec = std::slice::from_raw_parts(out_buf, out_size as usize).to_vec();
++        (tj.free)(out_buf);
++        Some(vec)
++    }
++}
++
++struct WebpApi {
++    decode_rgba:
++        unsafe extern "C" fn(*const u8, usize, *mut libc::c_int, *mut libc::c_int) -> *mut u8,
++    free: unsafe extern "C" fn(*mut std::ffi::c_void),
++}
++
++fn webp_api() -> Option<&'static WebpApi> {
++    static API: std::sync::OnceLock<Option<WebpApi>> = std::sync::OnceLock::new();
++    API.get_or_init(|| unsafe {
++        let mut handle = std::ptr::null_mut();
++        for name in [c"libwebpdecoder.so.3", c"libwebp.so.7", c"libwebp.so"] {
++            handle = libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
++            if !handle.is_null() {
++                break;
++            }
++        }
++        if handle.is_null() {
++            return None;
++        }
++        let dec = libc::dlsym(handle, c"WebPDecodeRGBA".as_ptr());
++        let free = libc::dlsym(handle, c"WebPFree".as_ptr());
++        if dec.is_null() || free.is_null() {
++            return None;
++        }
++        Some(WebpApi {
++            decode_rgba: std::mem::transmute(dec),
++            free: std::mem::transmute(free),
++        })
++    })
++    .as_ref()
++}
++
++/// Decode a WebP image into RGBA via system `libwebpdecoder`.
++fn webp(bytes: &[u8]) -> Option<Bitmap> {
++    let api = webp_api()?;
++    unsafe {
++        let mut w: libc::c_int = 0;
++        let mut h: libc::c_int = 0;
++        let ptr = (api.decode_rgba)(bytes.as_ptr(), bytes.len(), &mut w, &mut h);
++        if ptr.is_null() || w <= 0 || h <= 0 {
++            if !ptr.is_null() {
++                (api.free)(ptr.cast());
++            }
++            return None;
++        }
++        let len = (w as usize).checked_mul(h as usize)?.checked_mul(4)?;
++        let pixels = std::slice::from_raw_parts(ptr, len).to_vec();
++        (api.free)(ptr.cast());
++        Some(Bitmap {
++            width: w as u32,
++            height: h as u32,
++            pixels,
++        })
++    }
++}
++
++/// Encode an RGBA bitmap as a valid uncompressed PNG (stored DEFLATE blocks).
++pub fn encode_png(bitmap: &Bitmap) -> Vec<u8> {
++    fn crc32(data: &[u8]) -> u32 {
++        let mut crc = 0xffff_ffffu32;
++        for &byte in data {
++            crc ^= u32::from(byte);
++            for _ in 0..8 {
++                crc = if crc & 1 != 0 {
++                    (crc >> 1) ^ 0xedb8_8320
++                } else {
++                    crc >> 1
++                };
++            }
++        }
++        !crc
++    }
++    fn push_chunk(out: &mut Vec<u8>, kind: &[u8; 4], payload: &[u8]) {
++        out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
++        let start = out.len();
++        out.extend_from_slice(kind);
++        out.extend_from_slice(payload);
++        let crc = crc32(&out[start..]);
++        out.extend_from_slice(&crc.to_be_bytes());
++    }
++    let w = bitmap.width as usize;
++    let h = bitmap.height as usize;
++    let mut raw = Vec::with_capacity(h * (1 + w * 4));
++    for y in 0..h {
++        raw.push(0); // filter type None
++        let row = &bitmap.pixels[y * w * 4..(y + 1) * w * 4];
++        raw.extend_from_slice(row);
++    }
++    // Wrap raw scanlines in a valid zlib stream using uncompressed DEFLATE blocks.
++    let mut zlib = Vec::with_capacity(raw.len() + (raw.len() / 65535 + 1) * 5 + 6);
++    zlib.extend_from_slice(&[0x78, 0x01]);
++    let mut adler_a: u32 = 1;
++    let mut adler_b: u32 = 0;
++    for &byte in &raw {
++        adler_a = (adler_a + u32::from(byte)) % 65521;
++        adler_b = (adler_b + adler_a) % 65521;
++    }
++    let mut pos = 0;
++    while pos < raw.len() || (raw.is_empty() && pos == 0) {
++        let chunk_len = (raw.len() - pos).min(65535);
++        let is_last = pos + chunk_len >= raw.len();
++        zlib.push(if is_last { 0x01 } else { 0x00 });
++        let len16 = chunk_len as u16;
++        zlib.extend_from_slice(&len16.to_le_bytes());
++        zlib.extend_from_slice(&(!len16).to_le_bytes());
++        zlib.extend_from_slice(&raw[pos..pos + chunk_len]);
++        pos += chunk_len;
++        if raw.is_empty() {
++            break;
++        }
++    }
++    zlib.extend_from_slice(&((adler_b << 16) | adler_a).to_be_bytes());
++
++    let mut out = Vec::with_capacity(64 + zlib.len());
++    out.extend_from_slice(PNG_SIGNATURE);
++    let mut ihdr = [0u8; 13];
++    ihdr[0..4].copy_from_slice(&bitmap.width.to_be_bytes());
++    ihdr[4..8].copy_from_slice(&bitmap.height.to_be_bytes());
++    ihdr[8] = 8; // bit depth
++    ihdr[9] = 6; // RGBA
++    push_chunk(&mut out, b"IHDR", &ihdr);
++    push_chunk(&mut out, b"IDAT", &zlib);
++    push_chunk(&mut out, b"IEND", &[]);
++    out
++}
++
+ fn le16(bytes: &[u8], at: usize) -> Option<u16> {
+     Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?))
+ }
+diff --git a/crates/appkit/src/screen.rs b/crates/appkit/src/screen.rs
+index 978f00ea..1c2f11fd 100644
+--- a/crates/appkit/src/screen.rs
++++ b/crates/appkit/src/screen.rs
+@@ -157,8 +157,41 @@ unsafe extern "C" fn refresh_interval(receiver: Id, _sel: Sel) -> f64 {
+     1.0 / refresh_rate(receiver)
+ }
+ 
++/// Whether the host is Wayland running with a fractional display scale (e.g.
++/// 1.25x or 1.5x).
++///
++/// macOS AppKit only ever exposes integer backing scales (1.0 or 2.0), and
++/// toolkits like Qt 6's `libqcocoa` assume integer backing factors — on a
++/// 1.25x Wayland surface with `HIGH_PIXEL_DENSITY`, either Qt rounds up to 2x
++/// and clips, or (if AppKit reports 1.0) Qt draws into 80%×80% of the physical
++/// framebuffer leaving the rest uninitialized. Dropping `HIGH_PIXEL_DENSITY`
++/// on fractional Wayland lets the compositor scale a clean 1.0x surface with
++/// exact 1:1 agreement across OpenGL, Metal, CoreAnimation, and mouse input.
++pub(crate) fn is_fractional_wayland() -> bool {
++    if !sdl3::video::is_wayland() {
++        return false;
++    }
++    sdl3::video::displays().into_iter().any(|display| {
++        let density = sdl3::video::display_pixel_density(display) as f64;
++        let content = sdl3::video::display_content_scale(display) as f64;
++        let is_frac = |s: f64| s > 0.0 && (s - s.round()).abs() > 0.01;
++        is_frac(density) || is_frac(content)
++    })
++}
++
++pub(crate) fn effective_display_scale(display: u32) -> CGFloat {
++    if is_fractional_wayland() {
++        return 1.0;
++    }
++    let scale = sdl3::video::display_content_scale(display) as f64;
++    if !(scale > 0.0) {
++        return 1.0;
++    }
++    scale
++}
++
+ unsafe extern "C" fn backing_scale_factor(receiver: Id, _sel: Sel) -> CGFloat {
+-    sdl3::video::display_content_scale(display_of(receiver)) as f64
++    effective_display_scale(display_of(receiver))
+ }
+ 
+ /// `-deviceDescription`: `NSScreenNumber` for a `CGDirectDisplayID`, and
+@@ -174,13 +207,7 @@ unsafe extern "C" fn device_description(receiver: Id, _sel: Sel) -> Id {
+     let display = display_of(receiver);
+     // SAFETY: a screen of this crate's, which is what this method is sent to.
+     let frame = unsafe { frame(receiver, objc::sel::get("frame")) };
+-    let scale = sdl3::video::display_content_scale(display) as f64;
+-    // A scale of zero would make the resolution zero, which is the value this
+-    // whole entry exists to keep a caller from dividing by.
+-    let scale = match scale > 0.0 {
+-        true => scale,
+-        false => 1.0,
+-    };
++    let scale = effective_display_scale(display);
+     // Every value is autoreleased, so this function owns none of them and the
+     // dictionary's retain is the only one that matters. Mixing an owned value
+     // in with autoreleased ones is how a leak or a double release gets written.
+diff --git a/crates/appkit/src/view.rs b/crates/appkit/src/view.rs
+index 221c3265..124745ae 100644
+--- a/crates/appkit/src/view.rs
++++ b/crates/appkit/src/view.rs
+@@ -2614,6 +2614,9 @@ pub unsafe fn superview_of(view: Id) -> Id {
+ /// not set that flag leaves the guest drawing a point-sized viewport into a
+ /// pixel-sized surface.
+ fn scale(receiver: Id) -> f64 {
++    if crate::screen::is_fractional_wayland() {
++        return 1.0;
++    }
+     // SAFETY: a view of this crate's.
+     let window = unsafe { window_of(receiver) };
+     // SAFETY: null or a window this crate made.
 diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
-index 484056dd..5bb626ab 100644
+index 484056dd..8e439605 100644
 --- a/crates/appkit/src/window.rs
 +++ b/crates/appkit/src/window.rs
-@@ -3756,6 +3756,19 @@ unsafe extern "C" fn parent_window(receiver: Id, _sel: Sel) -> Id {
+@@ -150,6 +150,9 @@ mod style {
+     /// `NSWindowStyleMaskFullScreen`, which AppKit sets and clears itself;
+     /// see `style_mask`.
+     pub const FULL_SCREEN: usize = 1 << 14;
++    /// `NSWindowStyleMaskFullSizeContentView`: content view extends under the
++    /// titlebar/chrome area (zero top inset when server decorations are active).
++    pub const FULL_SIZE_CONTENT_VIEW: usize = 1 << 15;
+ }
+ 
+ /// The `NSWindowLevel`s that say what a window is *for*.
+@@ -793,7 +796,8 @@ fn accessory_view(controller: Id) -> Id {
+ }
+ 
+ /// Place the accessories along the top of the frame view, each its own
+-/// height, and the content view in what is left.
++/// height, and the content view in what is left - or, with
++/// `NSWindowStyleMaskFullSizeContentView`, under all of them.
+ ///
+ /// FIXME (ACCURACY): an accessory placed at the titlebar's leading or
+ /// trailing edge goes under it with the rest, since the titlebar here is not
+@@ -811,6 +815,7 @@ fn layout_titlebar(object: Id, size: NSSize) {
+         },
+     );
+     let mut top = size.height;
++    let mut traced = Vec::new();
+     for controller in accessories_of(object) {
+         let view = accessory_view(controller);
+         if view.is_null() || crate::props::integer(controller, "hidden") != 0 {
+@@ -821,6 +826,9 @@ fn layout_titlebar(object: Id, size: NSSize) {
+             (None, Some(least)) => least.max(crate::view::frame_of(view).size.height),
+             (None, None) => crate::view::frame_of(view).size.height,
+         };
++        if tracing() {
++            traced.push((height, crate::props::integer(controller, "layoutAttribute")));
++        }
+         top -= height;
+         send_frame(
+             view,
+@@ -833,6 +841,16 @@ fn layout_titlebar(object: Id, size: NSSize) {
+             },
+         );
+     }
++    // A full-size content view lies under the titlebar and its accessories,
++    // which overlap it instead of pushing it down.
++    let content_height = match window.style_mask & style::FULL_SIZE_CONTENT_VIEW != 0 {
++        true => size.height,
++        false => top.max(0.0),
++    };
++    trace!(
++        "{object:p} titlebar layout {}x{}: accessories (height, layoutAttribute) {traced:?}, content height {content_height}",
++        size.width, size.height,
++    );
+     if !window.content_view.is_null() {
+         send_frame(
+             window.content_view,
+@@ -840,7 +858,7 @@ fn layout_titlebar(object: Id, size: NSSize) {
+                 origin: NSPoint::default(),
+                 size: NSSize {
+                     width: size.width,
+-                    height: top.max(0.0),
++                    height: content_height,
+                 },
+             },
+         );
+@@ -983,8 +1001,14 @@ pub(crate) fn content_inset(object: Id) -> CGFloat {
+ }
+ 
+ fn inset_of(object: Id, style_mask: usize, fullscreen: bool) -> CGFloat {
++    let config = crate::decor::config();
++    if config.decorations == crate::decor::Decorations::Server
++        && style_mask & style::FULL_SIZE_CONTENT_VIEW != 0
++    {
++        return 0.0;
++    }
+     crate::decor::inset_for(
+-        crate::decor::config(),
++        config,
+         style_mask & style::TITLED != 0,
+         is_panel(object),
+         fullscreen,
+@@ -1629,7 +1653,10 @@ pub unsafe fn init_with_content_rect_for_tests(window: Id, rect: NSRect) -> bool
+ /// outright - so a guest which asks for an `NSOpenGLContext` has its window
+ /// rebuilt as an OpenGL one; see [`rebuild_for_opengl`].
+ fn creation_flags(style_mask: usize, api: Api) -> u64 {
+-    let mut flags = sdl3::video::flags::HIDDEN | sdl3::video::flags::HIGH_PIXEL_DENSITY;
++    let mut flags = sdl3::video::flags::HIDDEN;
++    if !crate::screen::is_fractional_wayland() {
++        flags |= sdl3::video::flags::HIGH_PIXEL_DENSITY;
++    }
+     if matches!(api, Api::OpenGl) {
+         flags |= sdl3::video::flags::OPENGL;
+     }
+@@ -2904,6 +2931,9 @@ unsafe extern "C" fn user_space_scale_factor(receiver: Id, sel: Sel) -> f64 {
+ }
+ 
+ unsafe extern "C" fn backing_scale_factor(receiver: Id, _sel: Sel) -> CGFloat {
++    if crate::screen::is_fractional_wayland() {
++        return 1.0;
++    }
+     let sdl = window_of(receiver).sdl;
+     match sdl.is_null() {
+         true => 1.0,
+@@ -3035,8 +3065,12 @@ unsafe extern "C" fn set_style_mask(receiver: Id, _sel: Sel, mask: usize) {
+     if window.style_mask != mask {
+         trace!("{receiver:p} style {:#x} -> {mask:#x}", window.style_mask);
+     }
++    let full_size_changed = (window.style_mask ^ mask) & style::FULL_SIZE_CONTENT_VIEW != 0;
+     window.style_mask = mask;
+     apply_style(receiver);
++    if full_size_changed {
++        fit_content_view(receiver);
++    }
+ }
+ 
+ /// The content size the guest last asked this window for, in the units
+@@ -3756,6 +3790,19 @@ unsafe extern "C" fn parent_window(receiver: Id, _sel: Sel) -> Id {
  
  unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _flag: u8) {}
  
@@ -1413,7 +2618,7 @@ index 484056dd..5bb626ab 100644
  unsafe extern "C" fn ignored_object(_receiver: Id, _sel: Sel, _object: Id) {}
  
  unsafe extern "C" fn set_titlebar_transparent(receiver: Id, _sel: Sel, flag: u8) {
-@@ -4134,6 +4147,18 @@ pub(crate) fn install() {
+@@ -4134,6 +4181,18 @@ pub(crate) fn install() {
          "firstResponder" => first_responder, c"@16@0:8";
          "makeFirstResponder:" => make_first_responder, c"c24@0:8@16";
          "initialFirstResponder" => initial_first_responder, c"@16@0:8";
@@ -1432,6 +2637,76 @@ index 484056dd..5bb626ab 100644
          "nextResponder" => next_responder, c"@16@0:8";
          "setNextResponder:" => set_next_responder, c"v24@0:8@16";
          "setInitialFirstResponder:" => set_initial_first_responder, c"v24@0:8@16";
+@@ -4594,6 +4653,69 @@ mod tests {
+ 
+     /// A view that outlives its window must not answer `-window` with it:
+     /// Studio's dock panels are freed while Qt still holds their views.
++    /// CapCut's editor: a 36pt bottom accessory on a full-size content view
++    /// window, which must not push the content view down.
++    #[test]
++    fn titlebar_accessories_overlap_only_a_full_size_content_view() {
++        crate::bootstrap();
++        let new_view = |height: f64| {
++            let view = objc::object::create_instance(objc::class::lookup(c"NSView").unwrap(), 0);
++            let frame = NSRect {
++                origin: NSPoint::default(),
++                size: NSSize {
++                    width: 10.0,
++                    height,
++                },
++            };
++            // SAFETY: `-initWithFrame:` is `id (id, SEL, NSRect)`.
++            unsafe {
++                let f: unsafe extern "C" fn(Id, Sel, NSRect) -> Id =
++                    std::mem::transmute(objc::msg::entry());
++                f(view, objc::sel::get("initWithFrame:"), frame)
++            }
++        };
++        let window = objc::object::create_instance(objc::class::lookup(c"NSWindow").unwrap(), 0);
++        let content = new_view(0.0);
++        let accessory_view = new_view(36.0);
++        let controller = objc::object::create_instance(
++            objc::class::lookup(c"NSTitlebarAccessoryViewController").unwrap(),
++            0,
++        );
++        // SAFETY: objects this test made, sent selectors with these signatures.
++        unsafe {
++            set_content_view(window, objc::sel::get("setContentView:"), content);
++            let init: unsafe extern "C" fn(Id, Sel) -> Id = std::mem::transmute(objc::msg::entry());
++            let controller = init(controller, objc::sel::get("init"));
++            send_view(controller, "setView:", accessory_view);
++            insert_titlebar_accessory(
++                window,
++                objc::sel::get("insertTitlebarAccessoryViewController:atIndex:"),
++                controller,
++                0,
++            );
++        }
++        let size = NSSize {
++            width: 800.0,
++            height: 600.0,
++        };
++
++        window_of(window).style_mask = style::TITLED | style::RESIZABLE;
++        layout_titlebar(window, size);
++        assert_eq!(crate::view::frame_of(content).size.height, 564.0);
++        assert_eq!(crate::view::frame_of(accessory_view).origin.y, 564.0);
++
++        window_of(window).style_mask |= style::FULL_SIZE_CONTENT_VIEW;
++        layout_titlebar(window, size);
++        assert_eq!(crate::view::frame_of(content).size, size);
++        assert_eq!(
++            crate::view::frame_of(accessory_view).origin.y,
++            564.0,
++            "the accessory stays on top"
++        );
++        assert_eq!(crate::view::frame_of(accessory_view).size.height, 36.0);
++        objc::arc::release(window);
++    }
++
+     #[test]
+     fn a_freed_window_leaves_its_content_view_windowless() {
+         crate::bootstrap();
 diff --git a/crates/appkit/src/workspace.rs b/crates/appkit/src/workspace.rs
 index f5fe44f7..38554e1b 100644
 --- a/crates/appkit/src/workspace.rs
@@ -1455,7 +2730,7 @@ index f5fe44f7..38554e1b 100644
          "launchApplicationAtURL:options:configuration:error:" => launch_application,
              c"@48@0:8@16Q24@32^@40";
 diff --git a/crates/rosemary/src/abi/table.rs b/crates/rosemary/src/abi/table.rs
-index 8f85a506..090a2936 100644
+index 8f85a506..f29a495f 100644
 --- a/crates/rosemary/src/abi/table.rs
 +++ b/crates/rosemary/src/abi/table.rs
 @@ -437,6 +437,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
@@ -1466,7 +2741,23 @@ index 8f85a506..090a2936 100644
      sig!("CFBundleLoadExecutable", U8, P),
      sig!("CFBundleGetFunctionPointerForName", P, P, P),
      sig!("CFBundleGetDataPointerForName", P, P, P),
-@@ -1615,6 +1616,33 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -805,6 +806,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+     sig!("CGContextRelease", V, P),
+     sig!("CGContextTranslateCTM", V, P, F64, F64),
+     sig!("CGContextScaleCTM", V, P, F64, F64),
++    sig!("QLThumbnailImageCreate", P, P, P, F64, F64, P),
+     sig!("CGContextSetTextDrawingMode", V, P, I32),
+     sig!("CGContextSetGrayFillColor", V, P, F64, F64),
+     sig!("CGContextSetShouldSmoothFonts", V, P, BOOL),
+@@ -1105,6 +1107,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+     sig!("CVOpenGLTextureCacheRelease", V, P),
+     sig!("CVOpenGLTextureGetName", U32, P),
+     sig!("CVOpenGLTextureGetTarget", U32, P),
++    sig!("CVOpenGLTextureRelease", V, P),
+     sig!("CVPixelBufferGetBaseAddress", P, P),
+     sig!("CVPixelBufferGetBytesPerRow", U64, P),
+     sig!("CVPixelBufferGetHeight", U64, P),
+@@ -1615,6 +1618,33 @@ pub static SIGNATURES: &[FunctionAbi] = &[
      sig!("SecCertificateCreateWithData", P, P, P),
      sig!("SecPolicyCreateBasicX509", P),
      sig!("SecTrustCreateWithCertificates", I32, P, P, P),
@@ -1500,7 +2791,7 @@ index 8f85a506..090a2936 100644
      sig!("SecTrustSetOptions", I32, P, U32),
      sig!("SecTrustEvaluate", I32, P, P),
      sig!("SecRandomCopyBytes", I32, P, U64, P),
-@@ -3265,6 +3293,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -3265,6 +3295,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
      sig!("posix_spawnattr_setpgroup", I32, P, I32),
      sig!("posix_spawnattr_setbinpref_np", I32, P, U64, P, P),
      sig!("posix_spawnattr_setarchpref_np", I32, P, U64, P, P, P),
@@ -1508,6 +2799,14 @@ index 8f85a506..090a2936 100644
      // `short flags`, which SysV passes in the low half of a register and
      // AAPCS64 reads back out of one: narrower than the slot on both sides.
      sig!("posix_spawnattr_setflags", I32, P, U32),
+@@ -4018,6 +4049,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+         U64,
+         P
+     ),
++    sig!("CVMetalTextureCacheFlush", V, P, U64),
+     sig!("CVMetalTextureGetTexture", P, P),
+     sig!("CVPixelBufferCreate", I32, P, U64, U64, U32, P, P),
+     sig!("CVPixelBufferGetBaseAddressOfPlane", P, P, U64),
 diff --git a/crates/rosemary/src/fault.rs b/crates/rosemary/src/fault.rs
 index 8d6b8e84..95a0de52 100644
 --- a/crates/rosemary/src/fault.rs
@@ -1522,3 +2821,34 @@ index 8d6b8e84..95a0de52 100644
          restore(signal);
          return;
      }
+diff --git a/crates/sdl3/src/lib.rs b/crates/sdl3/src/lib.rs
+index e9f30a3b..20dc66ad 100644
+--- a/crates/sdl3/src/lib.rs
++++ b/crates/sdl3/src/lib.rs
+@@ -4525,6 +4525,26 @@ pub mod video {
+         }
+     }
+ 
++    /// The display's current mode pixel density. On Wayland with fractional
++    /// scaling (e.g. KDE Plasma at 1.25x), `SDL_GetDisplayContentScale` reports
++    /// `1.0` while `SDL_GetCurrentDisplayMode()->pixel_density` reports `1.25`.
++    pub fn display_pixel_density(display: u32) -> f32 {
++        let Some(f) = api().and_then(|a| a.SDL_GetCurrentDisplayMode) else {
++            return 1.0;
++        };
++        // SAFETY: a display id; the returned pointer is SDL-owned and read-only.
++        let mode = unsafe { f(display) };
++        if mode.is_null() {
++            return 1.0;
++        }
++        // SAFETY: non-null SDL_DisplayMode returned by SDL_GetCurrentDisplayMode.
++        let density = unsafe { (*mode).pixel_density };
++        match density.is_finite() && density > 0.0 {
++            true => density,
++            false => 1.0,
++        }
++    }
++
+     fn refresh_rate_override() -> Option<f32> {
+         static RATE: LazyLock<Option<f32>> = LazyLock::new(|| {
+             let value = std::env::var("ROSEMARY_SCREEN_REFRESH_RATE").ok()?;

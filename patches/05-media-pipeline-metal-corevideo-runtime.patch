@@ -1,0 +1,4832 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index a239bafe..9de6e1d0 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -8,6 +8,18 @@ version = "0.1.9"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b2187590a23ab1e3df8681afdf0987c48504d80291f002fcdb651f0ef5e25169"
+ 
++[[package]]
++name = "accelerate"
++version = "0.5.0"
++dependencies = [
++ "appkit",
++ "corefoundation",
++ "corevideo",
++ "exports",
++ "half",
++ "libc",
++]
++
+ [[package]]
+ name = "addr2line"
+ version = "0.25.1"
+@@ -2666,6 +2678,7 @@ dependencies = [
+ name = "rosemary"
+ version = "0.5.0"
+ dependencies = [
++ "accelerate",
+  "appkit",
+  "applicationservices",
+  "audiotoolbox",
+diff --git a/Cargo.toml b/Cargo.toml
+index 1871ae24..5f2e476f 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -24,6 +24,7 @@ foundation = { path = "crates/foundation" }
+ sdl3 = { path = "crates/sdl3" }
+ iokit = { path = "crates/iokit" }
+ appkit = { path = "crates/appkit" }
++accelerate = { path = "crates/accelerate" }
+ chrome = { path = "crates/chrome" }
+ applicationservices = { path = "crates/applicationservices" }
+ coreservices = { path = "crates/coreservices" }
+diff --git a/crates/accelerate/Cargo.toml b/crates/accelerate/Cargo.toml
+new file mode 100644
+index 00000000..56876fa3
+--- /dev/null
++++ b/crates/accelerate/Cargo.toml
+@@ -0,0 +1,17 @@
++[package]
++name = "accelerate"
++description = "Accelerate framework (vImage and vDSP) for Rosemary"
++version.workspace = true
++edition.workspace = true
++license.workspace = true
++
++[dependencies]
++appkit.workspace = true
++corefoundation.workspace = true
++corevideo.workspace = true
++exports.workspace = true
++half.workspace = true
++libc.workspace = true
++
++[lints]
++workspace = true
+diff --git a/crates/accelerate/src/lib.rs b/crates/accelerate/src/lib.rs
+new file mode 100644
+index 00000000..2762eb2f
+--- /dev/null
++++ b/crates/accelerate/src/lib.rs
+@@ -0,0 +1,3379 @@
++//! Accelerate framework (`vImage` and `vDSP`) implementation for Rosemary.
++//!
++//! Covers the pixel-conversion, channel-permutation, scaling, rotation,
++//! reflection, affine-warp, YpCbCr, alpha-blending, convolution/morphology,
++//! CGImage/CVPixelBuffer interop, and vector math entry points used by macOS
++//! media editors (including CapCut's `libcccreator`, `libVECreator`,
++//! `libvideoeditor`, and `libEffectSDK`).
++
++#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
++#![allow(clippy::missing_safety_doc)]
++
++use std::ffi::c_void;
++use std::ptr;
++
++use corefoundation::base::CFTypeRef;
++
++pub type vImage_Error = isize;
++pub type vImage_Flags = u32;
++
++pub const kvImageNoError: vImage_Error = 0;
++pub const kvImageRoiLargerThanInputBuffer: vImage_Error = -21766;
++pub const kvImageInvalidKernelSize: vImage_Error = -21767;
++pub const kvImageInvalidEdgeStyle: vImage_Error = -21768;
++pub const kvImageInvalidOffset_X: vImage_Error = -21769;
++pub const kvImageInvalidOffset_Y: vImage_Error = -21770;
++pub const kvImageMemoryAllocationError: vImage_Error = -21771;
++pub const kvImageNullPointerArgument: vImage_Error = -21772;
++pub const kvImageInvalidParameter: vImage_Error = -21773;
++pub const kvImageBufferSizeMismatch: vImage_Error = -21774;
++pub const kvImageUnknownFlagsBit: vImage_Error = -21775;
++
++pub const kvImageNoFlags: vImage_Flags = 0;
++pub const kvImageLeaveAlphaUnchanged: vImage_Flags = 1;
++pub const kvImageCopyInPlace: vImage_Flags = 2;
++pub const kvImageBackgroundColorFill: vImage_Flags = 4;
++pub const kvImageEdgeExtend: vImage_Flags = 8;
++pub const kvImageDoNotTile: vImage_Flags = 16;
++pub const kvImageHighQualityResampling: vImage_Flags = 32;
++pub const kvImageTruncateKernel: vImage_Flags = 64;
++pub const kvImageGetTempBufferSize: vImage_Flags = 128;
++pub const kvImageNoAllocate: vImage_Flags = 512;
++
++// Wait: verify kvImageGetTempBufferSize and kvImageNoAllocate flag bits from
++// Apple's <vImage/vImage_Types.h>:
++//   kvImageNoFlags                = 0
++//   kvImageLeaveAlphaUnchanged    = 1
++//   kvImageCopyInPlace            = 2
++//   kvImageBackgroundColorFill    = 4
++//   kvImageEdgeExtend             = 8
++//   kvImageDoNotTile              = 16
++//   kvImageHighQualityResampling  = 32
++//   kvImageTruncateKernel         = 64
++//   kvImageGetTempBufferSize      = 128
++//   kvImagePrintDiagnosticsToConsole = 256
++//   kvImageNoAllocate             = 512
++
++#[repr(C)]
++#[derive(Clone, Copy, Debug)]
++pub struct vImage_Buffer {
++    pub data: *mut c_void,
++    pub height: usize,
++    pub width: usize,
++    pub rowBytes: usize,
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Debug)]
++pub struct vImage_CGImageFormat {
++    pub bitsPerComponent: u32,
++    pub bitsPerPixel: u32,
++    pub colorSpace: CFTypeRef,
++    pub bitmapInfo: u32,
++    pub version: u32,
++    pub decode: *const f64,
++    pub renderingIntent: i32,
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Debug)]
++pub struct vImage_CGAffineTransform {
++    pub a: f64,
++    pub b: f64,
++    pub c: f64,
++    pub d: f64,
++    pub tx: f64,
++    pub ty: f64,
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Debug)]
++pub struct vImage_ARGBToYpCbCrMatrix {
++    pub R_Yp: f32,
++    pub G_Yp: f32,
++    pub B_Yp: f32,
++    pub R_Cb: f32,
++    pub G_Cb: f32,
++    pub B_Cb_R_Cr: f32,
++    pub G_Cr: f32,
++    pub B_Cr: f32,
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Debug)]
++pub struct vImage_YpCbCrToARGBMatrix {
++    pub Yp: f32,
++    pub Cr_R: f32,
++    pub Cr_G: f32,
++    pub Cb_G: f32,
++    pub Cb_B: f32,
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Debug)]
++pub struct vImage_YpCbCrPixelRange {
++    pub Yp_bias: i32,
++    pub CbCr_bias: i32,
++    pub YpRangeMax: i32,
++    pub CbCrRangeMax: i32,
++    pub YpMax: i32,
++    pub YpMin: i32,
++    pub CbCrMax: i32,
++    pub CbCrMin: i32,
++}
++
++/// Compact 32-byte representation stored inside `vImage_ARGBToYpCbCr` (Apple's
++/// opaque struct is 128 bytes; keeping our payload <= 32 bytes is extra safe).
++#[repr(C)]
++#[derive(Clone, Copy)]
++struct ArgbToYuvInfo {
++    r_yp: i16,
++    g_yp: i16,
++    b_yp: i16,
++    r_cb: i16,
++    g_cb: i16,
++    b_cb_r_cr: i16,
++    g_cr: i16,
++    b_cr: i16,
++    yp_bias: i16,
++    cbcr_bias: i16,
++    yp_scale: i16,
++    cbcr_scale: i16,
++    yp_min: u8,
++    yp_max: u8,
++    cbcr_min: u8,
++    cbcr_max: u8,
++    magic: u32,
++}
++
++const _: () = assert!(std::mem::size_of::<ArgbToYuvInfo>() == 32);
++
++/// Compact 32-byte representation stored inside `vImage_YpCbCrToARGB`.
++#[repr(C)]
++#[derive(Clone, Copy)]
++struct YuvToArgbInfo {
++    yp: f32,
++    cr_r: f32,
++    cr_g: f32,
++    cb_g: f32,
++    cb_b: f32,
++    yp_bias: i16,
++    cbcr_bias: i16,
++    yp_range: i16,
++    cbcr_range: i16,
++    magic: u32,
++}
++
++const _: () = assert!(std::mem::size_of::<YuvToArgbInfo>() == 32);
++
++const MAGIC_ARGB_TO_YUV: u32 = 0x5649_4159; // "VIAY"
++const MAGIC_YUV_TO_ARGB: u32 = 0x5649_5941; // "VIYA"
++
++static MATRIX_ARGB_TO_YCBCR_601: vImage_ARGBToYpCbCrMatrix = vImage_ARGBToYpCbCrMatrix {
++    R_Yp: 0.299,
++    G_Yp: 0.587,
++    B_Yp: 0.114,
++    R_Cb: -0.168736,
++    G_Cb: -0.331264,
++    B_Cb_R_Cr: 0.5,
++    G_Cr: -0.418688,
++    B_Cr: -0.081312,
++};
++
++static MATRIX_ARGB_TO_YCBCR_709: vImage_ARGBToYpCbCrMatrix = vImage_ARGBToYpCbCrMatrix {
++    R_Yp: 0.2126,
++    G_Yp: 0.7152,
++    B_Yp: 0.0722,
++    R_Cb: -0.114572,
++    G_Cb: -0.385428,
++    B_Cb_R_Cr: 0.5,
++    G_Cr: -0.454153,
++    B_Cr: -0.045847,
++};
++
++static MATRIX_YCBCR_TO_ARGB_601: vImage_YpCbCrToARGBMatrix = vImage_YpCbCrToARGBMatrix {
++    Yp: 1.0,
++    Cr_R: 1.402,
++    Cr_G: -0.714136,
++    Cb_G: -0.344136,
++    Cb_B: 1.772,
++};
++
++static MATRIX_YCBCR_TO_ARGB_709: vImage_YpCbCrToARGBMatrix = vImage_YpCbCrToARGBMatrix {
++    Yp: 1.0,
++    Cr_R: 1.5748,
++    Cr_G: -0.468124,
++    Cb_G: -0.187324,
++    Cb_B: 1.8556,
++};
++
++/// Pointer cells exported as the GOT data globals `const vImage_*Matrix * const kvImage_*`.
++pub fn data_symbols() -> Vec<(String, u64)> {
++    static PTRS: std::sync::OnceLock<Vec<(String, u64)>> = std::sync::OnceLock::new();
++    PTRS.get_or_init(|| {
++        let cell_a601: &'static usize =
++            Box::leak(Box::new(&MATRIX_ARGB_TO_YCBCR_601 as *const _ as usize));
++        let cell_a709: &'static usize =
++            Box::leak(Box::new(&MATRIX_ARGB_TO_YCBCR_709 as *const _ as usize));
++        let cell_y601: &'static usize =
++            Box::leak(Box::new(&MATRIX_YCBCR_TO_ARGB_601 as *const _ as usize));
++        let cell_y709: &'static usize =
++            Box::leak(Box::new(&MATRIX_YCBCR_TO_ARGB_709 as *const _ as usize));
++        vec![
++            (
++                "_kvImage_ARGBToYpCbCrMatrix_ITU_R_601_4".to_string(),
++                cell_a601 as *const usize as u64,
++            ),
++            (
++                "_kvImage_ARGBToYpCbCrMatrix_ITU_R_709_2".to_string(),
++                cell_a709 as *const usize as u64,
++            ),
++            (
++                "_kvImage_YpCbCrToARGBMatrix_ITU_R_601_4".to_string(),
++                cell_y601 as *const usize as u64,
++            ),
++            (
++                "_kvImage_YpCbCrToARGBMatrix_ITU_R_709_2".to_string(),
++                cell_y709 as *const usize as u64,
++            ),
++        ]
++    })
++    .clone()
++}
++
++#[inline]
++fn clamp_u8(v: f32) -> u8 {
++    v.round().clamp(0.0, 255.0) as u8
++}
++
++#[inline]
++fn clamp_u8_i32(v: i32) -> u8 {
++    v.clamp(0, 255) as u8
++}
++
++#[inline]
++fn premul_channel(c: u8, a: u8) -> u8 {
++    ((u16::from(c) * u16::from(a) + 127) / 255) as u8
++}
++
++#[inline]
++fn unpremul_channel(c: u8, a: u8) -> u8 {
++    if a == 0 {
++        0
++    } else if a == 255 {
++        c
++    } else {
++        ((u32::from(c) * 255 + u32::from(a) / 2) / u32::from(a)).min(255) as u8
++    }
++}
++
++#[inline]
++fn valid_buf(buf: *const vImage_Buffer) -> Option<vImage_Buffer> {
++    if buf.is_null() {
++        return None;
++    }
++    let b = unsafe { *buf };
++    if b.width == 0 || b.height == 0 {
++        return Some(b);
++    }
++    if b.data.is_null() {
++        return None;
++    }
++    Some(b)
++}
++
++#[inline]
++unsafe fn row_ptr(buf: &vImage_Buffer, y: usize) -> *const u8 {
++    unsafe { (buf.data as *const u8).add(y * buf.rowBytes) }
++}
++
++#[inline]
++unsafe fn row_ptr_mut(buf: &vImage_Buffer, y: usize) -> *mut u8 {
++    unsafe { (buf.data as *mut u8).add(y * buf.rowBytes) }
++}
++
++// ---------------------------------------------------------------------------
++// Channel permutation
++// ---------------------------------------------------------------------------
++
++pub unsafe extern "C" fn vImagePermuteChannels_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    permuteMap: *const u8,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if permuteMap.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    if s.width != d.width || s.height != d.height {
++        return kvImageBufferSizeMismatch;
++    }
++    let map = unsafe {
++        [
++            (*permuteMap.add(0) & 3) as usize,
++            (*permuteMap.add(1) & 3) as usize,
++            (*permuteMap.add(2) & 3) as usize,
++            (*permuteMap.add(3) & 3) as usize,
++        ]
++    };
++    for y in 0..s.height {
++        let sr = unsafe { row_ptr(&s, y) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for x in 0..s.width {
++            let off = x * 4;
++            let px = unsafe {
++                [
++                    *sr.add(off),
++                    *sr.add(off + 1),
++                    *sr.add(off + 2),
++                    *sr.add(off + 3),
++                ]
++            };
++            unsafe {
++                *dr.add(off) = px[map[0]];
++                *dr.add(off + 1) = px[map[1]];
++                *dr.add(off + 2) = px[map[2]];
++                *dr.add(off + 3) = px[map[3]];
++            }
++        }
++    }
++    kvImageNoError
++}
++
++// ---------------------------------------------------------------------------
++// Scaling (bilinear)
++// ---------------------------------------------------------------------------
++
++pub unsafe extern "C" fn vImageScale_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if (flags & kvImageGetTempBufferSize) != 0 {
++        return 0;
++    }
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if s.width == 0 || s.height == 0 || d.width == 0 || d.height == 0 {
++        return kvImageNoError;
++    }
++    let sx_scale = s.width as f64 / d.width as f64;
++    let sy_scale = s.height as f64 / d.height as f64;
++    let max_sx = (s.width - 1) as f64;
++    let max_sy = (s.height - 1) as f64;
++    for dy in 0..d.height {
++        let fy = ((dy as f64 + 0.5) * sy_scale - 0.5).clamp(0.0, max_sy);
++        let y0 = fy.floor() as usize;
++        let y1 = (y0 + 1).min(s.height - 1);
++        let wy = fy - y0 as f64;
++        let r0 = unsafe { row_ptr(&s, y0) };
++        let r1 = unsafe { row_ptr(&s, y1) };
++        let dr = unsafe { row_ptr_mut(&d, dy) };
++        for dx in 0..d.width {
++            let fx = ((dx as f64 + 0.5) * sx_scale - 0.5).clamp(0.0, max_sx);
++            let x0 = fx.floor() as usize;
++            let x1 = (x0 + 1).min(s.width - 1);
++            let wx = fx - x0 as f64;
++            let w00 = (1.0 - wx) * (1.0 - wy);
++            let w10 = wx * (1.0 - wy);
++            let w01 = (1.0 - wx) * wy;
++            let w11 = wx * wy;
++            for c in 0..4 {
++                let p00 = unsafe { *r0.add(x0 * 4 + c) } as f64;
++                let p10 = unsafe { *r0.add(x1 * 4 + c) } as f64;
++                let p01 = unsafe { *r1.add(x0 * 4 + c) } as f64;
++                let p11 = unsafe { *r1.add(x1 * 4 + c) } as f64;
++                let v = (p00 * w00 + p10 * w10 + p01 * w01 + p11 * w11)
++                    .round()
++                    .clamp(0.0, 255.0) as u8;
++                unsafe { *dr.add(dx * 4 + c) = v };
++            }
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageScale_Planar8(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if (flags & kvImageGetTempBufferSize) != 0 {
++        return 0;
++    }
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if s.width == 0 || s.height == 0 || d.width == 0 || d.height == 0 {
++        return kvImageNoError;
++    }
++    let sx_scale = s.width as f64 / d.width as f64;
++    let sy_scale = s.height as f64 / d.height as f64;
++    let max_sx = (s.width - 1) as f64;
++    let max_sy = (s.height - 1) as f64;
++    for dy in 0..d.height {
++        let fy = ((dy as f64 + 0.5) * sy_scale - 0.5).clamp(0.0, max_sy);
++        let y0 = fy.floor() as usize;
++        let y1 = (y0 + 1).min(s.height - 1);
++        let wy = fy - y0 as f64;
++        let r0 = unsafe { row_ptr(&s, y0) };
++        let r1 = unsafe { row_ptr(&s, y1) };
++        let dr = unsafe { row_ptr_mut(&d, dy) };
++        for dx in 0..d.width {
++            let fx = ((dx as f64 + 0.5) * sx_scale - 0.5).clamp(0.0, max_sx);
++            let x0 = fx.floor() as usize;
++            let x1 = (x0 + 1).min(s.width - 1);
++            let wx = fx - x0 as f64;
++            let p00 = unsafe { *r0.add(x0) } as f64;
++            let p10 = unsafe { *r0.add(x1) } as f64;
++            let p01 = unsafe { *r1.add(x0) } as f64;
++            let p11 = unsafe { *r1.add(x1) } as f64;
++            let v = (p00 * (1.0 - wx) * (1.0 - wy)
++                + p10 * wx * (1.0 - wy)
++                + p01 * (1.0 - wx) * wy
++                + p11 * wx * wy)
++                .round()
++                .clamp(0.0, 255.0) as u8;
++            unsafe { *dr.add(dx) = v };
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageScale_Planar16U(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if (flags & kvImageGetTempBufferSize) != 0 {
++        return 0;
++    }
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if s.width == 0 || s.height == 0 || d.width == 0 || d.height == 0 {
++        return kvImageNoError;
++    }
++    let sx_scale = s.width as f64 / d.width as f64;
++    let sy_scale = s.height as f64 / d.height as f64;
++    let max_sx = (s.width - 1) as f64;
++    let max_sy = (s.height - 1) as f64;
++    for dy in 0..d.height {
++        let fy = ((dy as f64 + 0.5) * sy_scale - 0.5).clamp(0.0, max_sy);
++        let y0 = fy.floor() as usize;
++        let y1 = (y0 + 1).min(s.height - 1);
++        let wy = fy - y0 as f64;
++        let r0 = unsafe { row_ptr(&s, y0) as *const u16 };
++        let r1 = unsafe { row_ptr(&s, y1) as *const u16 };
++        let dr = unsafe { row_ptr_mut(&d, dy) as *mut u16 };
++        for dx in 0..d.width {
++            let fx = ((dx as f64 + 0.5) * sx_scale - 0.5).clamp(0.0, max_sx);
++            let x0 = fx.floor() as usize;
++            let x1 = (x0 + 1).min(s.width - 1);
++            let wx = fx - x0 as f64;
++            let p00 = unsafe { *r0.add(x0) } as f64;
++            let p10 = unsafe { *r0.add(x1) } as f64;
++            let p01 = unsafe { *r1.add(x0) } as f64;
++            let p11 = unsafe { *r1.add(x1) } as f64;
++            let v = (p00 * (1.0 - wx) * (1.0 - wy)
++                + p10 * wx * (1.0 - wy)
++                + p01 * (1.0 - wx) * wy
++                + p11 * wx * wy)
++                .round()
++                .clamp(0.0, 65535.0) as u16;
++            unsafe { *dr.add(dx) = v };
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageScale_Planar16F(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if (flags & kvImageGetTempBufferSize) != 0 {
++        return 0;
++    }
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if s.width == 0 || s.height == 0 || d.width == 0 || d.height == 0 {
++        return kvImageNoError;
++    }
++    let sx_scale = s.width as f64 / d.width as f64;
++    let sy_scale = s.height as f64 / d.height as f64;
++    let max_sx = (s.width - 1) as f64;
++    let max_sy = (s.height - 1) as f64;
++    for dy in 0..d.height {
++        let fy = ((dy as f64 + 0.5) * sy_scale - 0.5).clamp(0.0, max_sy);
++        let y0 = fy.floor() as usize;
++        let y1 = (y0 + 1).min(s.height - 1);
++        let wy = fy - y0 as f64;
++        let r0 = unsafe { row_ptr(&s, y0) as *const u16 };
++        let r1 = unsafe { row_ptr(&s, y1) as *const u16 };
++        let dr = unsafe { row_ptr_mut(&d, dy) as *mut u16 };
++        for dx in 0..d.width {
++            let fx = ((dx as f64 + 0.5) * sx_scale - 0.5).clamp(0.0, max_sx);
++            let x0 = fx.floor() as usize;
++            let x1 = (x0 + 1).min(s.width - 1);
++            let wx = fx - x0 as f64;
++            let p00 = half::f16::from_bits(unsafe { *r0.add(x0) }).to_f64();
++            let p10 = half::f16::from_bits(unsafe { *r0.add(x1) }).to_f64();
++            let p01 = half::f16::from_bits(unsafe { *r1.add(x0) }).to_f64();
++            let p11 = half::f16::from_bits(unsafe { *r1.add(x1) }).to_f64();
++            let v = p00 * (1.0 - wx) * (1.0 - wy)
++                + p10 * wx * (1.0 - wy)
++                + p01 * (1.0 - wx) * wy
++                + p11 * wx * wy;
++            unsafe { *dr.add(dx) = half::f16::from_f64(v).to_bits() };
++        }
++    }
++    kvImageNoError
++}
++
++// ---------------------------------------------------------------------------
++// Reflection & Rotation & Affine Warp
++// ---------------------------------------------------------------------------
++
++unsafe fn reflect_h<const BPP: usize>(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if s.width != d.width || s.height != d.height {
++        return kvImageBufferSizeMismatch;
++    }
++    let mut row_tmp = vec![0u8; s.width * BPP];
++    for y in 0..s.height {
++        let sr = unsafe { row_ptr(&s, y) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for x in 0..s.width {
++            let src_x = s.width - 1 - x;
++            unsafe {
++                ptr::copy_nonoverlapping(
++                    sr.add(src_x * BPP),
++                    row_tmp.as_mut_ptr().add(x * BPP),
++                    BPP,
++                );
++            }
++        }
++        unsafe { ptr::copy_nonoverlapping(row_tmp.as_ptr(), dr, s.width * BPP) };
++    }
++    kvImageNoError
++}
++
++unsafe fn reflect_v<const BPP: usize>(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if s.width != d.width || s.height != d.height {
++        return kvImageBufferSizeMismatch;
++    }
++    let row_len = s.width * BPP;
++    if s.data == d.data {
++        let mut tmp = vec![0u8; row_len];
++        for y in 0..s.height / 2 {
++            let y2 = s.height - 1 - y;
++            let r1 = unsafe { row_ptr_mut(&d, y) };
++            let r2 = unsafe { row_ptr_mut(&d, y2) };
++            unsafe {
++                ptr::copy_nonoverlapping(r1, tmp.as_mut_ptr(), row_len);
++                ptr::copy_nonoverlapping(r2, r1, row_len);
++                ptr::copy_nonoverlapping(tmp.as_ptr(), r2, row_len);
++            }
++        }
++    } else {
++        for y in 0..s.height {
++            let sr = unsafe { row_ptr(&s, s.height - 1 - y) };
++            let dr = unsafe { row_ptr_mut(&d, y) };
++            unsafe { ptr::copy_nonoverlapping(sr, dr, row_len) };
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageHorizontalReflect_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { reflect_h::<4>(src, dest) }
++}
++
++pub unsafe extern "C" fn vImageHorizontalReflect_Planar8(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { reflect_h::<1>(src, dest) }
++}
++
++pub unsafe extern "C" fn vImageHorizontalReflect_Planar16U(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { reflect_h::<2>(src, dest) }
++}
++
++pub unsafe extern "C" fn vImageVerticalReflect_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { reflect_v::<4>(src, dest) }
++}
++
++pub unsafe extern "C" fn vImageVerticalReflect_Planar8(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { reflect_v::<1>(src, dest) }
++}
++
++pub unsafe extern "C" fn vImageVerticalReflect_Planar16U(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { reflect_v::<2>(src, dest) }
++}
++
++unsafe fn rotate90_impl<const BPP: usize>(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    rotationConstant: u8,
++    backColor: *const u8,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    let mut bg = [0u8; BPP];
++    if !backColor.is_null() {
++        unsafe { ptr::copy_nonoverlapping(backColor, bg.as_mut_ptr(), BPP) };
++    }
++    let rot = rotationConstant & 3;
++    let sw = s.width as isize;
++    let sh = s.height as isize;
++    let dw = d.width as isize;
++    let dh = d.height as isize;
++    let edge_extend = (flags & kvImageEdgeExtend) != 0;
++
++    // Center-aligned rotation per Apple vImageRotate90 spec:
++    // rot 0: 0 deg, rot 1: 90 CCW, rot 2: 180, rot 3: 90 CW (270 CCW)
++    for dy in 0..dh {
++        let dr = unsafe { row_ptr_mut(&d, dy as usize) };
++        for dx in 0..dw {
++            let (sx, sy) = match rot {
++                0 => (dx + (sw - dw) / 2, dy + (sh - dh) / 2),
++                1 => (
++                    (sw - 1) - (dy + (sw - dh) / 2),
++                    dx + (sh - dw) / 2,
++                ),
++                2 => (
++                    (sw - 1) - (dx + (sw - dw) / 2),
++                    (sh - 1) - (dy + (sh - dh) / 2),
++                ),
++                3 => (
++                    dy + (sw - dh) / 2,
++                    (sh - 1) - (dx + (sh - dw) / 2),
++                ),
++                _ => unreachable!(),
++            };
++            let dst_px = unsafe { dr.add(dx as usize * BPP) };
++            if sx >= 0 && sx < sw && sy >= 0 && sy < sh {
++                let sr = unsafe { row_ptr(&s, sy as usize) };
++                unsafe { ptr::copy_nonoverlapping(sr.add(sx as usize * BPP), dst_px, BPP) };
++            } else if edge_extend && sw > 0 && sh > 0 {
++                let csx = sx.clamp(0, sw - 1) as usize;
++                let csy = sy.clamp(0, sh - 1) as usize;
++                let sr = unsafe { row_ptr(&s, csy) };
++                unsafe { ptr::copy_nonoverlapping(sr.add(csx * BPP), dst_px, BPP) };
++            } else {
++                unsafe { ptr::copy_nonoverlapping(bg.as_ptr(), dst_px, BPP) };
++            }
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageRotate90_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    rotationConstant: u8,
++    backColor: *const u8,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { rotate90_impl::<4>(src, dest, rotationConstant, backColor, flags) }
++}
++
++pub unsafe extern "C" fn vImageRotate90_Planar8(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    rotationConstant: u8,
++    backColor: u8,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { rotate90_impl::<1>(src, dest, rotationConstant, &backColor, flags) }
++}
++
++pub unsafe extern "C" fn vImageRotate90_Planar16U(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    rotationConstant: u8,
++    backColor: u16,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    let bytes = backColor.to_ne_bytes();
++    unsafe { rotate90_impl::<2>(src, dest, rotationConstant, bytes.as_ptr(), flags) }
++}
++
++unsafe fn sample_bilinear<const CH: usize>(
++    s: &vImage_Buffer,
++    fx: f64,
++    fy: f64,
++    bg: &[u8; CH],
++    edge_extend: bool,
++) -> [u8; CH] {
++    let sw = s.width as isize;
++    let sh = s.height as isize;
++    if sw <= 0 || sh <= 0 {
++        return *bg;
++    }
++    if !edge_extend && (fx < -0.5 || fy < -0.5 || fx > (sw as f64 - 0.5) || fy > (sh as f64 - 0.5)) {
++        return *bg;
++    }
++    let fx = fx.clamp(0.0, (sw - 1) as f64);
++    let fy = fy.clamp(0.0, (sh - 1) as f64);
++    let x0 = fx.floor() as usize;
++    let y0 = fy.floor() as usize;
++    let x1 = (x0 + 1).min(s.width - 1);
++    let y1 = (y0 + 1).min(s.height - 1);
++    let wx = fx - x0 as f64;
++    let wy = fy - y0 as f64;
++    let r0 = unsafe { row_ptr(s, y0) };
++    let r1 = unsafe { row_ptr(s, y1) };
++    let mut out = [0u8; CH];
++    for c in 0..CH {
++        let p00 = unsafe { *r0.add(x0 * CH + c) } as f64;
++        let p10 = unsafe { *r0.add(x1 * CH + c) } as f64;
++        let p01 = unsafe { *r1.add(x0 * CH + c) } as f64;
++        let p11 = unsafe { *r1.add(x1 * CH + c) } as f64;
++        out[c] = (p00 * (1.0 - wx) * (1.0 - wy)
++            + p10 * wx * (1.0 - wy)
++            + p01 * (1.0 - wx) * wy
++            + p11 * wx * wy)
++            .round()
++            .clamp(0.0, 255.0) as u8;
++    }
++    out
++}
++
++pub unsafe extern "C" fn vImageRotate_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    angleInRadians: f32,
++    backColor: *const u8,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if (flags & kvImageGetTempBufferSize) != 0 {
++        return 0;
++    }
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    let bg = if backColor.is_null() {
++        [0u8; 4]
++    } else {
++        unsafe {
++            [
++                *backColor.add(0),
++                *backColor.add(1),
++                *backColor.add(2),
++                *backColor.add(3),
++            ]
++        }
++    };
++    let edge = (flags & kvImageEdgeExtend) != 0;
++    let (sin_a, cos_a) = (f64::from(angleInRadians).sin(), f64::from(angleInRadians).cos());
++    let scx = (s.width as f64 - 1.0) * 0.5;
++    let scy = (s.height as f64 - 1.0) * 0.5;
++    let dcx = (d.width as f64 - 1.0) * 0.5;
++    let dcy = (d.height as f64 - 1.0) * 0.5;
++    for dy in 0..d.height {
++        let dr = unsafe { row_ptr_mut(&d, dy) };
++        let ry = dy as f64 - dcy;
++        for dx in 0..d.width {
++            let rx = dx as f64 - dcx;
++            let sx = rx * cos_a - ry * sin_a + scx;
++            let sy = rx * sin_a + ry * cos_a + scy;
++            let px = unsafe { sample_bilinear::<4>(&s, sx, sy, &bg, edge) };
++            unsafe { ptr::copy_nonoverlapping(px.as_ptr(), dr.add(dx * 4), 4) };
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageRotate_Planar8(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    angleInRadians: f32,
++    backColor: u8,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if (flags & kvImageGetTempBufferSize) != 0 {
++        return 0;
++    }
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    let bg = [backColor];
++    let edge = (flags & kvImageEdgeExtend) != 0;
++    let (sin_a, cos_a) = (f64::from(angleInRadians).sin(), f64::from(angleInRadians).cos());
++    let scx = (s.width as f64 - 1.0) * 0.5;
++    let scy = (s.height as f64 - 1.0) * 0.5;
++    let dcx = (d.width as f64 - 1.0) * 0.5;
++    let dcy = (d.height as f64 - 1.0) * 0.5;
++    for dy in 0..d.height {
++        let dr = unsafe { row_ptr_mut(&d, dy) };
++        let ry = dy as f64 - dcy;
++        for dx in 0..d.width {
++            let rx = dx as f64 - dcx;
++            let sx = rx * cos_a - ry * sin_a + scx;
++            let sy = rx * sin_a + ry * cos_a + scy;
++            let px = unsafe { sample_bilinear::<1>(&s, sx, sy, &bg, edge) };
++            unsafe { *dr.add(dx) = px[0] };
++        }
++    }
++    kvImageNoError
++}
++
++unsafe fn affine_warp_impl<const CH: usize>(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    transform: *const vImage_CGAffineTransform,
++    bg: [u8; CH],
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if (flags & kvImageGetTempBufferSize) != 0 {
++        return 0;
++    }
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if transform.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    let t = unsafe { *transform };
++    let det = t.a * t.d - t.b * t.c;
++    if det.abs() < 1e-12 {
++        return kvImageInvalidParameter;
++    }
++    let inv_a = t.d / det;
++    let inv_b = -t.b / det;
++    let inv_c = -t.c / det;
++    let inv_d = t.a / det;
++    let edge = (flags & kvImageEdgeExtend) != 0;
++
++    // CG/vImage affine transform uses bottom-left Y-up coordinates:
++    // x' = a*x + c*y + tx, y' = b*x + d*y + ty
++    let sh = s.height as f64;
++    let dh = d.height as f64;
++    for dy in 0..d.height {
++        let dr = unsafe { row_ptr_mut(&d, dy) };
++        let y_prime = (dh - 1.0) - dy as f64 - t.ty;
++        for dx in 0..d.width {
++            let x_prime = dx as f64 - t.tx;
++            let sx = inv_a * x_prime + inv_c * y_prime;
++            let sy_cg = inv_b * x_prime + inv_d * y_prime;
++            let sy = (sh - 1.0) - sy_cg;
++            let px = unsafe { sample_bilinear::<CH>(&s, sx, sy, &bg, edge) };
++            unsafe { ptr::copy_nonoverlapping(px.as_ptr(), dr.add(dx * CH), CH) };
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageAffineWarpCG_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    transform: *const vImage_CGAffineTransform,
++    backColor: *const u8,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    let bg = if backColor.is_null() {
++        [0u8; 4]
++    } else {
++        unsafe {
++            [
++                *backColor.add(0),
++                *backColor.add(1),
++                *backColor.add(2),
++                *backColor.add(3),
++            ]
++        }
++    };
++    unsafe { affine_warp_impl::<4>(src, dest, transform, bg, flags) }
++}
++
++pub unsafe extern "C" fn vImageAffineWarpCG_Planar8(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    transform: *const vImage_CGAffineTransform,
++    backColor: u8,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { affine_warp_impl::<1>(src, dest, transform, [backColor], flags) }
++}
++
++// ---------------------------------------------------------------------------
++// RGB888 <-> 8888 & bit-depth conversions
++// ---------------------------------------------------------------------------
++
++unsafe fn rgb888_to_4ch(
++    src: *const vImage_Buffer,
++    alpha_src: *const vImage_Buffer,
++    alpha: u8,
++    dest: *const vImage_Buffer,
++    premultiply: u8,
++    order: [usize; 4], // indices in [R, G, B, A]
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if s.width != d.width || s.height != d.height {
++        return kvImageBufferSizeMismatch;
++    }
++    let a_buf = if alpha_src.is_null() {
++        None
++    } else {
++        valid_buf(alpha_src)
++    };
++    let premul = premultiply != 0;
++    for y in 0..s.height {
++        let sr = unsafe { row_ptr(&s, y) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        let ar = a_buf.as_ref().map(|ab| unsafe { row_ptr(ab, y) });
++        for x in 0..s.width {
++            let mut r = unsafe { *sr.add(x * 3) };
++            let mut g = unsafe { *sr.add(x * 3 + 1) };
++            let mut b = unsafe { *sr.add(x * 3 + 2) };
++            let a = match ar {
++                Some(p) => unsafe { *p.add(x) },
++                None => alpha,
++            };
++            if premul {
++                r = premul_channel(r, a);
++                g = premul_channel(g, a);
++                b = premul_channel(b, a);
++            }
++            let rgba = [r, g, b, a];
++            unsafe {
++                *dr.add(x * 4) = rgba[order[0]];
++                *dr.add(x * 4 + 1) = rgba[order[1]];
++                *dr.add(x * 4 + 2) = rgba[order[2]];
++                *dr.add(x * 4 + 3) = rgba[order[3]];
++            }
++        }
++    }
++    kvImageNoError
++}
++
++unsafe fn ch4_to_rgb888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    rgb_idx: [usize; 3],
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if s.width != d.width || s.height != d.height {
++        return kvImageBufferSizeMismatch;
++    }
++    for y in 0..s.height {
++        let sr = unsafe { row_ptr(&s, y) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for x in 0..s.width {
++            unsafe {
++                *dr.add(x * 3) = *sr.add(x * 4 + rgb_idx[0]);
++                *dr.add(x * 3 + 1) = *sr.add(x * 4 + rgb_idx[1]);
++                *dr.add(x * 3 + 2) = *sr.add(x * 4 + rgb_idx[2]);
++            }
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageConvert_RGB888toARGB8888(
++    src: *const vImage_Buffer,
++    alpha_src: *const vImage_Buffer,
++    alpha: u8,
++    dest: *const vImage_Buffer,
++    premultiply: u8,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { rgb888_to_4ch(src, alpha_src, alpha, dest, premultiply, [3, 0, 1, 2]) }
++}
++
++pub unsafe extern "C" fn vImageConvert_RGB888toBGRA8888(
++    src: *const vImage_Buffer,
++    alpha_src: *const vImage_Buffer,
++    alpha: u8,
++    dest: *const vImage_Buffer,
++    premultiply: u8,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { rgb888_to_4ch(src, alpha_src, alpha, dest, premultiply, [2, 1, 0, 3]) }
++}
++
++pub unsafe extern "C" fn vImageConvert_RGB888toRGBA8888(
++    src: *const vImage_Buffer,
++    alpha_src: *const vImage_Buffer,
++    alpha: u8,
++    dest: *const vImage_Buffer,
++    premultiply: u8,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { rgb888_to_4ch(src, alpha_src, alpha, dest, premultiply, [0, 1, 2, 3]) }
++}
++
++pub unsafe extern "C" fn vImageConvert_ARGB8888toRGB888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { ch4_to_rgb888(src, dest, [1, 2, 3]) }
++}
++
++pub unsafe extern "C" fn vImageConvert_BGRA8888toRGB888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { ch4_to_rgb888(src, dest, [2, 1, 0]) }
++}
++
++pub unsafe extern "C" fn vImageConvert_RGBA8888toRGB888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { ch4_to_rgb888(src, dest, [0, 1, 2]) }
++}
++
++pub unsafe extern "C" fn vImageConvert_ARGB16UToARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if s.width != d.width || s.height != d.height {
++        return kvImageBufferSizeMismatch;
++    }
++    for y in 0..s.height {
++        let sr = unsafe { row_ptr(&s, y) as *const u16 };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for i in 0..(s.width * 4) {
++            let v16 = unsafe { *sr.add(i) };
++            let v8 = ((u32::from(v16) * 255 + 32768) / 65535).min(255) as u8;
++            unsafe { *dr.add(i) = v8 };
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageConvert_Planar16FtoPlanar8(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if s.width != d.width || s.height != d.height {
++        return kvImageBufferSizeMismatch;
++    }
++    for y in 0..s.height {
++        let sr = unsafe { row_ptr(&s, y) as *const u16 };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for x in 0..s.width {
++            let f = half::f16::from_bits(unsafe { *sr.add(x) }).to_f32();
++            let v = (f * 255.0).round().clamp(0.0, 255.0) as u8;
++            unsafe { *dr.add(x) = v };
++        }
++    }
++    kvImageNoError
++}
++
++// ---------------------------------------------------------------------------
++// YpCbCr <-> ARGB8888 conversions
++// ---------------------------------------------------------------------------
++
++pub unsafe extern "C" fn vImageConvert_ARGBToYpCbCr_GenerateConversion(
++    matrix: *const vImage_ARGBToYpCbCrMatrix,
++    pixelRange: *const vImage_YpCbCrPixelRange,
++    outInfo: *mut c_void,
++    _inType: u32,
++    _outType: u32,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    if matrix.is_null() || pixelRange.is_null() || outInfo.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    let m = unsafe { *matrix };
++    let r = unsafe { *pixelRange };
++    let q = |f: f32| (f * 4096.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
++    let info = ArgbToYuvInfo {
++        r_yp: q(m.R_Yp),
++        g_yp: q(m.G_Yp),
++        b_yp: q(m.B_Yp),
++        r_cb: q(m.R_Cb),
++        g_cb: q(m.G_Cb),
++        b_cb_r_cr: q(m.B_Cb_R_Cr),
++        g_cr: q(m.G_Cr),
++        b_cr: q(m.B_Cr),
++        yp_bias: r.Yp_bias as i16,
++        cbcr_bias: r.CbCr_bias as i16,
++        yp_scale: (r.YpRangeMax - r.Yp_bias).max(1) as i16,
++        cbcr_scale: ((r.CbCrRangeMax - r.CbCr_bias) * 2).max(1) as i16,
++        yp_min: r.YpMin.clamp(0, 255) as u8,
++        yp_max: r.YpMax.clamp(0, 255) as u8,
++        cbcr_min: r.CbCrMin.clamp(0, 255) as u8,
++        cbcr_max: r.CbCrMax.clamp(0, 255) as u8,
++        magic: MAGIC_ARGB_TO_YUV,
++    };
++    unsafe { ptr::write_unaligned(outInfo.cast::<ArgbToYuvInfo>(), info) };
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageConvert_YpCbCrToARGB_GenerateConversion(
++    matrix: *const vImage_YpCbCrToARGBMatrix,
++    pixelRange: *const vImage_YpCbCrPixelRange,
++    outInfo: *mut c_void,
++    _inType: u32,
++    _outType: u32,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    if matrix.is_null() || pixelRange.is_null() || outInfo.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    let m = unsafe { *matrix };
++    let r = unsafe { *pixelRange };
++    let info = YuvToArgbInfo {
++        yp: m.Yp,
++        cr_r: m.Cr_R,
++        cr_g: m.Cr_G,
++        cb_g: m.Cb_G,
++        cb_b: m.Cb_B,
++        yp_bias: r.Yp_bias as i16,
++        cbcr_bias: r.CbCr_bias as i16,
++        yp_range: (r.YpRangeMax - r.Yp_bias).max(1) as i16,
++        cbcr_range: ((r.CbCrRangeMax - r.CbCr_bias) * 2).max(1) as i16,
++        magic: MAGIC_YUV_TO_ARGB,
++    };
++    unsafe { ptr::write_unaligned(outInfo.cast::<YuvToArgbInfo>(), info) };
++    kvImageNoError
++}
++
++fn read_yuv_to_argb_info(info: *const c_void) -> YuvToArgbInfo {
++    if !info.is_null() {
++        let loaded = unsafe { ptr::read_unaligned(info.cast::<YuvToArgbInfo>()) };
++        if loaded.magic == MAGIC_YUV_TO_ARGB {
++            return loaded;
++        }
++    }
++    YuvToArgbInfo {
++        yp: MATRIX_YCBCR_TO_ARGB_709.Yp,
++        cr_r: MATRIX_YCBCR_TO_ARGB_709.Cr_R,
++        cr_g: MATRIX_YCBCR_TO_ARGB_709.Cr_G,
++        cb_g: MATRIX_YCBCR_TO_ARGB_709.Cb_G,
++        cb_b: MATRIX_YCBCR_TO_ARGB_709.Cb_B,
++        yp_bias: 16,
++        cbcr_bias: 128,
++        yp_range: 219,
++        cbcr_range: 224,
++        magic: MAGIC_YUV_TO_ARGB,
++    }
++}
++
++fn read_argb_to_yuv_info(info: *const c_void) -> ArgbToYuvInfo {
++    if !info.is_null() {
++        let loaded = unsafe { ptr::read_unaligned(info.cast::<ArgbToYuvInfo>()) };
++        if loaded.magic == MAGIC_ARGB_TO_YUV {
++            return loaded;
++        }
++    }
++    let m = MATRIX_ARGB_TO_YCBCR_709;
++    let q = |f: f32| (f * 4096.0).round() as i16;
++    ArgbToYuvInfo {
++        r_yp: q(m.R_Yp),
++        g_yp: q(m.G_Yp),
++        b_yp: q(m.B_Yp),
++        r_cb: q(m.R_Cb),
++        g_cb: q(m.G_Cb),
++        b_cb_r_cr: q(m.B_Cb_R_Cr),
++        g_cr: q(m.G_Cr),
++        b_cr: q(m.B_Cr),
++        yp_bias: 16,
++        cbcr_bias: 128,
++        yp_scale: 219,
++        cbcr_scale: 224,
++        yp_min: 16,
++        yp_max: 235,
++        cbcr_min: 16,
++        cbcr_max: 240,
++        magic: MAGIC_ARGB_TO_YUV,
++    }
++}
++
++#[inline]
++fn yuv_to_rgb_px(y: u8, cb: u8, cr: u8, info: &YuvToArgbInfo) -> [u8; 3] {
++    let yf = ((f32::from(y) - f32::from(info.yp_bias)) / f32::from(info.yp_range.max(1))) * info.yp;
++    let cbf = (f32::from(cb) - f32::from(info.cbcr_bias)) / f32::from(info.cbcr_range.max(1));
++    let crf = (f32::from(cr) - f32::from(info.cbcr_bias)) / f32::from(info.cbcr_range.max(1));
++    let r = (yf + info.cr_r * crf) * 255.0;
++    let g = (yf + info.cr_g * crf + info.cb_g * cbf) * 255.0;
++    let b = (yf + info.cb_b * cbf) * 255.0;
++    [clamp_u8(r), clamp_u8(g), clamp_u8(b)]
++}
++
++#[inline]
++fn rgb_to_yuv_px(r: u8, g: u8, b: u8, info: &ArgbToYuvInfo) -> [u8; 3] {
++    let rf = f32::from(r) / 255.0;
++    let gf = f32::from(g) / 255.0;
++    let bf = f32::from(b) / 255.0;
++    let inv = 1.0 / 4096.0;
++    let yp = (rf * f32::from(info.r_yp) + gf * f32::from(info.g_yp) + bf * f32::from(info.b_yp))
++        * inv
++        * f32::from(info.yp_scale)
++        + f32::from(info.yp_bias);
++    let cb = (rf * f32::from(info.r_cb)
++        + gf * f32::from(info.g_cb)
++        + bf * f32::from(info.b_cb_r_cr))
++        * inv
++        * f32::from(info.cbcr_scale)
++        + f32::from(info.cbcr_bias);
++    let cr = (rf * f32::from(info.b_cb_r_cr)
++        + gf * f32::from(info.g_cr)
++        + bf * f32::from(info.b_cr))
++        * inv
++        * f32::from(info.cbcr_scale)
++        + f32::from(info.cbcr_bias);
++    [
++        yp.round()
++            .clamp(f32::from(info.yp_min), f32::from(info.yp_max)) as u8,
++        cb.round()
++            .clamp(f32::from(info.cbcr_min), f32::from(info.cbcr_max)) as u8,
++        cr.round()
++            .clamp(f32::from(info.cbcr_min), f32::from(info.cbcr_max)) as u8,
++    ]
++}
++
++#[inline]
++fn read_permute_map(map: *const u8) -> [usize; 4] {
++    if map.is_null() {
++        [0, 1, 2, 3]
++    } else {
++        unsafe {
++            [
++                (*map.add(0) & 3) as usize,
++                (*map.add(1) & 3) as usize,
++                (*map.add(2) & 3) as usize,
++                (*map.add(3) & 3) as usize,
++            ]
++        }
++    }
++}
++
++pub unsafe extern "C" fn vImageConvert_420Yp8_Cb8_Cr8ToARGB8888(
++    srcYp: *const vImage_Buffer,
++    srcCb: *const vImage_Buffer,
++    srcCr: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    info: *const c_void,
++    permuteMap: *const u8,
++    alpha: u8,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(yp), Some(cb), Some(cr), Some(d)) = (
++        valid_buf(srcYp),
++        valid_buf(srcCb),
++        valid_buf(srcCr),
++        valid_buf(dest),
++    ) else {
++        return kvImageNullPointerArgument;
++    };
++    let conv = read_yuv_to_argb_info(info);
++    let map = read_permute_map(permuteMap);
++    let w = d.width.min(yp.width);
++    let h = d.height.min(yp.height);
++    for y in 0..h {
++        let yr = unsafe { row_ptr(&yp, y) };
++        let cy = (y / 2).min(cb.height.saturating_sub(1));
++        let cbr = unsafe { row_ptr(&cb, cy) };
++        let crr = unsafe { row_ptr(&cr, cy.min(cr.height.saturating_sub(1))) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for x in 0..w {
++            let cx = (x / 2).min(cb.width.saturating_sub(1));
++            let yv = unsafe { *yr.add(x) };
++            let cbv = unsafe { *cbr.add(cx) };
++            let crv = unsafe { *crr.add(cx.min(cr.width.saturating_sub(1))) };
++            let [r, g, b] = yuv_to_rgb_px(yv, cbv, crv, &conv);
++            let argb = [alpha, r, g, b];
++            unsafe {
++                *dr.add(x * 4) = argb[map[0]];
++                *dr.add(x * 4 + 1) = argb[map[1]];
++                *dr.add(x * 4 + 2) = argb[map[2]];
++                *dr.add(x * 4 + 3) = argb[map[3]];
++            }
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageConvert_420Yp8_CbCr8ToARGB8888(
++    srcYp: *const vImage_Buffer,
++    srcCbCr: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    info: *const c_void,
++    permuteMap: *const u8,
++    alpha: u8,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(yp), Some(cbcr), Some(d)) =
++        (valid_buf(srcYp), valid_buf(srcCbCr), valid_buf(dest))
++    else {
++        return kvImageNullPointerArgument;
++    };
++    let conv = read_yuv_to_argb_info(info);
++    let map = read_permute_map(permuteMap);
++    let w = d.width.min(yp.width);
++    let h = d.height.min(yp.height);
++    for y in 0..h {
++        let yr = unsafe { row_ptr(&yp, y) };
++        let cy = (y / 2).min(cbcr.height.saturating_sub(1));
++        let uvr = unsafe { row_ptr(&cbcr, cy) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for x in 0..w {
++            let cx = (x / 2).min(cbcr.width.saturating_sub(1));
++            let yv = unsafe { *yr.add(x) };
++            let cbv = unsafe { *uvr.add(cx * 2) };
++            let crv = unsafe { *uvr.add(cx * 2 + 1) };
++            let [r, g, b] = yuv_to_rgb_px(yv, cbv, crv, &conv);
++            let argb = [alpha, r, g, b];
++            unsafe {
++                *dr.add(x * 4) = argb[map[0]];
++                *dr.add(x * 4 + 1) = argb[map[1]];
++                *dr.add(x * 4 + 2) = argb[map[2]];
++                *dr.add(x * 4 + 3) = argb[map[3]];
++            }
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageConvert_ARGB8888To420Yp8_Cb8_Cr8(
++    src: *const vImage_Buffer,
++    destYp: *const vImage_Buffer,
++    destCb: *const vImage_Buffer,
++    destCr: *const vImage_Buffer,
++    info: *const c_void,
++    permuteMap: *const u8,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(s), Some(yp), Some(cb), Some(cr)) = (
++        valid_buf(src),
++        valid_buf(destYp),
++        valid_buf(destCb),
++        valid_buf(destCr),
++    ) else {
++        return kvImageNullPointerArgument;
++    };
++    let conv = read_argb_to_yuv_info(info);
++    let map = read_permute_map(permuteMap);
++    let w = s.width.min(yp.width);
++    let h = s.height.min(yp.height);
++    for y in 0..h {
++        let sr = unsafe { row_ptr(&s, y) };
++        let yr = unsafe { row_ptr_mut(&yp, y) };
++        let cbr = if y / 2 < cb.height {
++            Some(unsafe { row_ptr_mut(&cb, y / 2) })
++        } else {
++            None
++        };
++        let crr = if y / 2 < cr.height {
++            Some(unsafe { row_ptr_mut(&cr, y / 2) })
++        } else {
++            None
++        };
++        for x in 0..w {
++            let raw = unsafe {
++                [
++                    *sr.add(x * 4),
++                    *sr.add(x * 4 + 1),
++                    *sr.add(x * 4 + 2),
++                    *sr.add(x * 4 + 3),
++                ]
++            };
++            let r = raw[map[1]];
++            let g = raw[map[2]];
++            let b = raw[map[3]];
++            let [yv, cbv, crv] = rgb_to_yuv_px(r, g, b, &conv);
++            unsafe { *yr.add(x) = yv };
++            if (y & 1) == 0 && (x & 1) == 0 {
++                if let Some(p) = cbr
++                    && x / 2 < cb.width
++                {
++                    unsafe { *p.add(x / 2) = cbv };
++                }
++                if let Some(p) = crr
++                    && x / 2 < cr.width
++                {
++                    unsafe { *p.add(x / 2) = crv };
++                }
++            }
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageConvert_ARGB8888To420Yp8_CbCr8(
++    src: *const vImage_Buffer,
++    destYp: *const vImage_Buffer,
++    destCbCr: *const vImage_Buffer,
++    info: *const c_void,
++    permuteMap: *const u8,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(s), Some(yp), Some(cbcr)) =
++        (valid_buf(src), valid_buf(destYp), valid_buf(destCbCr))
++    else {
++        return kvImageNullPointerArgument;
++    };
++    let conv = read_argb_to_yuv_info(info);
++    let map = read_permute_map(permuteMap);
++    let w = s.width.min(yp.width);
++    let h = s.height.min(yp.height);
++    for y in 0..h {
++        let sr = unsafe { row_ptr(&s, y) };
++        let yr = unsafe { row_ptr_mut(&yp, y) };
++        let uvr = if y / 2 < cbcr.height {
++            Some(unsafe { row_ptr_mut(&cbcr, y / 2) })
++        } else {
++            None
++        };
++        for x in 0..w {
++            let raw = unsafe {
++                [
++                    *sr.add(x * 4),
++                    *sr.add(x * 4 + 1),
++                    *sr.add(x * 4 + 2),
++                    *sr.add(x * 4 + 3),
++                ]
++            };
++            let [yv, cbv, crv] = rgb_to_yuv_px(raw[map[1]], raw[map[2]], raw[map[3]], &conv);
++            unsafe { *yr.add(x) = yv };
++            if (y & 1) == 0
++                && (x & 1) == 0
++                && let Some(p) = uvr
++                && x / 2 < cbcr.width
++            {
++                unsafe {
++                    *p.add(x) = cbv;
++                    *p.add(x + 1) = crv;
++                }
++            }
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageConvert_ARGB8888To422CbYpCrYp8(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    info: *const c_void,
++    permuteMap: *const u8,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    let conv = read_argb_to_yuv_info(info);
++    let map = read_permute_map(permuteMap);
++    let w = s.width.min(d.width);
++    let h = s.height.min(d.height);
++    for y in 0..h {
++        let sr = unsafe { row_ptr(&s, y) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        let mut x = 0;
++        while x + 1 < w {
++            let raw0 = unsafe {
++                [
++                    *sr.add(x * 4),
++                    *sr.add(x * 4 + 1),
++                    *sr.add(x * 4 + 2),
++                    *sr.add(x * 4 + 3),
++                ]
++            };
++            let raw1 = unsafe {
++                [
++                    *sr.add((x + 1) * 4),
++                    *sr.add((x + 1) * 4 + 1),
++                    *sr.add((x + 1) * 4 + 2),
++                    *sr.add((x + 1) * 4 + 3),
++                ]
++            };
++            let [y0, cb0, cr0] = rgb_to_yuv_px(raw0[map[1]], raw0[map[2]], raw0[map[3]], &conv);
++            let [y1, cb1, cr1] = rgb_to_yuv_px(raw1[map[1]], raw1[map[2]], raw1[map[3]], &conv);
++            let cb = ((u16::from(cb0) + u16::from(cb1)) / 2) as u8;
++            let cr = ((u16::from(cr0) + u16::from(cr1)) / 2) as u8;
++            // UYVY (2vuy): Cb, Y0, Cr, Y1
++            unsafe {
++                *dr.add(x * 2) = cb;
++                *dr.add(x * 2 + 1) = y0;
++                *dr.add(x * 2 + 2) = cr;
++                *dr.add(x * 2 + 3) = y1;
++            }
++            x += 2;
++        }
++    }
++    kvImageNoError
++}
++
++// ---------------------------------------------------------------------------
++// Alpha premultiplication & Porter-Duff / blend modes
++// ---------------------------------------------------------------------------
++
++pub unsafe extern "C" fn vImagePremultiplyData_RGBA8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if s.width != d.width || s.height != d.height {
++        return kvImageBufferSizeMismatch;
++    }
++    for y in 0..s.height {
++        let sr = unsafe { row_ptr(&s, y) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for x in 0..s.width {
++            let off = x * 4;
++            let (r, g, b, a) = unsafe {
++                (
++                    *sr.add(off),
++                    *sr.add(off + 1),
++                    *sr.add(off + 2),
++                    *sr.add(off + 3),
++                )
++            };
++            unsafe {
++                *dr.add(off) = premul_channel(r, a);
++                *dr.add(off + 1) = premul_channel(g, a);
++                *dr.add(off + 2) = premul_channel(b, a);
++                *dr.add(off + 3) = a;
++            }
++        }
++    }
++    kvImageNoError
++}
++
++#[derive(Clone, Copy)]
++enum BlendOp {
++    Normal,
++    Darken,
++    Lighten,
++    Multiply,
++    Screen,
++}
++
++unsafe fn premul_blend(
++    srcTop: *const vImage_Buffer,
++    srcBottom: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    op: BlendOp,
++) -> vImage_Error {
++    let (Some(t), Some(b), Some(d)) =
++        (valid_buf(srcTop), valid_buf(srcBottom), valid_buf(dest))
++    else {
++        return kvImageNullPointerArgument;
++    };
++    if t.width != d.width || t.height != d.height || b.width != d.width || b.height != d.height {
++        return kvImageBufferSizeMismatch;
++    }
++    for y in 0..d.height {
++        let tr = unsafe { row_ptr(&t, y) };
++        let br = unsafe { row_ptr(&b, y) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for x in 0..d.width {
++            let off = x * 4;
++            let tp = unsafe {
++                [
++                    *tr.add(off) as f32 / 255.0,
++                    *tr.add(off + 1) as f32 / 255.0,
++                    *tr.add(off + 2) as f32 / 255.0,
++                    *tr.add(off + 3) as f32 / 255.0,
++                ]
++            };
++            let bp = unsafe {
++                [
++                    *br.add(off) as f32 / 255.0,
++                    *br.add(off + 1) as f32 / 255.0,
++                    *br.add(off + 2) as f32 / 255.0,
++                    *br.add(off + 3) as f32 / 255.0,
++                ]
++            };
++            let ta = tp[3];
++            let ba = bp[3];
++            let out_a = ta + ba * (1.0 - ta);
++            for c in 0..3 {
++                let s = tp[c];
++                let dst = bp[c];
++                let out_c = match op {
++                    BlendOp::Normal => s + dst * (1.0 - ta),
++                    BlendOp::Darken => (s * ba).min(dst * ta) + s * (1.0 - ba) + dst * (1.0 - ta),
++                    BlendOp::Lighten => (s * ba).max(dst * ta) + s * (1.0 - ba) + dst * (1.0 - ta),
++                    BlendOp::Multiply => s * dst + s * (1.0 - ba) + dst * (1.0 - ta),
++                    BlendOp::Screen => s + dst - s * dst,
++                };
++                unsafe { *dr.add(off + c) = clamp_u8(out_c * 255.0) };
++            }
++            unsafe { *dr.add(off + 3) = clamp_u8(out_a * 255.0) };
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImagePremultipliedAlphaBlend_BGRA8888(
++    srcTop: *const vImage_Buffer,
++    srcBottom: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    // Channel order for R/G/B doesn't matter for per-channel Porter-Duff src-over when alpha is channel 3.
++    unsafe { premul_blend(srcTop, srcBottom, dest, BlendOp::Normal) }
++}
++
++pub unsafe extern "C" fn vImagePremultipliedAlphaBlendDarken_RGBA8888(
++    srcTop: *const vImage_Buffer,
++    srcBottom: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { premul_blend(srcTop, srcBottom, dest, BlendOp::Darken) }
++}
++
++pub unsafe extern "C" fn vImagePremultipliedAlphaBlendLighten_RGBA8888(
++    srcTop: *const vImage_Buffer,
++    srcBottom: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { premul_blend(srcTop, srcBottom, dest, BlendOp::Lighten) }
++}
++
++pub unsafe extern "C" fn vImagePremultipliedAlphaBlendMultiply_RGBA8888(
++    srcTop: *const vImage_Buffer,
++    srcBottom: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { premul_blend(srcTop, srcBottom, dest, BlendOp::Multiply) }
++}
++
++pub unsafe extern "C" fn vImagePremultipliedAlphaBlendScreen_RGBA8888(
++    srcTop: *const vImage_Buffer,
++    srcBottom: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe { premul_blend(srcTop, srcBottom, dest, BlendOp::Screen) }
++}
++
++// ---------------------------------------------------------------------------
++// Convolution, Morphology, Matrix Multiply
++// ---------------------------------------------------------------------------
++
++pub unsafe extern "C" fn vImageConvolve_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    srcOffsetToROI_X: usize,
++    srcOffsetToROI_Y: usize,
++    kernel: *const i16,
++    kernel_height: u32,
++    kernel_width: u32,
++    divisor: i32,
++    backgroundColor: *const u8,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if (flags & kvImageGetTempBufferSize) != 0 {
++        return 0;
++    }
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if kernel.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    let kw = kernel_width as isize;
++    let kh = kernel_height as isize;
++    if kw <= 0 || kh <= 0 {
++        return kvImageInvalidKernelSize;
++    }
++    let div = if divisor == 0 {
++        let mut sum: i32 = 0;
++        for i in 0..(kw * kh) as usize {
++            sum += i32::from(unsafe { *kernel.add(i) });
++        }
++        if sum == 0 { 1 } else { sum }
++    } else {
++        divisor
++    };
++    let bg = if backgroundColor.is_null() {
++        [0u8; 4]
++    } else {
++        unsafe {
++            [
++                *backgroundColor.add(0),
++                *backgroundColor.add(1),
++                *backgroundColor.add(2),
++                *backgroundColor.add(3),
++            ]
++        }
++    };
++    let edge = (flags & kvImageEdgeExtend) != 0 || backgroundColor.is_null();
++    let leave_alpha = (flags & kvImageLeaveAlphaUnchanged) != 0;
++    let sw = s.width as isize;
++    let sh = s.height as isize;
++    let half_w = kw / 2;
++    let half_h = kh / 2;
++
++    for dy in 0..d.height {
++        let dr = unsafe { row_ptr_mut(&d, dy) };
++        let cy = dy as isize + srcOffsetToROI_Y as isize;
++        for dx in 0..d.width {
++            let cx = dx as isize + srcOffsetToROI_X as isize;
++            let mut acc = [0i64; 4];
++            for ky in 0..kh {
++                let sy = cy + ky - half_h;
++                for kx in 0..kw {
++                    let sx = cx + kx - half_w;
++                    let k = i64::from(unsafe { *kernel.add((ky * kw + kx) as usize) });
++                    let px = if sx >= 0 && sx < sw && sy >= 0 && sy < sh {
++                        let sr = unsafe { row_ptr(&s, sy as usize) };
++                        let off = sx as usize * 4;
++                        unsafe {
++                            [
++                                *sr.add(off),
++                                *sr.add(off + 1),
++                                *sr.add(off + 2),
++                                *sr.add(off + 3),
++                            ]
++                        }
++                    } else if edge && sw > 0 && sh > 0 {
++                        let csx = sx.clamp(0, sw - 1) as usize;
++                        let csy = sy.clamp(0, sh - 1) as usize;
++                        let sr = unsafe { row_ptr(&s, csy) };
++                        let off = csx * 4;
++                        unsafe {
++                            [
++                                *sr.add(off),
++                                *sr.add(off + 1),
++                                *sr.add(off + 2),
++                                *sr.add(off + 3),
++                            ]
++                        }
++                    } else {
++                        bg
++                    };
++                    for c in 0..4 {
++                        acc[c] += i64::from(px[c]) * k;
++                    }
++                }
++            }
++            let off = dx * 4;
++            for c in 0..4 {
++                if leave_alpha && c == 0 {
++                    let csx = cx.clamp(0, sw.saturating_sub(1)) as usize;
++                    let csy = cy.clamp(0, sh.saturating_sub(1)) as usize;
++                    let sr = unsafe { row_ptr(&s, csy) };
++                    unsafe { *dr.add(off) = *sr.add(csx * 4) };
++                } else {
++                    let v = (acc[c] / i64::from(div)).clamp(0, 255) as u8;
++                    unsafe { *dr.add(off + c) = v };
++                }
++            }
++        }
++    }
++    kvImageNoError
++}
++
++unsafe fn morph_minmax_impl(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    srcOffsetToROI_X: usize,
++    srcOffsetToROI_Y: usize,
++    kernel: *const u8,
++    kernel_height: u32,
++    kernel_width: u32,
++    flags: vImage_Flags,
++    is_max: bool,
++) -> vImage_Error {
++    if (flags & kvImageGetTempBufferSize) != 0 {
++        return 0;
++    }
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    let kw = kernel_width as isize;
++    let kh = kernel_height as isize;
++    if kw <= 0 || kh <= 0 {
++        return kvImageInvalidKernelSize;
++    }
++    let sw = s.width as isize;
++    let sh = s.height as isize;
++    let half_w = kw / 2;
++    let half_h = kh / 2;
++    let leave_alpha = (flags & kvImageLeaveAlphaUnchanged) != 0;
++
++    for dy in 0..d.height {
++        let dr = unsafe { row_ptr_mut(&d, dy) };
++        let cy = dy as isize + srcOffsetToROI_Y as isize;
++        for dx in 0..d.width {
++            let cx = dx as isize + srcOffsetToROI_X as isize;
++            let mut best = if is_max { [0i32; 4] } else { [255i32; 4] };
++            for ky in 0..kh {
++                let sy = (cy + ky - half_h).clamp(0, sh.saturating_sub(1)) as usize;
++                let sr = unsafe { row_ptr(&s, sy) };
++                for kx in 0..kw {
++                    let sx = (cx + kx - half_w).clamp(0, sw.saturating_sub(1)) as usize;
++                    let kval = if kernel.is_null() {
++                        0i32
++                    } else {
++                        i32::from(unsafe { *kernel.add((ky * kw + kx) as usize) })
++                    };
++                    let off = sx * 4;
++                    for c in 0..4 {
++                        let sv = i32::from(unsafe { *sr.add(off + c) });
++                        if is_max {
++                            best[c] = best[c].max(sv - kval);
++                        } else {
++                            best[c] = best[c].min(sv + kval);
++                        }
++                    }
++                }
++            }
++            let off = dx * 4;
++            for c in 0..4 {
++                if leave_alpha && c == 0 {
++                    let csx = cx.clamp(0, sw.saturating_sub(1)) as usize;
++                    let csy = cy.clamp(0, sh.saturating_sub(1)) as usize;
++                    let sr = unsafe { row_ptr(&s, csy) };
++                    unsafe { *dr.add(off) = *sr.add(csx * 4) };
++                } else {
++                    unsafe { *dr.add(off + c) = clamp_u8_i32(best[c]) };
++                }
++            }
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageDilate_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    srcOffsetToROI_X: usize,
++    srcOffsetToROI_Y: usize,
++    kernel: *const u8,
++    kernel_height: u32,
++    kernel_width: u32,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe {
++        morph_minmax_impl(
++            src,
++            dest,
++            srcOffsetToROI_X,
++            srcOffsetToROI_Y,
++            kernel,
++            kernel_height,
++            kernel_width,
++            flags,
++            true,
++        )
++    }
++}
++
++pub unsafe extern "C" fn vImageErode_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    srcOffsetToROI_X: usize,
++    srcOffsetToROI_Y: usize,
++    kernel: *const u8,
++    kernel_height: u32,
++    kernel_width: u32,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe {
++        morph_minmax_impl(
++            src,
++            dest,
++            srcOffsetToROI_X,
++            srcOffsetToROI_Y,
++            kernel,
++            kernel_height,
++            kernel_width,
++            flags,
++            false,
++        )
++    }
++}
++
++pub unsafe extern "C" fn vImageMax_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    srcOffsetToROI_X: usize,
++    srcOffsetToROI_Y: usize,
++    kernel_height: u32,
++    kernel_width: u32,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe {
++        morph_minmax_impl(
++            src,
++            dest,
++            srcOffsetToROI_X,
++            srcOffsetToROI_Y,
++            ptr::null(),
++            kernel_height,
++            kernel_width,
++            flags,
++            true,
++        )
++    }
++}
++
++pub unsafe extern "C" fn vImageMin_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    srcOffsetToROI_X: usize,
++    srcOffsetToROI_Y: usize,
++    kernel_height: u32,
++    kernel_width: u32,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    unsafe {
++        morph_minmax_impl(
++            src,
++            dest,
++            srcOffsetToROI_X,
++            srcOffsetToROI_Y,
++            ptr::null(),
++            kernel_height,
++            kernel_width,
++            flags,
++            false,
++        )
++    }
++}
++
++pub unsafe extern "C" fn vImageMatrixMultiply_ARGB8888(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    matrix: *const i16,
++    divisor: i32,
++    pre_bias: *const i16,
++    post_bias: *const i32,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if matrix.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    if s.width != d.width || s.height != d.height {
++        return kvImageBufferSizeMismatch;
++    }
++    let div = if divisor == 0 { 1 } else { divisor } as i64;
++    let mut m = [0i64; 16];
++    for (i, slot) in m.iter_mut().enumerate() {
++        *slot = i64::from(unsafe { *matrix.add(i) });
++    }
++    let pre = if pre_bias.is_null() {
++        [0i64; 4]
++    } else {
++        unsafe {
++            [
++                i64::from(*pre_bias.add(0)),
++                i64::from(*pre_bias.add(1)),
++                i64::from(*pre_bias.add(2)),
++                i64::from(*pre_bias.add(3)),
++            ]
++        }
++    };
++    let post = if post_bias.is_null() {
++        [0i64; 4]
++    } else {
++        unsafe {
++            [
++                i64::from(*post_bias.add(0)),
++                i64::from(*post_bias.add(1)),
++                i64::from(*post_bias.add(2)),
++                i64::from(*post_bias.add(3)),
++            ]
++        }
++    };
++    for y in 0..s.height {
++        let sr = unsafe { row_ptr(&s, y) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for x in 0..s.width {
++            let off = x * 4;
++            let p = unsafe {
++                [
++                    i64::from(*sr.add(off)) + pre[0],
++                    i64::from(*sr.add(off + 1)) + pre[1],
++                    i64::from(*sr.add(off + 2)) + pre[2],
++                    i64::from(*sr.add(off + 3)) + pre[3],
++                ]
++            };
++            // vImage matrix is column-major: dest[col] = sum_row(src[row] * matrix[row*4 + col])
++            let mut out = [0u8; 4];
++            for col in 0..4 {
++                let sum = p[0] * m[col]
++                    + p[1] * m[4 + col]
++                    + p[2] * m[8 + col]
++                    + p[3] * m[12 + col]
++                    + post[col];
++                out[col] = (sum / div).clamp(0, 255) as u8;
++            }
++            unsafe { ptr::copy_nonoverlapping(out.as_ptr(), dr.add(off), 4) };
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageMatrixMultiply_ARGB8888ToPlanar8(
++    src: *const vImage_Buffer,
++    dest: *const vImage_Buffer,
++    matrix: *const i16,
++    divisor: i32,
++    pre_bias: *const i16,
++    post_bias: i32,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let (Some(s), Some(d)) = (valid_buf(src), valid_buf(dest)) else {
++        return kvImageNullPointerArgument;
++    };
++    if matrix.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    if s.width != d.width || s.height != d.height {
++        return kvImageBufferSizeMismatch;
++    }
++    let div = if divisor == 0 { 1 } else { divisor } as i64;
++    let m = unsafe {
++        [
++            i64::from(*matrix.add(0)),
++            i64::from(*matrix.add(1)),
++            i64::from(*matrix.add(2)),
++            i64::from(*matrix.add(3)),
++        ]
++    };
++    let pre = if pre_bias.is_null() {
++        [0i64; 4]
++    } else {
++        unsafe {
++            [
++                i64::from(*pre_bias.add(0)),
++                i64::from(*pre_bias.add(1)),
++                i64::from(*pre_bias.add(2)),
++                i64::from(*pre_bias.add(3)),
++            ]
++        }
++    };
++    for y in 0..s.height {
++        let sr = unsafe { row_ptr(&s, y) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for x in 0..s.width {
++            let off = x * 4;
++            let sum = (i64::from(unsafe { *sr.add(off) }) + pre[0]) * m[0]
++                + (i64::from(unsafe { *sr.add(off + 1) }) + pre[1]) * m[1]
++                + (i64::from(unsafe { *sr.add(off + 2) }) + pre[2]) * m[2]
++                + (i64::from(unsafe { *sr.add(off + 3) }) + pre[3]) * m[3]
++                + i64::from(post_bias);
++            unsafe { *dr.add(x) = (sum / div).clamp(0, 255) as u8 };
++        }
++    }
++    kvImageNoError
++}
++
++// ---------------------------------------------------------------------------
++// Buffer allocation, CGImage interop, CVPixelBuffer interop, Converter
++// ---------------------------------------------------------------------------
++
++pub unsafe extern "C" fn vImageBuffer_Init(
++    buf: *mut vImage_Buffer,
++    height: usize,
++    width: usize,
++    pixelBits: u32,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if buf.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    if pixelBits == 0 {
++        return kvImageInvalidParameter;
++    }
++    let raw_row = (width.saturating_mul(pixelBits as usize)).div_ceil(8);
++    let row_bytes = (raw_row + 15) & !15;
++    unsafe {
++        (*buf).height = height;
++        (*buf).width = width;
++        (*buf).rowBytes = row_bytes;
++    }
++    if (flags & kvImageNoAllocate) != 0 {
++        unsafe { (*buf).data = ptr::null_mut() };
++        return 16; // recommended alignment
++    }
++    let total = row_bytes.saturating_mul(height).max(16);
++    let data = unsafe { libc::calloc(1, total) };
++    if data.is_null() {
++        return kvImageMemoryAllocationError;
++    }
++    unsafe { (*buf).data = data };
++    kvImageNoError
++}
++
++/// Decodes a `CGImage` bitmap_info into (channel order for R,G,B,A in memory,
++/// premultiplied, has_alpha, bpp_bytes).
++#[derive(Clone, Copy, Debug)]
++struct PixelLayout {
++    bpp: usize, // bytes per pixel: 1, 3, or 4
++    /// Memory byte index for [R, G, B, A] (when bpp == 4 or 3).
++    rgba_idx: [usize; 4],
++    premultiplied: bool,
++    has_alpha: bool,
++}
++
++fn layout_from_cg_format(bpc: u32, bpp: u32, bitmap_info: u32) -> PixelLayout {
++    let bytes = ((bpp as usize).max(bpc as usize)).div_ceil(8).clamp(1, 4);
++    let alpha_info = bitmap_info & 0x1F;
++    let byte_order = bitmap_info & 0x7000;
++    let little_32 = byte_order == 0x2000; // kCGBitmapByteOrder32Little
++    // kCGImageAlphaNone=0, PremultipliedLast=1, PremultipliedFirst=2,
++    // Last=3, First=4, NoneSkipLast=5, NoneSkipFirst=6, Only=7
++    let premultiplied = matches!(alpha_info, 1 | 2);
++    let has_alpha = matches!(alpha_info, 1 | 2 | 3 | 4 | 7);
++    let alpha_first = matches!(alpha_info, 2 | 4 | 6);
++    let rgba_idx = match (bytes, alpha_first, little_32) {
++        (4, false, false) => [0, 1, 2, 3], // RGBA (big/default)
++        (4, true, false) => [1, 2, 3, 0],  // ARGB (big/default)
++        (4, true, true) => [2, 1, 0, 3],   // BGRA (32Little + First = memory B,G,R,A)
++        (4, false, true) => [3, 2, 1, 0],  // ABGR (32Little + Last  = memory A,B,G,R)
++        (3, _, true) => [2, 1, 0, 3],      // BGR
++        (3, _, false) => [0, 1, 2, 3],     // RGB
++        _ => [0, 0, 0, 0],                 // Planar8 / Gray
++    };
++    PixelLayout {
++        bpp: bytes,
++        rgba_idx,
++        premultiplied,
++        has_alpha,
++    }
++}
++
++#[inline]
++unsafe fn read_rgba(row: *const u8, x: usize, layout: PixelLayout) -> [u8; 4] {
++    match layout.bpp {
++        4 => {
++            let off = x * 4;
++            let raw = unsafe {
++                [
++                    *row.add(off),
++                    *row.add(off + 1),
++                    *row.add(off + 2),
++                    *row.add(off + 3),
++                ]
++            };
++            let a = if layout.has_alpha {
++                raw[layout.rgba_idx[3]]
++            } else {
++                255
++            };
++            let mut r = raw[layout.rgba_idx[0]];
++            let mut g = raw[layout.rgba_idx[1]];
++            let mut b = raw[layout.rgba_idx[2]];
++            if layout.premultiplied {
++                r = unpremul_channel(r, a);
++                g = unpremul_channel(g, a);
++                b = unpremul_channel(b, a);
++            }
++            [r, g, b, a]
++        }
++        3 => {
++            let off = x * 3;
++            let raw = unsafe { [*row.add(off), *row.add(off + 1), *row.add(off + 2)] };
++            [
++                raw[layout.rgba_idx[0]],
++                raw[layout.rgba_idx[1]],
++                raw[layout.rgba_idx[2]],
++                255,
++            ]
++        }
++        _ => {
++            let v = unsafe { *row.add(x) };
++            [v, v, v, 255]
++        }
++    }
++}
++
++#[inline]
++unsafe fn write_rgba(row: *mut u8, x: usize, rgba: [u8; 4], layout: PixelLayout) {
++    let [mut r, mut g, mut b, mut a] = rgba;
++    if !layout.has_alpha {
++        a = 255;
++    } else if layout.premultiplied {
++        r = premul_channel(r, a);
++        g = premul_channel(g, a);
++        b = premul_channel(b, a);
++    }
++    match layout.bpp {
++        4 => {
++            let off = x * 4;
++            unsafe {
++                *row.add(off + layout.rgba_idx[0]) = r;
++                *row.add(off + layout.rgba_idx[1]) = g;
++                *row.add(off + layout.rgba_idx[2]) = b;
++                *row.add(off + layout.rgba_idx[3]) = a;
++            }
++        }
++        3 => {
++            let off = x * 3;
++            unsafe {
++                *row.add(off + layout.rgba_idx[0]) = r;
++                *row.add(off + layout.rgba_idx[1]) = g;
++                *row.add(off + layout.rgba_idx[2]) = b;
++            }
++        }
++        _ => {
++            let luma = ((u32::from(r) * 77 + u32::from(g) * 150 + u32::from(b) * 29) >> 8) as u8;
++            unsafe { *row.add(x) = luma };
++        }
++    }
++}
++
++unsafe extern "C" fn free_libc_buffer(_info: *mut c_void, data: *const c_void, _size: usize) {
++    if !data.is_null() {
++        unsafe { libc::free(data.cast_mut()) };
++    }
++}
++
++pub unsafe extern "C" fn vImageBuffer_InitWithCGImage(
++    buf: *mut vImage_Buffer,
++    format: *mut vImage_CGImageFormat,
++    _backgroundColor: *const f64,
++    image: CFTypeRef,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if buf.is_null() || format.is_null() || image.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    let w = unsafe { appkit::graphics::CGImageGetWidth(image) };
++    let h = unsafe { appkit::graphics::CGImageGetHeight(image) };
++    let src_bpc = unsafe { appkit::graphics::CGImageGetBitsPerComponent(image) } as u32;
++    let src_bpp = unsafe { appkit::graphics::CGImageGetBitsPerPixel(image) } as u32;
++    let src_bpr = unsafe { appkit::graphics::CGImageGetBytesPerRow(image) };
++    let src_info = unsafe { appkit::graphics::CGImageGetBitmapInfo(image) };
++    let provider = unsafe { appkit::graphics::CGImageGetDataProvider(image) };
++
++    let fmt = unsafe { &mut *format };
++    if fmt.bitsPerComponent == 0 {
++        fmt.bitsPerComponent = src_bpc.max(8);
++    }
++    if fmt.bitsPerPixel == 0 {
++        fmt.bitsPerPixel = src_bpp.max(32);
++    }
++    let dst_layout = layout_from_cg_format(fmt.bitsPerComponent, fmt.bitsPerPixel, fmt.bitmapInfo);
++    let src_layout = layout_from_cg_format(src_bpc, src_bpp, src_info);
++
++    let err = unsafe { vImageBuffer_Init(buf, h, w, fmt.bitsPerPixel, flags) };
++    if err != kvImageNoError || (flags & kvImageNoAllocate) != 0 {
++        return err;
++    }
++    let Some(src_bytes) = appkit::graphics::provider_bytes(provider) else {
++        return kvImageNoError;
++    };
++    let d = unsafe { *buf };
++    for y in 0..h {
++        let s_off = y * src_bpr;
++        if s_off + w * src_layout.bpp > src_bytes.len() {
++            break;
++        }
++        let sr = unsafe { src_bytes.as_ptr().add(s_off) };
++        let dr = unsafe { row_ptr_mut(&d, y) };
++        for x in 0..w {
++            let rgba = unsafe { read_rgba(sr, x, src_layout) };
++            unsafe { write_rgba(dr, x, rgba, dst_layout) };
++        }
++    }
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageCreateCGImageFromBuffer(
++    buf: *const vImage_Buffer,
++    format: *const vImage_CGImageFormat,
++    callback: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
++    userData: *mut c_void,
++    flags: vImage_Flags,
++    error: *mut vImage_Error,
++) -> CFTypeRef {
++    let set_err = |e: vImage_Error| {
++        if !error.is_null() {
++            unsafe { *error = e };
++        }
++    };
++    let Some(b) = valid_buf(buf) else {
++        set_err(kvImageNullPointerArgument);
++        return ptr::null();
++    };
++    if format.is_null() {
++        set_err(kvImageNullPointerArgument);
++        return ptr::null();
++    }
++    let fmt = unsafe { *format };
++    let total = b.height.saturating_mul(b.rowBytes);
++    let provider = if (flags & kvImageNoAllocate) != 0 {
++        // Wrap caller's buffer directly. If caller supplied a callback, invoke it
++        // via a small trampoline wrapper.
++        if let Some(cb) = callback {
++            struct UserRelease {
++                cb: unsafe extern "C" fn(*mut c_void, *mut c_void),
++                user_data: *mut c_void,
++            }
++            unsafe extern "C" fn call_user(info: *mut c_void, data: *const c_void, _size: usize) {
++                if !info.is_null() {
++                    let boxed = unsafe { Box::from_raw(info.cast::<UserRelease>()) };
++                    unsafe { (boxed.cb)(boxed.user_data, data.cast_mut()) };
++                }
++            }
++            let info = Box::into_raw(Box::new(UserRelease {
++                cb,
++                user_data: userData,
++            }))
++            .cast();
++            unsafe {
++                appkit::graphics::CGDataProviderCreateWithData(info, b.data, total, Some(call_user))
++            }
++        } else {
++            unsafe {
++                appkit::graphics::CGDataProviderCreateWithData(
++                    ptr::null_mut(),
++                    b.data,
++                    total,
++                    None,
++                )
++            }
++        }
++    } else {
++        let copy = unsafe { libc::malloc(total.max(1)) };
++        if copy.is_null() {
++            set_err(kvImageMemoryAllocationError);
++            return ptr::null();
++        }
++        if total > 0 && !b.data.is_null() {
++            unsafe { ptr::copy_nonoverlapping(b.data.cast::<u8>(), copy.cast::<u8>(), total) };
++        }
++        unsafe {
++            appkit::graphics::CGDataProviderCreateWithData(
++                ptr::null_mut(),
++                copy,
++                total,
++                Some(free_libc_buffer),
++            )
++        }
++    };
++
++    let own_cs = fmt.colorSpace.is_null();
++    let cs = if own_cs {
++        unsafe { appkit::graphics::CGColorSpaceCreateDeviceRGB() }
++    } else {
++        fmt.colorSpace
++    };
++    let image = unsafe {
++        appkit::graphics::CGImageCreate(
++            b.width,
++            b.height,
++            fmt.bitsPerComponent as usize,
++            fmt.bitsPerPixel as usize,
++            b.rowBytes,
++            cs,
++            fmt.bitmapInfo,
++            provider,
++            fmt.decode,
++            1,
++            fmt.renderingIntent,
++        )
++    };
++    unsafe { appkit::graphics::CGDataProviderRelease(provider) };
++    if own_cs && !cs.is_null() {
++        unsafe { corefoundation::api::CFRelease(cs) };
++    }
++    set_err(if image.is_null() {
++        kvImageInvalidParameter
++    } else {
++        kvImageNoError
++    });
++    image
++}
++
++// ---------------------------------------------------------------------------
++// vImageCVImageFormat & vImageConverter & vImageConvert_AnyToAny
++// ---------------------------------------------------------------------------
++
++const FOURCC_BGRA: u32 = u32::from_be_bytes(*b"BGRA");
++const FOURCC_RGBA: u32 = u32::from_be_bytes(*b"RGBA");
++const FOURCC_ARGB: u32 = 32; // kCVPixelFormatType_32ARGB
++const FOURCC_420V: u32 = u32::from_be_bytes(*b"420v");
++const FOURCC_420F: u32 = u32::from_be_bytes(*b"420f");
++const FOURCC_Y420: u32 = u32::from_be_bytes(*b"y420");
++const FOURCC_F420: u32 = u32::from_be_bytes(*b"f420");
++
++#[derive(Clone, Copy)]
++struct CvFormat {
++    pixel_format: u32,
++    color_space: CFTypeRef,
++}
++
++#[derive(Clone, Copy)]
++enum EndpointFormat {
++    Cg(PixelLayout),
++    Cv(u32),
++}
++
++struct Converter {
++    src: EndpointFormat,
++    dst: EndpointFormat,
++}
++
++fn cv_to_pixel_layout(fourcc: u32) -> Option<PixelLayout> {
++    match fourcc {
++        FOURCC_BGRA => Some(PixelLayout {
++            bpp: 4,
++            rgba_idx: [2, 1, 0, 3],
++            premultiplied: false,
++            has_alpha: true,
++        }),
++        FOURCC_RGBA => Some(PixelLayout {
++            bpp: 4,
++            rgba_idx: [0, 1, 2, 3],
++            premultiplied: false,
++            has_alpha: true,
++        }),
++        FOURCC_ARGB => Some(PixelLayout {
++            bpp: 4,
++            rgba_idx: [1, 2, 3, 0],
++            premultiplied: false,
++            has_alpha: true,
++        }),
++        _ => None,
++    }
++}
++
++pub unsafe extern "C" fn vImageCVImageFormat_Create(
++    formatType: u32,
++    _matrix: *const vImage_ARGBToYpCbCrMatrix,
++    _chromaSiting: CFTypeRef,
++    colorSpace: CFTypeRef,
++    _baseClass: *const c_void,
++) -> *mut c_void {
++    if !colorSpace.is_null() {
++        unsafe { corefoundation::api::CFRetain(colorSpace) };
++    }
++    Box::into_raw(Box::new(CvFormat {
++        pixel_format: formatType,
++        color_space: colorSpace,
++    }))
++    .cast()
++}
++
++pub unsafe extern "C" fn vImageCVImageFormat_CreateWithCVPixelBuffer(
++    buffer: CFTypeRef,
++) -> *mut c_void {
++    if buffer.is_null() {
++        return ptr::null_mut();
++    }
++    let fourcc = unsafe { corevideo::pixel_buffer::CVPixelBufferGetPixelFormatType(buffer) };
++    Box::into_raw(Box::new(CvFormat {
++        pixel_format: fourcc,
++        color_space: ptr::null(),
++    }))
++    .cast()
++}
++
++pub unsafe extern "C" fn vImageCVImageFormat_SetColorSpace(
++    format: *mut c_void,
++    colorSpace: CFTypeRef,
++) -> vImage_Error {
++    if format.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    let f = unsafe { &mut *format.cast::<CvFormat>() };
++    if !f.color_space.is_null() {
++        unsafe { corefoundation::api::CFRelease(f.color_space) };
++    }
++    if !colorSpace.is_null() {
++        unsafe { corefoundation::api::CFRetain(colorSpace) };
++    }
++    f.color_space = colorSpace;
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageCVImageFormat_Release(format: *mut c_void) {
++    if !format.is_null() {
++        let boxed = unsafe { Box::from_raw(format.cast::<CvFormat>()) };
++        if !boxed.color_space.is_null() {
++            unsafe { corefoundation::api::CFRelease(boxed.color_space) };
++        }
++    }
++}
++
++fn finish_converter(conv: Converter, error: *mut vImage_Error) -> *mut c_void {
++    if !error.is_null() {
++        unsafe { *error = kvImageNoError };
++    }
++    Box::into_raw(Box::new(conv)).cast()
++}
++
++pub unsafe extern "C" fn vImageConverter_CreateWithCGImageFormat(
++    srcFormat: *const vImage_CGImageFormat,
++    destFormat: *const vImage_CGImageFormat,
++    _backgroundColor: *const f64,
++    _flags: vImage_Flags,
++    error: *mut vImage_Error,
++) -> *mut c_void {
++    if srcFormat.is_null() || destFormat.is_null() {
++        if !error.is_null() {
++            unsafe { *error = kvImageNullPointerArgument };
++        }
++        return ptr::null_mut();
++    }
++    let sf = unsafe { *srcFormat };
++    let df = unsafe { *destFormat };
++    finish_converter(
++        Converter {
++            src: EndpointFormat::Cg(layout_from_cg_format(
++                sf.bitsPerComponent,
++                sf.bitsPerPixel,
++                sf.bitmapInfo,
++            )),
++            dst: EndpointFormat::Cg(layout_from_cg_format(
++                df.bitsPerComponent,
++                df.bitsPerPixel,
++                df.bitmapInfo,
++            )),
++        },
++        error,
++    )
++}
++
++pub unsafe extern "C" fn vImageConverter_CreateForCGToCVImageFormat(
++    srcFormat: *const vImage_CGImageFormat,
++    destFormat: *const c_void,
++    _backgroundColor: *const f64,
++    _flags: vImage_Flags,
++    error: *mut vImage_Error,
++) -> *mut c_void {
++    if srcFormat.is_null() || destFormat.is_null() {
++        if !error.is_null() {
++            unsafe { *error = kvImageNullPointerArgument };
++        }
++        return ptr::null_mut();
++    }
++    let sf = unsafe { *srcFormat };
++    let df = unsafe { *destFormat.cast::<CvFormat>() };
++    finish_converter(
++        Converter {
++            src: EndpointFormat::Cg(layout_from_cg_format(
++                sf.bitsPerComponent,
++                sf.bitsPerPixel,
++                sf.bitmapInfo,
++            )),
++            dst: EndpointFormat::Cv(df.pixel_format),
++        },
++        error,
++    )
++}
++
++pub unsafe extern "C" fn vImageConverter_CreateForCVToCGImageFormat(
++    srcFormat: *const c_void,
++    destFormat: *const vImage_CGImageFormat,
++    _backgroundColor: *const f64,
++    _flags: vImage_Flags,
++    error: *mut vImage_Error,
++) -> *mut c_void {
++    if srcFormat.is_null() || destFormat.is_null() {
++        if !error.is_null() {
++            unsafe { *error = kvImageNullPointerArgument };
++        }
++        return ptr::null_mut();
++    }
++    let sf = unsafe { *srcFormat.cast::<CvFormat>() };
++    let df = unsafe { *destFormat };
++    finish_converter(
++        Converter {
++            src: EndpointFormat::Cv(sf.pixel_format),
++            dst: EndpointFormat::Cg(layout_from_cg_format(
++                df.bitsPerComponent,
++                df.bitsPerPixel,
++                df.bitmapInfo,
++            )),
++        },
++        error,
++    )
++}
++
++pub unsafe extern "C" fn vImageConverter_CreateWithCGColorConversionInfo(
++    _info: CFTypeRef,
++    srcFormat: *const vImage_CGImageFormat,
++    destFormat: *const vImage_CGImageFormat,
++    backgroundColor: *const f64,
++    flags: vImage_Flags,
++    error: *mut vImage_Error,
++) -> *mut c_void {
++    unsafe {
++        vImageConverter_CreateWithCGImageFormat(
++            srcFormat,
++            destFormat,
++            backgroundColor,
++            flags,
++            error,
++        )
++    }
++}
++
++pub unsafe extern "C" fn vImageConverter_Release(converter: *mut c_void) {
++    if !converter.is_null() {
++        unsafe { drop(Box::from_raw(converter.cast::<Converter>())) };
++    }
++}
++
++pub unsafe extern "C" fn vImageConvert_AnyToAny(
++    converter: *const c_void,
++    srcs: *const vImage_Buffer,
++    dests: *const vImage_Buffer,
++    _tempBuffer: *mut c_void,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if (flags & kvImageGetTempBufferSize) != 0 {
++        return 0;
++    }
++    if converter.is_null() || srcs.is_null() || dests.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    let conv = unsafe { &*converter.cast::<Converter>() };
++    let src_layout = match conv.src {
++        EndpointFormat::Cg(l) => Some(l),
++        EndpointFormat::Cv(f) => cv_to_pixel_layout(f),
++    };
++    let dst_layout = match conv.dst {
++        EndpointFormat::Cg(l) => Some(l),
++        EndpointFormat::Cv(f) => cv_to_pixel_layout(f),
++    };
++
++    match (conv.src, conv.dst) {
++        (EndpointFormat::Cv(FOURCC_420V | FOURCC_420F), EndpointFormat::Cg(dl)) => {
++            let (Some(yp), Some(cbcr), Some(d)) = (
++                valid_buf(srcs),
++                valid_buf(unsafe { srcs.add(1) }),
++                valid_buf(dests),
++            ) else {
++                return kvImageNullPointerArgument;
++            };
++            let info = read_yuv_to_argb_info(ptr::null());
++            let w = d.width.min(yp.width);
++            let h = d.height.min(yp.height);
++            for y in 0..h {
++                let yr = unsafe { row_ptr(&yp, y) };
++                let uvr = unsafe { row_ptr(&cbcr, (y / 2).min(cbcr.height.saturating_sub(1))) };
++                let dr = unsafe { row_ptr_mut(&d, y) };
++                for x in 0..w {
++                    let cx = (x / 2).min(cbcr.width.saturating_sub(1));
++                    let [r, g, b] = yuv_to_rgb_px(
++                        unsafe { *yr.add(x) },
++                        unsafe { *uvr.add(cx * 2) },
++                        unsafe { *uvr.add(cx * 2 + 1) },
++                        &info,
++                    );
++                    unsafe { write_rgba(dr, x, [r, g, b, 255], dl) };
++                }
++            }
++            kvImageNoError
++        }
++        (EndpointFormat::Cg(sl), EndpointFormat::Cv(FOURCC_420V | FOURCC_420F)) => {
++            let (Some(s), Some(yp), Some(cbcr)) = (
++                valid_buf(srcs),
++                valid_buf(dests),
++                valid_buf(unsafe { dests.add(1) }),
++            ) else {
++                return kvImageNullPointerArgument;
++            };
++            let info = read_argb_to_yuv_info(ptr::null());
++            let w = s.width.min(yp.width);
++            let h = s.height.min(yp.height);
++            for y in 0..h {
++                let sr = unsafe { row_ptr(&s, y) };
++                let yr = unsafe { row_ptr_mut(&yp, y) };
++                let uvr = if y / 2 < cbcr.height {
++                    Some(unsafe { row_ptr_mut(&cbcr, y / 2) })
++                } else {
++                    None
++                };
++                for x in 0..w {
++                    let [r, g, b, _] = unsafe { read_rgba(sr, x, sl) };
++                    let [yv, cbv, crv] = rgb_to_yuv_px(r, g, b, &info);
++                    unsafe { *yr.add(x) = yv };
++                    if (y & 1) == 0
++                        && (x & 1) == 0
++                        && let Some(p) = uvr
++                        && x / 2 < cbcr.width
++                    {
++                        unsafe {
++                            *p.add(x) = cbv;
++                            *p.add(x + 1) = crv;
++                        }
++                    }
++                }
++            }
++            kvImageNoError
++        }
++        _ => {
++            let (Some(sl), Some(dl)) = (src_layout, dst_layout) else {
++                return kvImageInvalidParameter;
++            };
++            let (Some(s), Some(d)) = (valid_buf(srcs), valid_buf(dests)) else {
++                return kvImageNullPointerArgument;
++            };
++            let w = s.width.min(d.width);
++            let h = s.height.min(d.height);
++            for y in 0..h {
++                let sr = unsafe { row_ptr(&s, y) };
++                let dr = unsafe { row_ptr_mut(&d, y) };
++                for x in 0..w {
++                    let rgba = unsafe { read_rgba(sr, x, sl) };
++                    unsafe { write_rgba(dr, x, rgba, dl) };
++                }
++            }
++            kvImageNoError
++        }
++    }
++}
++
++pub unsafe extern "C" fn vImageBuffer_InitWithCVPixelBuffer(
++    buf: *mut vImage_Buffer,
++    desiredFormat: *mut vImage_CGImageFormat,
++    cvPixelBuffer: CFTypeRef,
++    _cvImageFormat: *const c_void,
++    _backgroundColor: *const f64,
++    flags: vImage_Flags,
++) -> vImage_Error {
++    if buf.is_null() || desiredFormat.is_null() || cvPixelBuffer.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    let w = unsafe { corevideo::pixel_buffer::CVPixelBufferGetWidth(cvPixelBuffer) };
++    let h = unsafe { corevideo::pixel_buffer::CVPixelBufferGetHeight(cvPixelBuffer) };
++    let fourcc = unsafe { corevideo::pixel_buffer::CVPixelBufferGetPixelFormatType(cvPixelBuffer) };
++    let fmt = unsafe { &mut *desiredFormat };
++    if fmt.bitsPerComponent == 0 {
++        fmt.bitsPerComponent = 8;
++    }
++    if fmt.bitsPerPixel == 0 {
++        fmt.bitsPerPixel = 32;
++    }
++    let err = unsafe { vImageBuffer_Init(buf, h, w, fmt.bitsPerPixel, flags) };
++    if err != kvImageNoError || (flags & kvImageNoAllocate) != 0 {
++        return err;
++    }
++    let dl = layout_from_cg_format(fmt.bitsPerComponent, fmt.bitsPerPixel, fmt.bitmapInfo);
++    unsafe { corevideo::pixel_buffer::CVPixelBufferLockBaseAddress(cvPixelBuffer, 1) };
++    let d = unsafe { *buf };
++    if matches!(fourcc, FOURCC_420V | FOURCC_420F) {
++        let yp = vImage_Buffer {
++            data: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBaseAddressOfPlane(cvPixelBuffer, 0)
++            },
++            width: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetWidthOfPlane(cvPixelBuffer, 0)
++            },
++            height: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetHeightOfPlane(cvPixelBuffer, 0)
++            },
++            rowBytes: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBytesPerRowOfPlane(cvPixelBuffer, 0)
++            },
++        };
++        let cbcr = vImage_Buffer {
++            data: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBaseAddressOfPlane(cvPixelBuffer, 1)
++            },
++            width: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetWidthOfPlane(cvPixelBuffer, 1)
++            },
++            height: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetHeightOfPlane(cvPixelBuffer, 1)
++            },
++            rowBytes: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBytesPerRowOfPlane(cvPixelBuffer, 1)
++            },
++        };
++        if !yp.data.is_null() && !cbcr.data.is_null() {
++            let info = read_yuv_to_argb_info(ptr::null());
++            for y in 0..h {
++                let yr = unsafe { row_ptr(&yp, y) };
++                let uvr = unsafe { row_ptr(&cbcr, (y / 2).min(cbcr.height.saturating_sub(1))) };
++                let dr = unsafe { row_ptr_mut(&d, y) };
++                for x in 0..w {
++                    let cx = (x / 2).min(cbcr.width.saturating_sub(1));
++                    let [r, g, b] = yuv_to_rgb_px(
++                        unsafe { *yr.add(x) },
++                        unsafe { *uvr.add(cx * 2) },
++                        unsafe { *uvr.add(cx * 2 + 1) },
++                        &info,
++                    );
++                    unsafe { write_rgba(dr, x, [r, g, b, 255], dl) };
++                }
++            }
++        }
++    } else if matches!(fourcc, FOURCC_Y420 | FOURCC_F420) {
++        let yp = vImage_Buffer {
++            data: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBaseAddressOfPlane(cvPixelBuffer, 0)
++            },
++            width: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetWidthOfPlane(cvPixelBuffer, 0)
++            },
++            height: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetHeightOfPlane(cvPixelBuffer, 0)
++            },
++            rowBytes: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBytesPerRowOfPlane(cvPixelBuffer, 0)
++            },
++        };
++        let cb = vImage_Buffer {
++            data: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBaseAddressOfPlane(cvPixelBuffer, 1)
++            },
++            width: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetWidthOfPlane(cvPixelBuffer, 1)
++            },
++            height: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetHeightOfPlane(cvPixelBuffer, 1)
++            },
++            rowBytes: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBytesPerRowOfPlane(cvPixelBuffer, 1)
++            },
++        };
++        let cr = vImage_Buffer {
++            data: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBaseAddressOfPlane(cvPixelBuffer, 2)
++            },
++            width: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetWidthOfPlane(cvPixelBuffer, 2)
++            },
++            height: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetHeightOfPlane(cvPixelBuffer, 2)
++            },
++            rowBytes: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBytesPerRowOfPlane(cvPixelBuffer, 2)
++            },
++        };
++        if !yp.data.is_null() && !cb.data.is_null() && !cr.data.is_null() {
++            let info = read_yuv_to_argb_info(ptr::null());
++            for y in 0..h {
++                let yr = unsafe { row_ptr(&yp, y) };
++                let cy = (y / 2).min(cb.height.saturating_sub(1));
++                let cbr = unsafe { row_ptr(&cb, cy) };
++                let crr = unsafe { row_ptr(&cr, cy.min(cr.height.saturating_sub(1))) };
++                let dr = unsafe { row_ptr_mut(&d, y) };
++                for x in 0..w {
++                    let cx = (x / 2).min(cb.width.saturating_sub(1));
++                    let [r, g, b] = yuv_to_rgb_px(
++                        unsafe { *yr.add(x) },
++                        unsafe { *cbr.add(cx) },
++                        unsafe { *crr.add(cx.min(cr.width.saturating_sub(1))) },
++                        &info,
++                    );
++                    unsafe { write_rgba(dr, x, [r, g, b, 255], dl) };
++                }
++            }
++        }
++    } else if let Some(sl) = cv_to_pixel_layout(fourcc) {
++        let base = unsafe { corevideo::pixel_buffer::CVPixelBufferGetBaseAddress(cvPixelBuffer) };
++        let bpr = unsafe { corevideo::pixel_buffer::CVPixelBufferGetBytesPerRow(cvPixelBuffer) };
++        if !base.is_null() {
++            let s = vImage_Buffer {
++                data: base,
++                width: w,
++                height: h,
++                rowBytes: bpr,
++            };
++            for y in 0..h {
++                let sr = unsafe { row_ptr(&s, y) };
++                let dr = unsafe { row_ptr_mut(&d, y) };
++                for x in 0..w {
++                    let rgba = unsafe { read_rgba(sr, x, sl) };
++                    unsafe { write_rgba(dr, x, rgba, dl) };
++                }
++            }
++        }
++    }
++    unsafe { corevideo::pixel_buffer::CVPixelBufferUnlockBaseAddress(cvPixelBuffer, 1) };
++    kvImageNoError
++}
++
++pub unsafe extern "C" fn vImageBuffer_CopyToCVPixelBuffer(
++    src: *const vImage_Buffer,
++    srcFormat: *const vImage_CGImageFormat,
++    cvPixelBuffer: CFTypeRef,
++    _cvImageFormat: *const c_void,
++    _backgroundColor: *const f64,
++    _flags: vImage_Flags,
++) -> vImage_Error {
++    let Some(s) = valid_buf(src) else {
++        return kvImageNullPointerArgument;
++    };
++    if srcFormat.is_null() || cvPixelBuffer.is_null() {
++        return kvImageNullPointerArgument;
++    }
++    let sf = unsafe { *srcFormat };
++    let sl = layout_from_cg_format(sf.bitsPerComponent, sf.bitsPerPixel, sf.bitmapInfo);
++    let w = s
++        .width
++        .min(unsafe { corevideo::pixel_buffer::CVPixelBufferGetWidth(cvPixelBuffer) });
++    let h = s
++        .height
++        .min(unsafe { corevideo::pixel_buffer::CVPixelBufferGetHeight(cvPixelBuffer) });
++    let fourcc = unsafe { corevideo::pixel_buffer::CVPixelBufferGetPixelFormatType(cvPixelBuffer) };
++    unsafe { corevideo::pixel_buffer::CVPixelBufferLockBaseAddress(cvPixelBuffer, 0) };
++    if matches!(fourcc, FOURCC_420V | FOURCC_420F) {
++        let yp = vImage_Buffer {
++            data: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBaseAddressOfPlane(cvPixelBuffer, 0)
++            },
++            width: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetWidthOfPlane(cvPixelBuffer, 0)
++            },
++            height: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetHeightOfPlane(cvPixelBuffer, 0)
++            },
++            rowBytes: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBytesPerRowOfPlane(cvPixelBuffer, 0)
++            },
++        };
++        let cbcr = vImage_Buffer {
++            data: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBaseAddressOfPlane(cvPixelBuffer, 1)
++            },
++            width: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetWidthOfPlane(cvPixelBuffer, 1)
++            },
++            height: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetHeightOfPlane(cvPixelBuffer, 1)
++            },
++            rowBytes: unsafe {
++                corevideo::pixel_buffer::CVPixelBufferGetBytesPerRowOfPlane(cvPixelBuffer, 1)
++            },
++        };
++        if !yp.data.is_null() && !cbcr.data.is_null() {
++            let info = read_argb_to_yuv_info(ptr::null());
++            for y in 0..h {
++                let sr = unsafe { row_ptr(&s, y) };
++                let yr = unsafe { row_ptr_mut(&yp, y) };
++                let uvr = if y / 2 < cbcr.height {
++                    Some(unsafe { row_ptr_mut(&cbcr, y / 2) })
++                } else {
++                    None
++                };
++                for x in 0..w {
++                    let [r, g, b, _] = unsafe { read_rgba(sr, x, sl) };
++                    let [yv, cbv, crv] = rgb_to_yuv_px(r, g, b, &info);
++                    unsafe { *yr.add(x) = yv };
++                    if (y & 1) == 0
++                        && (x & 1) == 0
++                        && let Some(p) = uvr
++                        && x / 2 < cbcr.width
++                    {
++                        unsafe {
++                            *p.add(x) = cbv;
++                            *p.add(x + 1) = crv;
++                        }
++                    }
++                }
++            }
++        }
++    } else if let Some(dl) = cv_to_pixel_layout(fourcc) {
++        let base = unsafe { corevideo::pixel_buffer::CVPixelBufferGetBaseAddress(cvPixelBuffer) };
++        let bpr = unsafe { corevideo::pixel_buffer::CVPixelBufferGetBytesPerRow(cvPixelBuffer) };
++        if !base.is_null() {
++            let d = vImage_Buffer {
++                data: base,
++                width: w,
++                height: h,
++                rowBytes: bpr,
++            };
++            for y in 0..h {
++                let sr = unsafe { row_ptr(&s, y) };
++                let dr = unsafe { row_ptr_mut(&d, y) };
++                for x in 0..w {
++                    let rgba = unsafe { read_rgba(sr, x, sl) };
++                    unsafe { write_rgba(dr, x, rgba, dl) };
++                }
++            }
++        }
++    }
++    unsafe { corevideo::pixel_buffer::CVPixelBufferUnlockBaseAddress(cvPixelBuffer, 0) };
++    kvImageNoError
++}
++
++// ---------------------------------------------------------------------------
++// vDSP vector operations
++// ---------------------------------------------------------------------------
++
++pub unsafe extern "C" fn vDSP_vsmul(
++    a: *const f32,
++    ia: isize,
++    b: *const f32,
++    c: *mut f32,
++    ic: isize,
++    n: usize,
++) {
++    if a.is_null() || b.is_null() || c.is_null() || n == 0 {
++        return;
++    }
++    let scale = unsafe { *b };
++    for i in 0..n as isize {
++        let v = unsafe { *a.offset(i * ia) } * scale;
++        unsafe { *c.offset(i * ic) = v };
++    }
++}
++
++pub unsafe extern "C" fn vDSP_vasm(
++    a: *const f32,
++    ia: isize,
++    b: *const f32,
++    ib: isize,
++    c: *const f32,
++    d: *mut f32,
++    id: isize,
++    n: usize,
++) {
++    if a.is_null() || b.is_null() || c.is_null() || d.is_null() || n == 0 {
++        return;
++    }
++    let scale = unsafe { *c };
++    for i in 0..n as isize {
++        let v = (unsafe { *a.offset(i * ia) } + unsafe { *b.offset(i * ib) }) * scale;
++        unsafe { *d.offset(i * id) = v };
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Exports
++// ---------------------------------------------------------------------------
++
++exports::exports! {
++    functions {
++        "vDSP_vasm" => vDSP_vasm,
++        "vDSP_vsmul" => vDSP_vsmul,
++        "vImageAffineWarpCG_ARGB8888" => vImageAffineWarpCG_ARGB8888,
++        "vImageAffineWarpCG_Planar8" => vImageAffineWarpCG_Planar8,
++        "vImageBuffer_CopyToCVPixelBuffer" => vImageBuffer_CopyToCVPixelBuffer,
++        "vImageBuffer_Init" => vImageBuffer_Init,
++        "vImageBuffer_InitWithCGImage" => vImageBuffer_InitWithCGImage,
++        "vImageBuffer_InitWithCVPixelBuffer" => vImageBuffer_InitWithCVPixelBuffer,
++        "vImageCVImageFormat_Create" => vImageCVImageFormat_Create,
++        "vImageCVImageFormat_CreateWithCVPixelBuffer" => vImageCVImageFormat_CreateWithCVPixelBuffer,
++        "vImageCVImageFormat_Release" => vImageCVImageFormat_Release,
++        "vImageCVImageFormat_SetColorSpace" => vImageCVImageFormat_SetColorSpace,
++        "vImageConvert_420Yp8_Cb8_Cr8ToARGB8888" => vImageConvert_420Yp8_Cb8_Cr8ToARGB8888,
++        "vImageConvert_420Yp8_CbCr8ToARGB8888" => vImageConvert_420Yp8_CbCr8ToARGB8888,
++        "vImageConvert_ARGB16UToARGB8888" => vImageConvert_ARGB16UToARGB8888,
++        "vImageConvert_ARGB8888To420Yp8_Cb8_Cr8" => vImageConvert_ARGB8888To420Yp8_Cb8_Cr8,
++        "vImageConvert_ARGB8888To420Yp8_CbCr8" => vImageConvert_ARGB8888To420Yp8_CbCr8,
++        "vImageConvert_ARGB8888To422CbYpCrYp8" => vImageConvert_ARGB8888To422CbYpCrYp8,
++        "vImageConvert_ARGB8888toRGB888" => vImageConvert_ARGB8888toRGB888,
++        "vImageConvert_ARGBToYpCbCr_GenerateConversion" => vImageConvert_ARGBToYpCbCr_GenerateConversion,
++        "vImageConvert_AnyToAny" => vImageConvert_AnyToAny,
++        "vImageConvert_BGRA8888toRGB888" => vImageConvert_BGRA8888toRGB888,
++        "vImageConvert_Planar16FtoPlanar8" => vImageConvert_Planar16FtoPlanar8,
++        "vImageConvert_RGB888toARGB8888" => vImageConvert_RGB888toARGB8888,
++        "vImageConvert_RGB888toBGRA8888" => vImageConvert_RGB888toBGRA8888,
++        "vImageConvert_RGB888toRGBA8888" => vImageConvert_RGB888toRGBA8888,
++        "vImageConvert_RGBA8888toRGB888" => vImageConvert_RGBA8888toRGB888,
++        "vImageConvert_YpCbCrToARGB_GenerateConversion" => vImageConvert_YpCbCrToARGB_GenerateConversion,
++        "vImageConverter_CreateForCGToCVImageFormat" => vImageConverter_CreateForCGToCVImageFormat,
++        "vImageConverter_CreateForCVToCGImageFormat" => vImageConverter_CreateForCVToCGImageFormat,
++        "vImageConverter_CreateWithCGColorConversionInfo" => vImageConverter_CreateWithCGColorConversionInfo,
++        "vImageConverter_CreateWithCGImageFormat" => vImageConverter_CreateWithCGImageFormat,
++        "vImageConverter_Release" => vImageConverter_Release,
++        "vImageConvolve_ARGB8888" => vImageConvolve_ARGB8888,
++        "vImageCreateCGImageFromBuffer" => vImageCreateCGImageFromBuffer,
++        "vImageDilate_ARGB8888" => vImageDilate_ARGB8888,
++        "vImageErode_ARGB8888" => vImageErode_ARGB8888,
++        "vImageHorizontalReflect_ARGB8888" => vImageHorizontalReflect_ARGB8888,
++        "vImageHorizontalReflect_Planar16U" => vImageHorizontalReflect_Planar16U,
++        "vImageHorizontalReflect_Planar8" => vImageHorizontalReflect_Planar8,
++        "vImageMatrixMultiply_ARGB8888" => vImageMatrixMultiply_ARGB8888,
++        "vImageMatrixMultiply_ARGB8888ToPlanar8" => vImageMatrixMultiply_ARGB8888ToPlanar8,
++        "vImageMax_ARGB8888" => vImageMax_ARGB8888,
++        "vImageMin_ARGB8888" => vImageMin_ARGB8888,
++        "vImagePermuteChannels_ARGB8888" => vImagePermuteChannels_ARGB8888,
++        "vImagePremultipliedAlphaBlendDarken_RGBA8888" => vImagePremultipliedAlphaBlendDarken_RGBA8888,
++        "vImagePremultipliedAlphaBlendLighten_RGBA8888" => vImagePremultipliedAlphaBlendLighten_RGBA8888,
++        "vImagePremultipliedAlphaBlendMultiply_RGBA8888" => vImagePremultipliedAlphaBlendMultiply_RGBA8888,
++        "vImagePremultipliedAlphaBlendScreen_RGBA8888" => vImagePremultipliedAlphaBlendScreen_RGBA8888,
++        "vImagePremultipliedAlphaBlend_BGRA8888" => vImagePremultipliedAlphaBlend_BGRA8888,
++        "vImagePremultiplyData_RGBA8888" => vImagePremultiplyData_RGBA8888,
++        "vImageRotate90_ARGB8888" => vImageRotate90_ARGB8888,
++        "vImageRotate90_Planar16U" => vImageRotate90_Planar16U,
++        "vImageRotate90_Planar8" => vImageRotate90_Planar8,
++        "vImageRotate_ARGB8888" => vImageRotate_ARGB8888,
++        "vImageRotate_Planar8" => vImageRotate_Planar8,
++        "vImageScale_ARGB8888" => vImageScale_ARGB8888,
++        "vImageScale_Planar16F" => vImageScale_Planar16F,
++        "vImageScale_Planar16U" => vImageScale_Planar16U,
++        "vImageScale_Planar8" => vImageScale_Planar8,
++        "vImageVerticalReflect_ARGB8888" => vImageVerticalReflect_ARGB8888,
++        "vImageVerticalReflect_Planar16U" => vImageVerticalReflect_Planar16U,
++        "vImageVerticalReflect_Planar8" => vImageVerticalReflect_Planar8,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn permute_channels_in_place_and_out_of_place() {
++        let mut pixels: [u8; 8] = [10, 20, 30, 255, 40, 50, 60, 128];
++        let buf = vImage_Buffer {
++            data: pixels.as_mut_ptr().cast(),
++            height: 1,
++            width: 2,
++            rowBytes: 8,
++        };
++        let map: [u8; 4] = [2, 1, 0, 3]; // RGBA <-> BGRA
++        let err = unsafe { vImagePermuteChannels_ARGB8888(&buf, &buf, map.as_ptr(), 0) };
++        assert_eq!(err, kvImageNoError);
++        assert_eq!(pixels, [30, 20, 10, 255, 60, 50, 40, 128]);
++    }
++
++    #[test]
++    fn scale_and_reflect_and_rotate90_argb8888() {
++        let mut src_px: [u8; 16] = [
++            255, 0, 0, 255, // (0,0) red
++            0, 255, 0, 255, // (1,0) green
++            0, 0, 255, 255, // (0,1) blue
++            255, 255, 0, 255, // (1,1) yellow
++        ];
++        let src = vImage_Buffer {
++            data: src_px.as_mut_ptr().cast(),
++            height: 2,
++            width: 2,
++            rowBytes: 8,
++        };
++        let mut dst_px = [0u8; 16];
++        let dst = vImage_Buffer {
++            data: dst_px.as_mut_ptr().cast(),
++            height: 2,
++            width: 2,
++            rowBytes: 8,
++        };
++        assert_eq!(
++            unsafe { vImageHorizontalReflect_ARGB8888(&src, &dst, 0) },
++            kvImageNoError
++        );
++        assert_eq!(&dst_px[0..4], &[0, 255, 0, 255]);
++        assert_eq!(&dst_px[4..8], &[255, 0, 0, 255]);
++
++        let mut scaled_px = [0u8; 64];
++        let scaled = vImage_Buffer {
++            data: scaled_px.as_mut_ptr().cast(),
++            height: 4,
++            width: 4,
++            rowBytes: 16,
++        };
++        assert_eq!(
++            unsafe {
++                vImageScale_ARGB8888(&src, &scaled, ptr::null_mut(), kvImageGetTempBufferSize)
++            },
++            0
++        );
++        assert_eq!(
++            unsafe { vImageScale_ARGB8888(&src, &scaled, ptr::null_mut(), 0) },
++            kvImageNoError
++        );
++        assert_eq!(&scaled_px[0..4], &[255, 0, 0, 255]);
++    }
++
++    #[test]
++    fn rgb888_and_yuv420_roundtrip() {
++        let mut rgb = [200u8, 100, 50, 200, 100, 50, 200, 100, 50, 200, 100, 50];
++        let mut argb = [0u8; 16];
++        let s_rgb = vImage_Buffer {
++            data: rgb.as_mut_ptr().cast(),
++            width: 2,
++            height: 2,
++            rowBytes: 6,
++        };
++        let d_argb = vImage_Buffer {
++            data: argb.as_mut_ptr().cast(),
++            width: 2,
++            height: 2,
++            rowBytes: 8,
++        };
++        assert_eq!(
++            unsafe { vImageConvert_RGB888toARGB8888(&s_rgb, ptr::null(), 255, &d_argb, 0, 0) },
++            kvImageNoError
++        );
++        assert_eq!(&argb[0..4], &[255, 200, 100, 50]);
++
++        let mut y_plane = [0u8; 4];
++        let mut uv_plane = [0u8; 2];
++        let y_buf = vImage_Buffer {
++            data: y_plane.as_mut_ptr().cast(),
++            width: 2,
++            height: 2,
++            rowBytes: 2,
++        };
++        let uv_buf = vImage_Buffer {
++            data: uv_plane.as_mut_ptr().cast(),
++            width: 1,
++            height: 1,
++            rowBytes: 2,
++        };
++        let range = vImage_YpCbCrPixelRange {
++            Yp_bias: 16,
++            CbCr_bias: 128,
++            YpRangeMax: 235,
++            CbCrRangeMax: 240,
++            YpMax: 235,
++            YpMin: 16,
++            CbCrMax: 240,
++            CbCrMin: 16,
++        };
++        let mut to_yuv = [0u8; 128];
++        let mut to_rgb = [0u8; 128];
++        assert_eq!(
++            unsafe {
++                vImageConvert_ARGBToYpCbCr_GenerateConversion(
++                    &MATRIX_ARGB_TO_YCBCR_709,
++                    &range,
++                    to_yuv.as_mut_ptr().cast(),
++                    0,
++                    0,
++                    0,
++                )
++            },
++            kvImageNoError
++        );
++        assert_eq!(
++            unsafe {
++                vImageConvert_YpCbCrToARGB_GenerateConversion(
++                    &MATRIX_YCBCR_TO_ARGB_709,
++                    &range,
++                    to_rgb.as_mut_ptr().cast(),
++                    0,
++                    0,
++                    0,
++                )
++            },
++            kvImageNoError
++        );
++        assert_eq!(
++            unsafe {
++                vImageConvert_ARGB8888To420Yp8_CbCr8(
++                    &d_argb,
++                    &y_buf,
++                    &uv_buf,
++                    to_yuv.as_ptr().cast(),
++                    ptr::null(),
++                    0,
++                )
++            },
++            kvImageNoError
++        );
++        let mut out_argb = [0u8; 16];
++        let out_buf = vImage_Buffer {
++            data: out_argb.as_mut_ptr().cast(),
++            width: 2,
++            height: 2,
++            rowBytes: 8,
++        };
++        assert_eq!(
++            unsafe {
++                vImageConvert_420Yp8_CbCr8ToARGB8888(
++                    &y_buf,
++                    &uv_buf,
++                    &out_buf,
++                    to_rgb.as_ptr().cast(),
++                    ptr::null(),
++                    255,
++                    0,
++                )
++            },
++            kvImageNoError
++        );
++        assert_eq!(out_argb[0], 255);
++        assert!((i32::from(out_argb[1]) - 200).abs() <= 4);
++        assert!((i32::from(out_argb[2]) - 100).abs() <= 4);
++        assert!((i32::from(out_argb[3]) - 50).abs() <= 4);
++    }
++
++    #[test]
++    fn vdsp_and_matrix_globals_work() {
++        let a = [1.0f32, 2.0, 3.0];
++        let b = [4.0f32, 5.0, 6.0];
++        let s = 2.0f32;
++        let mut c = [0.0f32; 3];
++        unsafe { vDSP_vsmul(a.as_ptr(), 1, &s, c.as_mut_ptr(), 1, 3) };
++        assert_eq!(c, [2.0, 4.0, 6.0]);
++        unsafe { vDSP_vasm(a.as_ptr(), 1, b.as_ptr(), 1, &s, c.as_mut_ptr(), 1, 3) };
++        assert_eq!(c, [10.0, 14.0, 18.0]);
++
++        let syms = data_symbols();
++        assert_eq!(syms.len(), 4);
++        for (_, addr) in syms {
++            let mat_ptr = unsafe { *(addr as *const *const vImage_ARGBToYpCbCrMatrix) };
++            assert!(!mat_ptr.is_null());
++        }
++    }
++}
+diff --git a/crates/audiotoolbox/src/queue.rs b/crates/audiotoolbox/src/queue.rs
+index 2fd4f9e8..259260bd 100644
+--- a/crates/audiotoolbox/src/queue.rs
++++ b/crates/audiotoolbox/src/queue.rs
+@@ -446,6 +446,84 @@ pub unsafe extern "C" fn AudioQueueSetProperty(
+     status
+ }
+ 
++pub unsafe extern "C" fn AudioQueueAddPropertyListener(
++    handle: *mut c_void,
++    _id: u32,
++    _proc: *const c_void,
++    _user_data: *mut c_void,
++) -> i32 {
++    if queue_for(handle).is_none() {
++        return PARAM_ERR;
++    }
++    SUCCESS
++}
++
++pub unsafe extern "C" fn AudioQueueRemovePropertyListener(
++    handle: *mut c_void,
++    _id: u32,
++    _proc: *const c_void,
++    _user_data: *mut c_void,
++) -> i32 {
++    if queue_for(handle).is_none() {
++        return PARAM_ERR;
++    }
++    SUCCESS
++}
++
++pub unsafe extern "C" fn AudioQueueGetProperty(
++    handle: *mut c_void,
++    id: u32,
++    out_data: *mut c_void,
++    io_data_size: *mut u32,
++) -> i32 {
++    if queue_for(handle).is_none() || io_data_size.is_null() {
++        return PARAM_ERR;
++    }
++    const PROPERTY_IS_RUNNING: u32 = u32::from_be_bytes(*b"aqrn");
++    match id {
++        PROPERTY_IS_RUNNING => {
++            if !out_data.is_null() && unsafe { *io_data_size } >= 4 {
++                unsafe { out_data.cast::<u32>().write(1) };
++                unsafe { *io_data_size = 4 };
++                SUCCESS
++            } else {
++                PARAM_ERR
++            }
++        }
++        _ => INVALID_PROPERTY,
++    }
++}
++
++pub unsafe extern "C" fn AudioQueueReset(handle: *mut c_void) -> i32 {
++    if queue_for(handle).is_none() {
++        return PARAM_ERR;
++    }
++    SUCCESS
++}
++
++pub unsafe extern "C" fn AudioQueueGetParameter(
++    handle: *mut c_void,
++    _param_id: u32,
++    out_value: *mut f32,
++) -> i32 {
++    if queue_for(handle).is_none() || out_value.is_null() {
++        return PARAM_ERR;
++    }
++    unsafe { out_value.write(1.0) };
++    SUCCESS
++}
++
++pub unsafe extern "C" fn AudioQueueSetParameter(
++    handle: *mut c_void,
++    _param_id: u32,
++    _value: f32,
++) -> i32 {
++    if queue_for(handle).is_none() {
++        return PARAM_ERR;
++    }
++    SUCCESS
++}
++
+ exports::exports! {
+     functions {
+         "AudioQueueNewOutput" => AudioQueueNewOutput,
+@@ -457,8 +535,14 @@ exports::exports! {
+         "AudioQueuePause" => AudioQueuePause,
+         "AudioQueueStop" => AudioQueueStop,
+         "AudioQueueFlush" => AudioQueueFlush,
++        "AudioQueueReset" => AudioQueueReset,
+         "AudioQueueDispose" => AudioQueueDispose,
+         "AudioQueueSetProperty" => AudioQueueSetProperty,
++        "AudioQueueGetProperty" => AudioQueueGetProperty,
++        "AudioQueueAddPropertyListener" => AudioQueueAddPropertyListener,
++        "AudioQueueRemovePropertyListener" => AudioQueueRemovePropertyListener,
++        "AudioQueueGetParameter" => AudioQueueGetParameter,
++        "AudioQueueSetParameter" => AudioQueueSetParameter,
+     }
+ }
+ 
+diff --git a/crates/avfoundation/src/lib.rs b/crates/avfoundation/src/lib.rs
+index 8c9faaf6..91f7c869 100644
+--- a/crates/avfoundation/src/lib.rs
++++ b/crates/avfoundation/src/lib.rs
+@@ -28,9 +28,234 @@ pub fn bootstrap() {
+             request_access_for_media_type as *const std::ffi::c_void,
+             c"v32@0:8@16@?24",
+         );
++
++        install_audio_format();
+     });
+ }
+ 
++/// CoreAudio `AudioStreamBasicDescription` (40 bytes).
++#[repr(C)]
++#[derive(Clone, Copy, Default)]
++struct AudioStreamBasicDescription {
++    sample_rate: f64,
++    format_id: u32,
++    format_flags: u32,
++    bytes_per_packet: u32,
++    frames_per_packet: u32,
++    bytes_per_frame: u32,
++    channels_per_frame: u32,
++    bits_per_channel: u32,
++    reserved: u32,
++}
++
++const _: () = assert!(std::mem::size_of::<AudioStreamBasicDescription>() == 40);
++
++#[repr(C)]
++struct AudioFormatBody {
++    isa: *const objc::class::Class,
++    asbd: AudioStreamBasicDescription,
++    common_format: usize,
++    interleaved: u8,
++}
++
++const AUDIO_FORMAT_LINEAR_PCM: u32 = u32::from_be_bytes(*b"lpcm");
++const AUDIO_FORMAT_FLAG_IS_FLOAT: u32 = 1 << 0;
++const AUDIO_FORMAT_FLAG_IS_SIGNED_INTEGER: u32 = 1 << 2;
++const AUDIO_FORMAT_FLAG_IS_PACKED: u32 = 1 << 3;
++const AUDIO_FORMAT_FLAG_IS_NON_INTERLEAVED: u32 = 1 << 5;
++
++fn make_common_asbd(
++    common_format: usize,
++    sample_rate: f64,
++    channels: u32,
++    interleaved: bool,
++) -> AudioStreamBasicDescription {
++    let (bits, is_float) = match common_format {
++        1 => (32u32, true),  // AVAudioPCMFormatFloat32
++        2 => (64u32, true),  // AVAudioPCMFormatFloat64
++        3 => (16u32, false), // AVAudioPCMFormatInt16
++        4 => (32u32, false), // AVAudioPCMFormatInt32
++        _ => (32u32, true),
++    };
++    let bytes_per_sample = bits / 8;
++    let bytes_per_frame = if interleaved {
++        bytes_per_sample * channels.max(1)
++    } else {
++        bytes_per_sample
++    };
++    let mut flags = AUDIO_FORMAT_FLAG_IS_PACKED
++        | if is_float {
++            AUDIO_FORMAT_FLAG_IS_FLOAT
++        } else {
++            AUDIO_FORMAT_FLAG_IS_SIGNED_INTEGER
++        };
++    if !interleaved {
++        flags |= AUDIO_FORMAT_FLAG_IS_NON_INTERLEAVED;
++    }
++    AudioStreamBasicDescription {
++        sample_rate,
++        format_id: AUDIO_FORMAT_LINEAR_PCM,
++        format_flags: flags,
++        bytes_per_packet: bytes_per_frame,
++        frames_per_packet: 1,
++        bytes_per_frame,
++        channels_per_frame: channels,
++        bits_per_channel: bits,
++        reserved: 0,
++    }
++}
++
++unsafe extern "C" fn af_init_common(
++    receiver: Id,
++    _sel: Sel,
++    common_format: usize,
++    sample_rate: f64,
++    channels: u32,
++    interleaved: u8,
++) -> Id {
++    if receiver.is_null() {
++        return std::ptr::null_mut();
++    }
++    let body = unsafe { &mut *(receiver as *mut AudioFormatBody) };
++    body.asbd = make_common_asbd(common_format, sample_rate, channels, interleaved != 0);
++    body.common_format = common_format;
++    body.interleaved = u8::from(interleaved != 0);
++    receiver
++}
++
++unsafe extern "C" fn af_init_standard(
++    receiver: Id,
++    sel: Sel,
++    sample_rate: f64,
++    channels: u32,
++) -> Id {
++    unsafe { af_init_common(receiver, sel, 1, sample_rate, channels, 0) }
++}
++
++unsafe extern "C" fn af_init_stream_desc(
++    receiver: Id,
++    _sel: Sel,
++    asbd: *const AudioStreamBasicDescription,
++) -> Id {
++    if receiver.is_null() || asbd.is_null() {
++        return std::ptr::null_mut();
++    }
++    let desc = unsafe { *asbd };
++    let body = unsafe { &mut *(receiver as *mut AudioFormatBody) };
++    body.asbd = desc;
++    body.interleaved = u8::from((desc.format_flags & AUDIO_FORMAT_FLAG_IS_NON_INTERLEAVED) == 0);
++    body.common_format = if (desc.format_flags & AUDIO_FORMAT_FLAG_IS_FLOAT) != 0 {
++        if desc.bits_per_channel == 64 { 2 } else { 1 }
++    } else if desc.bits_per_channel == 16 {
++        3
++    } else if desc.bits_per_channel == 32 {
++        4
++    } else {
++        0
++    };
++    receiver
++}
++
++unsafe extern "C" fn af_stream_description(
++    receiver: Id,
++    _sel: Sel,
++) -> *const AudioStreamBasicDescription {
++    if receiver.is_null() {
++        return std::ptr::null();
++    }
++    unsafe { &(*(receiver as *const AudioFormatBody)).asbd }
++}
++
++unsafe extern "C" fn af_sample_rate(receiver: Id, _sel: Sel) -> f64 {
++    if receiver.is_null() {
++        return 0.0;
++    }
++    unsafe { (*(receiver as *const AudioFormatBody)).asbd.sample_rate }
++}
++
++unsafe extern "C" fn af_channel_count(receiver: Id, _sel: Sel) -> u32 {
++    if receiver.is_null() {
++        return 0;
++    }
++    unsafe { (*(receiver as *const AudioFormatBody)).asbd.channels_per_frame }
++}
++
++unsafe extern "C" fn af_is_interleaved(receiver: Id, _sel: Sel) -> u8 {
++    if receiver.is_null() {
++        return 0;
++    }
++    unsafe { (*(receiver as *const AudioFormatBody)).interleaved }
++}
++
++unsafe extern "C" fn af_common_format(receiver: Id, _sel: Sel) -> usize {
++    if receiver.is_null() {
++        return 0;
++    }
++    unsafe { (*(receiver as *const AudioFormatBody)).common_format }
++}
++
++unsafe extern "C" fn af_is_standard(receiver: Id, _sel: Sel) -> u8 {
++    if receiver.is_null() {
++        return 0;
++    }
++    let body = unsafe { &*(receiver as *const AudioFormatBody) };
++    u8::from(body.common_format == 1 && body.interleaved == 0)
++}
++
++fn install_audio_format() {
++    let class = corefoundation::base::register(
++        c"AVAudioFormat",
++        None,
++        std::mem::size_of::<AudioFormatBody>(),
++        false,
++    );
++    class.replace_method(
++        objc::sel::get("initWithCommonFormat:sampleRate:channels:interleaved:"),
++        af_init_common as *const std::ffi::c_void,
++        c"@40@0:8Q16d24I32c36",
++    );
++    class.replace_method(
++        objc::sel::get("initStandardFormatWithSampleRate:channels:"),
++        af_init_standard as *const std::ffi::c_void,
++        c"@28@0:8d16I24",
++    );
++    class.replace_method(
++        objc::sel::get("initWithStreamDescription:"),
++        af_init_stream_desc as *const std::ffi::c_void,
++        c"@24@0:8^v16",
++    );
++    class.replace_method(
++        objc::sel::get("streamDescription"),
++        af_stream_description as *const std::ffi::c_void,
++        c"^v16@0:8",
++    );
++    class.replace_method(
++        objc::sel::get("sampleRate"),
++        af_sample_rate as *const std::ffi::c_void,
++        c"d16@0:8",
++    );
++    class.replace_method(
++        objc::sel::get("channelCount"),
++        af_channel_count as *const std::ffi::c_void,
++        c"I16@0:8",
++    );
++    class.replace_method(
++        objc::sel::get("isInterleaved"),
++        af_is_interleaved as *const std::ffi::c_void,
++        c"c16@0:8",
++    );
++    class.replace_method(
++        objc::sel::get("commonFormat"),
++        af_common_format as *const std::ffi::c_void,
++        c"Q16@0:8",
++    );
++    class.replace_method(
++        objc::sel::get("isStandard"),
++        af_is_standard as *const std::ffi::c_void,
++        c"c16@0:8",
++    );
++}
++
+ /// `+[AVCaptureDevice devicesWithMediaType:]`.
+ ///
+ /// No capture backend exists, so every media type has no devices - the answer
+@@ -209,6 +434,7 @@ const STRINGS: &[(&str, &str)] = &[
+ pub fn data_symbols() -> Vec<(String, u64)> {
+     bootstrap();
+     let class = objc::class::lookup(c"AVCaptureDevice").expect("AVCaptureDevice is registered");
++    let af_class = objc::class::lookup(c"AVAudioFormat").expect("AVAudioFormat is registered");
+     let mut out = corefoundation::base::named_string_globals(NAMED_STRINGS);
+     out.extend(corefoundation::base::string_globals(STRINGS));
+     out.extend([
+@@ -220,6 +446,14 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+             "_OBJC_METACLASS_$_AVCaptureDevice".to_string(),
+             objc::class::ptr(class.metaclass()) as usize as u64,
+         ),
++        (
++            "_OBJC_CLASS_$_AVAudioFormat".to_string(),
++            objc::class::ptr(af_class) as usize as u64,
++        ),
++        (
++            "_OBJC_METACLASS_$_AVAudioFormat".to_string(),
++            objc::class::ptr(af_class.metaclass()) as usize as u64,
++        ),
+     ]);
+     out
+ }
+diff --git a/crates/corevideo/src/lib.rs b/crates/corevideo/src/lib.rs
+index fc4d6388..f0de7da9 100644
+--- a/crates/corevideo/src/lib.rs
++++ b/crates/corevideo/src/lib.rs
+@@ -407,6 +407,17 @@ exports::exports! {
+         "CVPixelBufferPoolCreatePixelBuffer" => pixel_buffer::CVPixelBufferPoolCreatePixelBuffer,
+         "CVPixelBufferPoolCreatePixelBufferWithAuxAttributes" => pixel_buffer::CVPixelBufferPoolCreatePixelBufferWithAuxAttributes,
+         "CVPixelBufferPoolFlush" => pixel_buffer::CVPixelBufferPoolFlush,
++        "CVMetalTextureCacheCreate" => pixel_buffer::CVMetalTextureCacheCreate,
++        "CVMetalTextureCacheCreateTextureFromImage" => pixel_buffer::CVMetalTextureCacheCreateTextureFromImage,
++        "CVMetalTextureCacheFlush" => pixel_buffer::CVMetalTextureCacheFlush,
++        "CVMetalTextureGetTexture" => pixel_buffer::CVMetalTextureGetTexture,
++        "CVOpenGLTextureCacheCreate" => pixel_buffer::CVOpenGLTextureCacheCreate,
++        "CVOpenGLTextureCacheCreateTextureFromImage" => pixel_buffer::CVOpenGLTextureCacheCreateTextureFromImage,
++        "CVOpenGLTextureCacheFlush" => pixel_buffer::CVOpenGLTextureCacheFlush,
++        "CVOpenGLTextureCacheRelease" => pixel_buffer::CVOpenGLTextureCacheRelease,
++        "CVOpenGLTextureGetName" => pixel_buffer::CVOpenGLTextureGetName,
++        "CVOpenGLTextureGetTarget" => pixel_buffer::CVOpenGLTextureGetTarget,
++        "CVOpenGLTextureRelease" => pixel_buffer::CVOpenGLTextureRelease,
+     }
+ }
+ 
+diff --git a/crates/corevideo/src/pixel_buffer.rs b/crates/corevideo/src/pixel_buffer.rs
+index a1e29683..886cf0b8 100644
+--- a/crates/corevideo/src/pixel_buffer.rs
++++ b/crates/corevideo/src/pixel_buffer.rs
+@@ -28,7 +28,7 @@ const NV12_VIDEO: u32 = u32::from_be_bytes(*b"420v");
+ const NV12_FULL: u32 = u32::from_be_bytes(*b"420f");
+ const I420_VIDEO: u32 = u32::from_be_bytes(*b"y420");
+ const I420_FULL: u32 = u32::from_be_bytes(*b"f420");
+-#[cfg(test)]
++/// `kCVPixelBufferLock_ReadOnly`.
+ const READ_ONLY: u64 = 1;
+ const DEFAULT_ALIGNMENT: usize = 64;
+ const MAX_STORAGE: usize = 256 * 1024 * 1024;
+@@ -252,8 +252,10 @@ macro_rules! forward_foreign {
+ 
+ mod attachments;
+ mod pool;
++mod texture_cache;
+ 
+ pub use attachments::*;
++pub use texture_cache::*;
+ pub use pool::*;
+ 
+ fn aligned(value: usize, alignment: usize) -> Option<usize> {
+diff --git a/crates/corevideo/src/pixel_buffer/texture_cache.rs b/crates/corevideo/src/pixel_buffer/texture_cache.rs
+new file mode 100644
+index 00000000..8a28b0fb
+--- /dev/null
++++ b/crates/corevideo/src/pixel_buffer/texture_cache.rs
+@@ -0,0 +1,715 @@
++//! `CVMetalTextureCache` and `CVOpenGLTextureCache`: GPU textures made from
++//! pixel buffers.
++//!
++//! FIXME (ACCURACY): a texture is a copy of the buffer's pixels taken when it
++//! is made. On macOS it shares the buffer's IOSurface, so CPU writes made later
++//! show through without a new texture; a flush therefore has nothing to do.
++
++use std::ffi::c_void;
++use std::sync::OnceLock;
++
++use corefoundation::base::CFTypeRef;
++use objc::class::Class;
++use objc::object::Id;
++use objc::sel::Sel;
++
++use super::{
++    BGRA, CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRowOfPlane,
++    CVPixelBufferGetHeightOfPlane, CVPixelBufferGetPixelFormatType, CVPixelBufferGetPlaneCount,
++    CVPixelBufferGetWidthOfPlane, CVPixelBufferLockBaseAddress, CVPixelBufferUnlockBaseAddress,
++    ERROR, INVALID_ARGUMENT, READ_ONLY, SUCCESS, attribute, state,
++};
++
++/// `kCVReturnPixelBufferNotOpenGLCompatible`.
++const NOT_OPENGL_COMPATIBLE: i32 = -6683;
++/// `kCVReturnPixelBufferNotMetalCompatible`.
++const NOT_METAL_COMPATIBLE: i32 = -6684;
++/// `MTLTextureUsageShaderRead`, what a cache texture is for unless the
++/// attributes say otherwise.
++const MTL_TEXTURE_USAGE_SHADER_READ: u64 = 1;
++/// `kCVPixelFormatType_32ARGB`.
++const ARGB: u32 = 0x20;
++const RGBA: u32 = u32::from_be_bytes(*b"RGBA");
++
++const GL_TEXTURE_RECTANGLE: u32 = 0x84F5;
++const GL_TEXTURE_BINDING_RECTANGLE: u32 = 0x84F6;
++const GL_RGBA8: i32 = 0x8058;
++const GL_RGBA: u32 = 0x1908;
++const GL_BGRA: u32 = 0x80E1;
++const GL_UNSIGNED_BYTE: u32 = 0x1401;
++const GL_UNSIGNED_INT_8_8_8_8: u32 = 0x8035;
++const GL_UNSIGNED_INT_8_8_8_8_REV: u32 = 0x8367;
++const GL_UNPACK_ROW_LENGTH: u32 = 0x0CF2;
++const GL_UNPACK_ALIGNMENT: u32 = 0x0CF5;
++const GL_PIXEL_UNPACK_BUFFER: u32 = 0x88EC;
++const GL_PIXEL_UNPACK_BUFFER_BINDING: u32 = 0x88EF;
++const GL_TEXTURE_MIN_FILTER: u32 = 0x2801;
++const GL_TEXTURE_MAG_FILTER: u32 = 0x2800;
++const GL_TEXTURE_WRAP_S: u32 = 0x2802;
++const GL_TEXTURE_WRAP_T: u32 = 0x2803;
++const GL_LINEAR: i32 = 0x2601;
++const GL_CLAMP_TO_EDGE: i32 = 0x812F;
++
++/// `MTLRegion`.
++#[repr(C)]
++struct Region {
++    origin: [u64; 3],
++    size: [u64; 3],
++}
++
++struct MetalCache {
++    /// The `id<MTLDevice>` textures are made on, retained.
++    device: Id,
++}
++
++impl Drop for MetalCache {
++    fn drop(&mut self) {
++        objc::arc::release(self.device);
++    }
++}
++
++struct MetalTexture {
++    /// The `id<MTLTexture>`, owned.
++    texture: Id,
++    /// The pixel buffer it was made from, retained as macOS does.
++    buffer: CFTypeRef,
++}
++
++impl Drop for MetalTexture {
++    fn drop(&mut self) {
++        objc::arc::release(self.texture);
++        // SAFETY: the retain this texture took.
++        unsafe { corefoundation::api::CFRelease(self.buffer) };
++    }
++}
++
++struct GlCache;
++
++struct GlTexture {
++    name: u32,
++    buffer: CFTypeRef,
++}
++
++impl Drop for GlTexture {
++    fn drop(&mut self) {
++        // FIXME (ACCURACY): the name is only deleted when some GL context is
++        // current on the releasing thread; contexts here share objects.
++        if !sdl3::video::gl_current_context().is_null()
++            && let Some(gl) = Gl::get()
++        {
++            // SAFETY: a texture name this cache made, with a context current.
++            unsafe { (gl.delete_textures)(1, &self.name) };
++        }
++        // SAFETY: the retain this texture took.
++        unsafe { corefoundation::api::CFRelease(self.buffer) };
++    }
++}
++
++fn register<T: 'static>(
++    slot: &'static OnceLock<usize>,
++    name: &'static std::ffi::CStr,
++) -> &'static Class {
++    let addr = *slot.get_or_init(|| {
++        corefoundation::bootstrap();
++        objc::class::ptr(corefoundation::boxed::register::<T>(name, None, true)) as usize
++    });
++    // SAFETY: the registered class lives for the process.
++    unsafe { &*(addr as *const Class) }
++}
++
++fn metal_cache_class() -> &'static Class {
++    static CLASS: OnceLock<usize> = OnceLock::new();
++    register::<MetalCache>(&CLASS, c"__CVMetalTextureCache")
++}
++
++fn metal_texture_class() -> &'static Class {
++    static CLASS: OnceLock<usize> = OnceLock::new();
++    register::<MetalTexture>(&CLASS, c"__CVMetalTexture")
++}
++
++fn gl_cache_class() -> &'static Class {
++    static CLASS: OnceLock<usize> = OnceLock::new();
++    register::<GlCache>(&CLASS, c"__CVOpenGLTextureCache")
++}
++
++fn gl_texture_class() -> &'static Class {
++    static CLASS: OnceLock<usize> = OnceLock::new();
++    register::<GlTexture>(&CLASS, c"__CVOpenGLTexture")
++}
++
++fn contents<'a, T>(object: CFTypeRef, class: &'static Class) -> Option<&'a T> {
++    if object.is_null() {
++        return None;
++    }
++    // SAFETY: a live CF object; its class is checked before the body is read.
++    unsafe { corefoundation::boxed::contents::<T>(object, class) }.map(|t| &*t)
++}
++
++/// One plane of a locked pixel buffer, or the whole of a packed one.
++struct PlaneView {
++    base: *const u8,
++    width: usize,
++    height: usize,
++    bytes_per_row: usize,
++}
++
++/// Locks `buffer` for reading and describes `plane`; `None` when the buffer is
++/// not one of this runtime's or has no such plane.
++fn lock_plane(buffer: CFTypeRef, plane: usize) -> Option<PlaneView> {
++    state(buffer)?;
++    // SAFETY: a pixel buffer of this crate's, checked above.
++    unsafe {
++        let planes = CVPixelBufferGetPlaneCount(buffer);
++        if plane >= planes.max(1) || CVPixelBufferLockBaseAddress(buffer, READ_ONLY) != SUCCESS {
++            return None;
++        }
++        // The plane accessors answer for the whole image of a packed buffer.
++        let view = PlaneView {
++            base: CVPixelBufferGetBaseAddressOfPlane(buffer, plane).cast(),
++            width: CVPixelBufferGetWidthOfPlane(buffer, plane),
++            height: CVPixelBufferGetHeightOfPlane(buffer, plane),
++            bytes_per_row: CVPixelBufferGetBytesPerRowOfPlane(buffer, plane),
++        };
++        if view.base.is_null() {
++            CVPixelBufferUnlockBaseAddress(buffer, READ_ONLY);
++            return None;
++        }
++        Some(view)
++    }
++}
++
++fn unlock(buffer: CFTypeRef) {
++    // SAFETY: a buffer `lock_plane` locked.
++    unsafe { CVPixelBufferUnlockBaseAddress(buffer, READ_ONLY) };
++}
++
++// --- Metal -------------------------------------------------------------------
++
++/// CVReturn CVMetalTextureCacheCreate(CFAllocatorRef, CFDictionaryRef
++/// cacheAttributes, id<MTLDevice>, CFDictionaryRef textureAttributes,
++/// CVMetalTextureCacheRef *).
++///
++/// # Safety
++/// `device` must be nil or an `MTLDevice`; `out` must be writable.
++pub unsafe extern "C" fn CVMetalTextureCacheCreate(
++    _allocator: CFTypeRef,
++    _cache_attributes: CFTypeRef,
++    device: Id,
++    _texture_attributes: CFTypeRef,
++    out: *mut CFTypeRef,
++) -> i32 {
++    if out.is_null() {
++        return INVALID_ARGUMENT;
++    }
++    // SAFETY: the caller's out-parameter.
++    unsafe { *out = std::ptr::null() };
++    if device.is_null() {
++        return INVALID_ARGUMENT;
++    }
++    let made = corefoundation::boxed::make(
++        metal_cache_class(),
++        MetalCache {
++            device: objc::arc::retain(device),
++        },
++    );
++    if made.is_null() {
++        return super::ALLOCATION_FAILED;
++    }
++    // SAFETY: as above.
++    unsafe { *out = made };
++    SUCCESS
++}
++
++/// CVReturn CVMetalTextureCacheCreateTextureFromImage(CFAllocatorRef,
++/// CVMetalTextureCacheRef, CVImageBufferRef, CFDictionaryRef textureAttributes,
++/// MTLPixelFormat, size_t width, size_t height, size_t planeIndex,
++/// CVMetalTextureRef *).
++///
++/// # Safety
++/// The references must be live CF objects or null; `out` must be writable.
++#[allow(clippy::too_many_arguments)]
++pub unsafe extern "C" fn CVMetalTextureCacheCreateTextureFromImage(
++    _allocator: CFTypeRef,
++    cache: CFTypeRef,
++    image: CFTypeRef,
++    texture_attributes: CFTypeRef,
++    pixel_format: u64,
++    width: usize,
++    height: usize,
++    plane: usize,
++    out: *mut CFTypeRef,
++) -> i32 {
++    if out.is_null() {
++        return INVALID_ARGUMENT;
++    }
++    // SAFETY: the caller's out-parameter.
++    unsafe { *out = std::ptr::null() };
++    let Some(cache) = contents::<MetalCache>(cache, metal_cache_class()) else {
++        return INVALID_ARGUMENT;
++    };
++    if width == 0 || height == 0 {
++        return INVALID_ARGUMENT;
++    }
++    let Some(view) = lock_plane(image, plane) else {
++        return INVALID_ARGUMENT;
++    };
++    if width > view.width || height > view.height {
++        unlock(image);
++        return NOT_METAL_COMPATIBLE;
++    }
++    // SAFETY: null or a CF value from the caller's dictionary.
++    let usage = unsafe {
++        corefoundation::collections::number(attribute(texture_attributes, "MetalTextureUsage"))
++    }
++    .and_then(|n| u64::try_from(n.as_i64()).ok())
++    .unwrap_or(MTL_TEXTURE_USAGE_SHADER_READ);
++    let texture = make_metal_texture(cache.device, pixel_format, width, height, usage, &view);
++    unlock(image);
++    if texture.is_null() {
++        return NOT_METAL_COMPATIBLE;
++    }
++    // SAFETY: a live pixel buffer, retained for the texture's lifetime.
++    let buffer = unsafe { corefoundation::api::CFRetain(image) };
++    let made = corefoundation::boxed::make(metal_texture_class(), MetalTexture { texture, buffer });
++    if made.is_null() {
++        return super::ALLOCATION_FAILED;
++    }
++    // SAFETY: as above.
++    unsafe { *out = made };
++    SUCCESS
++}
++
++/// A new texture on `device` holding `view`'s pixels, owned by the caller.
++fn make_metal_texture(
++    device: Id,
++    pixel_format: u64,
++    width: usize,
++    height: usize,
++    usage: u64,
++    view: &PlaneView,
++) -> Id {
++    let Some(class) = objc::class::lookup(c"MTLTextureDescriptor") else {
++        return std::ptr::null_mut();
++    };
++    // SAFETY: Metal's own signatures for each selector, sent to a descriptor
++    // class, a descriptor, a device and the texture it made.
++    unsafe {
++        let make_descriptor: unsafe extern "C" fn(Id, Sel, u64, u64, u64, bool) -> Id =
++            std::mem::transmute(objc::msg::entry());
++        let descriptor = make_descriptor(
++            objc::class::ptr(class) as Id,
++            objc::sel::get("texture2DDescriptorWithPixelFormat:width:height:mipmapped:"),
++            pixel_format,
++            width as u64,
++            height as u64,
++            false,
++        );
++        if descriptor.is_null() {
++            return std::ptr::null_mut();
++        }
++        let set_usage: unsafe extern "C" fn(Id, Sel, u64) = std::mem::transmute(objc::msg::entry());
++        set_usage(descriptor, objc::sel::get("setUsage:"), usage);
++        let new_texture: unsafe extern "C" fn(Id, Sel, Id) -> Id =
++            std::mem::transmute(objc::msg::entry());
++        let texture = new_texture(
++            device,
++            objc::sel::get("newTextureWithDescriptor:"),
++            descriptor,
++        );
++        if texture.is_null() {
++            return texture;
++        }
++        let replace: unsafe extern "C" fn(Id, Sel, Region, u64, *const c_void, u64) =
++            std::mem::transmute(objc::msg::entry());
++        replace(
++            texture,
++            objc::sel::get("replaceRegion:mipmapLevel:withBytes:bytesPerRow:"),
++            Region {
++                origin: [0; 3],
++                size: [width as u64, height as u64, 1],
++            },
++            0,
++            view.base.cast(),
++            view.bytes_per_row as u64,
++        );
++        texture
++    }
++}
++
++/// id<MTLTexture> CVMetalTextureGetTexture(CVMetalTextureRef), under the get rule.
++pub unsafe extern "C" fn CVMetalTextureGetTexture(texture: CFTypeRef) -> Id {
++    contents::<MetalTexture>(texture, metal_texture_class())
++        .map_or(std::ptr::null_mut(), |t| t.texture)
++}
++
++/// void CVMetalTextureCacheFlush(CVMetalTextureCacheRef, CVOptionFlags).
++pub unsafe extern "C" fn CVMetalTextureCacheFlush(_cache: CFTypeRef, _options: u64) {}
++
++// --- OpenGL ------------------------------------------------------------------
++
++/// The GL entry points texture upload needs, from the current driver.
++struct Gl {
++    gen_textures: unsafe extern "C" fn(i32, *mut u32),
++    delete_textures: unsafe extern "C" fn(i32, *const u32),
++    bind_texture: unsafe extern "C" fn(u32, u32),
++    tex_image_2d: unsafe extern "C" fn(u32, i32, i32, i32, i32, i32, u32, u32, *const c_void),
++    tex_parameteri: unsafe extern "C" fn(u32, u32, i32),
++    pixel_storei: unsafe extern "C" fn(u32, i32),
++    get_integerv: unsafe extern "C" fn(u32, *mut i32),
++    bind_buffer: unsafe extern "C" fn(u32, u32),
++}
++
++impl Gl {
++    fn get() -> Option<&'static Gl> {
++        static GL: OnceLock<Option<Gl>> = OnceLock::new();
++        GL.get_or_init(|| {
++            let f = |name: &std::ffi::CStr| sdl3::video::gl_proc_address(name);
++            // SAFETY: each pointer is the driver's entry point of that name,
++            // whose C signature is fixed by the GL specification.
++            unsafe {
++                Some(Gl {
++                    gen_textures: std::mem::transmute(f(c"glGenTextures")?),
++                    delete_textures: std::mem::transmute(f(c"glDeleteTextures")?),
++                    bind_texture: std::mem::transmute(f(c"glBindTexture")?),
++                    tex_image_2d: std::mem::transmute(f(c"glTexImage2D")?),
++                    tex_parameteri: std::mem::transmute(f(c"glTexParameteri")?),
++                    pixel_storei: std::mem::transmute(f(c"glPixelStorei")?),
++                    get_integerv: std::mem::transmute(f(c"glGetIntegerv")?),
++                    bind_buffer: std::mem::transmute(f(c"glBindBuffer")?),
++                })
++            }
++        })
++        .as_ref()
++    }
++}
++
++/// The GL upload format and type for a packed 32-bit pixel format, or `None`
++/// for a format a single GL texture cannot hold as macOS would.
++pub(crate) fn gl_upload_format(pixel_format: u32) -> Option<(u32, u32)> {
++    match pixel_format {
++        BGRA => Some((GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV)),
++        ARGB => Some((GL_BGRA, GL_UNSIGNED_INT_8_8_8_8)),
++        RGBA => Some((GL_RGBA, GL_UNSIGNED_BYTE)),
++        _ => None,
++    }
++}
++
++/// CVReturn CVOpenGLTextureCacheCreate(CFAllocatorRef, CFDictionaryRef
++/// cacheAttributes, CGLContextObj, CGLPixelFormatObj, CFDictionaryRef
++/// textureAttributes, CVOpenGLTextureCacheRef *).
++///
++/// FIXME (ACCURACY): textures are made in whichever GL context is current when
++/// one is asked for, not necessarily `context`; contexts here share objects.
++///
++/// # Safety
++/// `out` must be writable.
++pub unsafe extern "C" fn CVOpenGLTextureCacheCreate(
++    _allocator: CFTypeRef,
++    _cache_attributes: CFTypeRef,
++    context: *mut c_void,
++    _pixel_format: *mut c_void,
++    _texture_attributes: CFTypeRef,
++    out: *mut CFTypeRef,
++) -> i32 {
++    if out.is_null() {
++        return INVALID_ARGUMENT;
++    }
++    // SAFETY: the caller's out-parameter.
++    unsafe { *out = std::ptr::null() };
++    if context.is_null() {
++        return INVALID_ARGUMENT;
++    }
++    let made = corefoundation::boxed::make(gl_cache_class(), GlCache);
++    if made.is_null() {
++        return super::ALLOCATION_FAILED;
++    }
++    // SAFETY: as above.
++    unsafe { *out = made };
++    SUCCESS
++}
++
++/// CVReturn CVOpenGLTextureCacheCreateTextureFromImage(CFAllocatorRef,
++/// CVOpenGLTextureCacheRef, CVImageBufferRef, CFDictionaryRef attributes,
++/// CVOpenGLTextureRef *).
++///
++/// # Safety
++/// The references must be live CF objects or null; `out` must be writable.
++pub unsafe extern "C" fn CVOpenGLTextureCacheCreateTextureFromImage(
++    _allocator: CFTypeRef,
++    cache: CFTypeRef,
++    image: CFTypeRef,
++    _attributes: CFTypeRef,
++    out: *mut CFTypeRef,
++) -> i32 {
++    if out.is_null() {
++        return INVALID_ARGUMENT;
++    }
++    // SAFETY: the caller's out-parameter.
++    unsafe { *out = std::ptr::null() };
++    if contents::<GlCache>(cache, gl_cache_class()).is_none() || state(image).is_none() {
++        return INVALID_ARGUMENT;
++    }
++    // SAFETY: a pixel buffer of this crate's, checked above.
++    let Some((format, kind)) = gl_upload_format(unsafe { CVPixelBufferGetPixelFormatType(image) })
++    else {
++        return NOT_OPENGL_COMPATIBLE;
++    };
++    let (Some(gl), false) = (Gl::get(), sdl3::video::gl_current_context().is_null()) else {
++        return ERROR;
++    };
++    let Some(view) = lock_plane(image, 0) else {
++        return INVALID_ARGUMENT;
++    };
++    let name = upload_gl_texture(gl, format, kind, &view);
++    unlock(image);
++    // SAFETY: a live pixel buffer, retained for the texture's lifetime.
++    let buffer = unsafe { corefoundation::api::CFRetain(image) };
++    let made = corefoundation::boxed::make(gl_texture_class(), GlTexture { name, buffer });
++    if made.is_null() {
++        return super::ALLOCATION_FAILED;
++    }
++    // SAFETY: as above.
++    unsafe { *out = made };
++    SUCCESS
++}
++
++/// A new rectangle texture holding `view`, leaving the caller's unpack state
++/// and texture binding as they were.
++fn upload_gl_texture(gl: &Gl, format: u32, kind: u32, view: &PlaneView) -> u32 {
++    const BYTES_PER_PIXEL: usize = 4;
++    // SAFETY: a context is current, checked by the caller; every piece of
++    // state changed here is read first and put back.
++    unsafe {
++        let mut saved = [0i32; 4];
++        (gl.get_integerv)(GL_TEXTURE_BINDING_RECTANGLE, &mut saved[0]);
++        (gl.get_integerv)(GL_UNPACK_ROW_LENGTH, &mut saved[1]);
++        (gl.get_integerv)(GL_UNPACK_ALIGNMENT, &mut saved[2]);
++        (gl.get_integerv)(GL_PIXEL_UNPACK_BUFFER_BINDING, &mut saved[3]);
++        let mut name = 0;
++        (gl.gen_textures)(1, &mut name);
++        (gl.bind_texture)(GL_TEXTURE_RECTANGLE, name);
++        (gl.bind_buffer)(GL_PIXEL_UNPACK_BUFFER, 0);
++        (gl.pixel_storei)(
++            GL_UNPACK_ROW_LENGTH,
++            (view.bytes_per_row / BYTES_PER_PIXEL) as i32,
++        );
++        (gl.pixel_storei)(GL_UNPACK_ALIGNMENT, 1);
++        (gl.tex_image_2d)(
++            GL_TEXTURE_RECTANGLE,
++            0,
++            GL_RGBA8,
++            view.width as i32,
++            view.height as i32,
++            0,
++            format,
++            kind,
++            view.base.cast(),
++        );
++        for (parameter, value) in [
++            (GL_TEXTURE_MIN_FILTER, GL_LINEAR),
++            (GL_TEXTURE_MAG_FILTER, GL_LINEAR),
++            (GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE),
++            (GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE),
++        ] {
++            (gl.tex_parameteri)(GL_TEXTURE_RECTANGLE, parameter, value);
++        }
++        (gl.pixel_storei)(GL_UNPACK_ROW_LENGTH, saved[1]);
++        (gl.pixel_storei)(GL_UNPACK_ALIGNMENT, saved[2]);
++        (gl.bind_buffer)(GL_PIXEL_UNPACK_BUFFER, saved[3] as u32);
++        (gl.bind_texture)(GL_TEXTURE_RECTANGLE, saved[0] as u32);
++        name
++    }
++}
++
++/// GLuint CVOpenGLTextureGetName(CVOpenGLTextureRef).
++pub unsafe extern "C" fn CVOpenGLTextureGetName(texture: CFTypeRef) -> u32 {
++    contents::<GlTexture>(texture, gl_texture_class()).map_or(0, |t| t.name)
++}
++
++/// GLenum CVOpenGLTextureGetTarget(CVOpenGLTextureRef): always a rectangle
++/// texture, as on macOS.
++pub unsafe extern "C" fn CVOpenGLTextureGetTarget(texture: CFTypeRef) -> u32 {
++    contents::<GlTexture>(texture, gl_texture_class()).map_or(0, |_| GL_TEXTURE_RECTANGLE)
++}
++
++/// void CVOpenGLTextureCacheFlush(CVOpenGLTextureCacheRef, CVOptionFlags).
++pub unsafe extern "C" fn CVOpenGLTextureCacheFlush(_cache: CFTypeRef, _options: u64) {}
++
++pub unsafe extern "C" fn CVOpenGLTextureCacheRelease(cache: CFTypeRef) {
++    if !cache.is_null() {
++        // SAFETY: a live cache the caller passed.
++        unsafe { corefoundation::api::CFRelease(cache) };
++    }
++}
++
++pub unsafe extern "C" fn CVOpenGLTextureRelease(texture: CFTypeRef) {
++    if !texture.is_null() {
++        // SAFETY: a live texture the caller passed.
++        unsafe { corefoundation::api::CFRelease(texture) };
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn bgra_buffer(width: usize, height: usize) -> CFTypeRef {
++        let mut buffer = std::ptr::null();
++        // SAFETY: a fresh buffer of a supported format, written to `buffer`.
++        let made = unsafe {
++            super::super::CVPixelBufferCreate(
++                std::ptr::null(),
++                width,
++                height,
++                BGRA,
++                std::ptr::null(),
++                &mut buffer,
++            )
++        };
++        assert_eq!(made, SUCCESS);
++        buffer
++    }
++
++    #[test]
++    fn metal_cache_validates_its_arguments() {
++        let mut cache = 1 as CFTypeRef;
++        // SAFETY: a writable out-parameter and a nil device.
++        assert_eq!(
++            unsafe {
++                CVMetalTextureCacheCreate(
++                    std::ptr::null(),
++                    std::ptr::null(),
++                    std::ptr::null_mut(),
++                    std::ptr::null(),
++                    &mut cache,
++                )
++            },
++            INVALID_ARGUMENT
++        );
++        assert!(cache.is_null(), "the out-parameter is cleared on failure");
++        let buffer = bgra_buffer(4, 4);
++        let mut texture = 1 as CFTypeRef;
++        // SAFETY: a null cache and a live buffer.
++        let result = unsafe {
++            CVMetalTextureCacheCreateTextureFromImage(
++                std::ptr::null(),
++                std::ptr::null(),
++                buffer,
++                std::ptr::null(),
++                80,
++                4,
++                4,
++                0,
++                &mut texture,
++            )
++        };
++        assert_eq!(result, INVALID_ARGUMENT);
++        assert!(texture.is_null());
++        // SAFETY: a texture-less lookup on null answers null.
++        assert!(unsafe { CVMetalTextureGetTexture(std::ptr::null()) }.is_null());
++        unsafe { super::super::CVPixelBufferRelease(buffer) };
++    }
++
++    #[test]
++    fn gl_cache_refuses_formats_one_texture_cannot_hold() {
++        assert_eq!(
++            gl_upload_format(BGRA),
++            Some((GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV))
++        );
++        assert_eq!(
++            gl_upload_format(ARGB),
++            Some((GL_BGRA, GL_UNSIGNED_INT_8_8_8_8))
++        );
++        assert_eq!(gl_upload_format(RGBA), Some((GL_RGBA, GL_UNSIGNED_BYTE)));
++        assert_eq!(gl_upload_format(super::super::NV12_VIDEO), None);
++
++        let mut cache = std::ptr::null();
++        // SAFETY: a non-null stand-in context; the cache does not dereference it.
++        assert_eq!(
++            unsafe {
++                CVOpenGLTextureCacheCreate(
++                    std::ptr::null(),
++                    std::ptr::null(),
++                    1 as *mut c_void,
++                    std::ptr::null_mut(),
++                    std::ptr::null(),
++                    &mut cache,
++                )
++            },
++            SUCCESS
++        );
++        let mut nv12 = std::ptr::null();
++        // SAFETY: a fresh NV12 buffer.
++        assert_eq!(
++            unsafe {
++                super::super::CVPixelBufferCreate(
++                    std::ptr::null(),
++                    4,
++                    4,
++                    super::super::NV12_VIDEO,
++                    std::ptr::null(),
++                    &mut nv12,
++                )
++            },
++            SUCCESS
++        );
++        let mut texture = 1 as CFTypeRef;
++        // SAFETY: a live cache and buffer.
++        let result = unsafe {
++            CVOpenGLTextureCacheCreateTextureFromImage(
++                std::ptr::null(),
++                cache,
++                nv12,
++                std::ptr::null(),
++                &mut texture,
++            )
++        };
++        assert_eq!(result, NOT_OPENGL_COMPATIBLE);
++        assert!(texture.is_null());
++        assert_eq!(unsafe { CVOpenGLTextureGetName(std::ptr::null()) }, 0);
++        assert_eq!(
++            unsafe { CVOpenGLTextureGetTarget(cache) },
++            0,
++            "a cache is not a texture"
++        );
++        unsafe {
++            super::super::CVPixelBufferRelease(nv12);
++            CVOpenGLTextureCacheRelease(cache);
++        }
++    }
++
++    #[test]
++    fn locks_the_requested_plane_of_a_planar_buffer() {
++        let mut nv12 = std::ptr::null();
++        // SAFETY: a fresh 8x6 NV12 buffer.
++        assert_eq!(
++            unsafe {
++                super::super::CVPixelBufferCreate(
++                    std::ptr::null(),
++                    8,
++                    6,
++                    super::super::NV12_VIDEO,
++                    std::ptr::null(),
++                    &mut nv12,
++                )
++            },
++            SUCCESS
++        );
++        let luma = lock_plane(nv12, 0).expect("luma plane");
++        assert_eq!((luma.width, luma.height), (8, 6));
++        unlock(nv12);
++        let chroma = lock_plane(nv12, 1).expect("chroma plane");
++        assert_eq!((chroma.width, chroma.height), (4, 3));
++        assert!(chroma.bytes_per_row >= 8, "two bytes per CbCr pair");
++        unlock(nv12);
++        assert!(lock_plane(nv12, 2).is_none(), "NV12 has two planes");
++        let bgra = bgra_buffer(2, 2);
++        assert!(lock_plane(bgra, 0).is_some());
++        unlock(bgra);
++        assert!(lock_plane(bgra, 1).is_none());
++        unsafe {
++            super::super::CVPixelBufferRelease(nv12);
++            super::super::CVPixelBufferRelease(bgra);
++        }
++    }
++}
+diff --git a/crates/metal/src/device.rs b/crates/metal/src/device.rs
+index f38422e9..6c4793b6 100644
+--- a/crates/metal/src/device.rs
++++ b/crates/metal/src/device.rs
+@@ -147,6 +147,24 @@ pub(super) unsafe extern "C" fn new_compute_pipeline(
+     }
+ }
+ 
++/// `-newRenderPipelineStateWithDescriptor:options:reflection:error:`: as the
++/// compute forms, no reflection is made, so the out-parameter is nil.
++pub(super) unsafe extern "C" fn new_render_pipeline_with_reflection(
++    receiver: Id,
++    sel: Sel,
++    descriptor: Id,
++    _options: u64,
++    reflection: *mut Id,
++    error: *mut Id,
++) -> Id {
++    if !reflection.is_null() {
++        // SAFETY: the guest passed a writable pointer.
++        unsafe { *reflection = std::ptr::null_mut() };
++    }
++    // SAFETY: the same call without reflection.
++    unsafe { new_render_pipeline(receiver, sel, descriptor, error) }
++}
++
+ pub(super) unsafe extern "C" fn new_render_pipeline(
+     receiver: Id,
+     _sel: Sel,
+diff --git a/crates/metal/src/lib.rs b/crates/metal/src/lib.rs
+index e3039156..b4c5fa9e 100644
+--- a/crates/metal/src/lib.rs
++++ b/crates/metal/src/lib.rs
+@@ -260,6 +260,8 @@ pub fn bootstrap() {
+                 c"@32@0:8@16^@24";
+             "newRenderPipelineStateWithDescriptor:error:" => new_render_pipeline,
+                 c"@32@0:8@16^@24";
++            "newRenderPipelineStateWithDescriptor:options:reflection:error:"
++                => device::new_render_pipeline_with_reflection, c"@48@0:8@16Q24^@32^@40";
+             "currentAllocatedSize" => current_allocated_size, c"Q16@0:8";
+             "newFence" => new_fence, c"@16@0:8";
+             "newEvent" => new_event, c"@16@0:8";
+diff --git a/crates/metal_translate/src/msl/lower/mod.rs b/crates/metal_translate/src/msl/lower/mod.rs
+index bae4e37c..75ec23f8 100644
+--- a/crates/metal_translate/src/msl/lower/mod.rs
++++ b/crates/metal_translate/src/msl/lower/mod.rs
+@@ -1279,7 +1279,8 @@ impl<'c, 'p> Lowerer<'c, 'p> {
+         // Varyings are numbered in the order they are declared; the runtime
+         // links a vertex function's to a fragment function's by name.
+         let mut next_location = 0u32;
+-        for param in &function.params {
++        let params = implicit_locations(&function.params, |expr| lowerer.context.const_index(expr))?;
++        for param in &params {
+             lowerer.parameter(param, &mut parameters, &mut entry, &mut next_location)?;
+         }
+         lowerer.returns(function, &mut entry)?;
+@@ -1810,3 +1811,38 @@ fn builtin_ty(builtin: Builtin) -> Ty {
+         _ => Ty::Scalar(Scalar::UINT),
+     }
+ }
++
++/// MSL 5.2.1: a buffer, texture or sampler argument given no location takes
++/// the first index of its kind that no other argument of the function uses.
++fn implicit_locations(params: &[Param], index: impl Fn(&Expr) -> Result<u32>) -> Result<Vec<Param>> {
++    const LOCATED: [&str; 3] = ["buffer", "texture", "sampler"];
++    let kind = |param: &Param| match param.ty {
++        Ty::Texture(_) => Some(LOCATED[1]),
++        Ty::Sampler => Some(LOCATED[2]),
++        _ if param.indirection != Indirection::Value
++            && matches!(param.space, Some(Space::Constant | Space::Device)) =>
++        {
++            Some(LOCATED[0])
++        }
++        _ => None,
++    };
++    let mut used = Vec::new();
++    for attribute in params.iter().flat_map(|param| &param.attributes) {
++        if let Some(name) = LOCATED.iter().find(|name| **name == attribute.name)
++            && let [argument] = attribute.args.as_slice()
++        {
++            used.push((*name, index(argument)?));
++        }
++    }
++    let mut located = params.to_vec();
++    for param in &mut located {
++        let Some(kind) = kind(param).filter(|_| param.attributes.is_empty()) else {
++            continue;
++        };
++        let slot = (0..).find(|slot| !used.contains(&(kind, *slot))).unwrap_or(0);
++        used.push((kind, slot));
++        let value = Expr { kind: ExprKind::Int { value: u64::from(slot), unsigned: true }, line: param.line };
++        param.attributes.push(Attribute { name: kind.to_string(), args: vec![value], line: param.line });
++    }
++    Ok(located)
++}
+diff --git a/crates/metal_translate/tests/translate.rs b/crates/metal_translate/tests/translate.rs
+index 251f932e..f7a732b5 100644
+--- a/crates/metal_translate/tests/translate.rs
++++ b/crates/metal_translate/tests/translate.rs
+@@ -687,6 +687,31 @@ fn rejects_a_target_without_required_capabilities() {
+     assert_eq!(error.diagnostics[0].phase, Phase::SpirvEmission);
+ }
+ 
++/// MSL 5.2.1: an argument given no location takes the first free index of
++/// its kind. SPIRV-Cross emits such arguments; this is CapCut's flip shader.
++#[test]
++fn source_msl_places_an_unlocated_argument_at_the_first_free_index() {
++    let source = r#"
++#include <metal_stdlib>
++using namespace metal;
++struct main0_out { float4 color [[color(0)]]; };
++struct main0_in { float2 uv [[user(locn0)]]; };
++fragment main0_out main0(main0_in in [[stage_in]], texture2d<float> texSampler [[texture(0)]], sampler texSamplerSmplr [[sampler(0)]], constant float& alpha [[buffer(0)]], constant float4& u_is_texture_0_flip_, texture2d<float> second, sampler secondSmplr)
++{
++    main0_out out = {};
++    out.color = texSampler.sample(texSamplerSmplr, in.uv) * alpha * u_is_texture_0_flip_.x
++        + second.sample(secondSmplr, in.uv);
++    return out;
++}
++"#;
++    let module = parse_msl(source).unwrap();
++    let mut located: Vec<_> = module.entries[0].resources.iter().map(|r| (r.kind, r.index)).collect();
++    located.sort_by_key(|(kind, index)| (format!("{kind:?}"), *index));
++    use metal_translate::ir::ResourceKind::{Buffer, Sampler, Texture};
++    assert_eq!(located, [(Buffer, 0), (Buffer, 1), (Sampler, 0), (Sampler, 1), (Texture, 0), (Texture, 1)]);
++    translate_msl(source, &TargetProfile::vulkan_1_3()).unwrap();
++}
++
+ #[test]
+ fn compiles_a_source_msl_compute_kernel_to_spirv() {
+     let source = "kernel void clear(device uint* output [[buffer(3)]]) { output[0] = 42; }";
+diff --git a/crates/rosemary/Cargo.toml b/crates/rosemary/Cargo.toml
+index 567f9f28..c2d96bb4 100644
+--- a/crates/rosemary/Cargo.toml
++++ b/crates/rosemary/Cargo.toml
+@@ -16,6 +16,7 @@ corefoundation.workspace = true
+ iokit.workspace = true
+ foundation.workspace = true
+ appkit.workspace = true
++accelerate.workspace = true
+ applicationservices.workspace = true
+ coreservices.workspace = true
+ audiotoolbox.workspace = true
+diff --git a/crates/rosemary/src/cxxlib.rs b/crates/rosemary/src/cxxlib.rs
+index 57157f7a..128abf32 100644
+--- a/crates/rosemary/src/cxxlib.rs
++++ b/crates/rosemary/src/cxxlib.rs
+@@ -358,14 +358,14 @@ fn rebind_to_runtime<M: machish::memory::Regions>(
+     wanted: impl Fn(&str) -> bool,
+ ) -> Result<usize> {
+     // Where the runtime image landed, if this link wanted one at all. A C
+-    // program does not, and neither does a C++ program that never throws.
+-    let Some((base, slide)) = report
+-        .images
+-        .iter()
+-        .find(|i| is_image(&i.name))
+-        .map(|i| (i.base, i.slide))
+-    else {
+-        return Ok(0);
++    // program does not, and neither does a C++ program that never throws. A
++    // `dlopen`ed image uses the program's runtime, which is not in its link.
++    let (own, slide) = match report.images.iter().find(|i| is_image(&i.name)) {
++        Some(image) => (Some(image.base), image.slide),
++        None => match crate::dyld::program_image_slide(is_image) {
++            Some(slide) => (None, slide),
++            None => return Ok(0),
++        },
+     };
+     let exports = flavor.exports(&bytes()?)?;
+ 
+@@ -377,13 +377,17 @@ fn rebind_to_runtime<M: machish::memory::Regions>(
+         .flat_map(|i| &i.segments)
+         .map(|s| (s.vmaddr, s.vmaddr.wrapping_add(s.vmsize)))
+         .collect();
+-    let in_guest = |addr: u64| guest.iter().any(|(lo, hi)| addr >= *lo && addr < *hi);
++    let in_guest = |addr: u64| {
++        guest.iter().any(|(lo, hi)| addr >= *lo && addr < *hi)
++            || crate::dyld::launch_image_contains(addr)
++            || crate::dyld::contains(addr)
++    };
+ 
+     let mut rebound = 0;
+     for image in &mut report.images {
+         // The runtime image's own bindings are not rewritten: it is the thing
+         // being bound *to*, and its internal references are already its own.
+-        if image.base == base {
++        if Some(image.base) == own {
+             continue;
+         }
+         for binding in &mut image.bindings {
+diff --git a/crates/rosemary/src/dyld.rs b/crates/rosemary/src/dyld.rs
+index 7c27abf6..41dd56a6 100644
+--- a/crates/rosemary/src/dyld.rs
++++ b/crates/rosemary/src/dyld.rs
+@@ -676,6 +676,16 @@ fn indexed_image(index: u32) -> Option<(u64, u64, String)> {
+         .map(|image| (image.handle, image.slide, image.path.clone()))
+ }
+ 
++/// Whether `va` lies inside an image the program's launch mapped.
++pub fn launch_image_contains(va: u64) -> bool {
++    MAPPED.get().is_some_and(|images| {
++        images
++            .iter()
++            .flat_map(|i| &i.segments)
++            .any(|(lo, hi)| va >= *lo && va < *hi)
++    })
++}
++
+ /// The images the executable was linked against at launch, the executable left
+ /// out.
+ fn launch_dependencies() -> &'static [MappedImage] {
+diff --git a/crates/rosemary/src/frameworks.rs b/crates/rosemary/src/frameworks.rs
+index 6f1297e7..3635fee5 100644
+--- a/crates/rosemary/src/frameworks.rs
++++ b/crates/rosemary/src/frameworks.rs
+@@ -501,6 +501,23 @@ static FRAMEWORKS: &[Framework] = &[
+             ],
+         },
+     },
++    Framework {
++        leaf: "Accelerate",
++        version: 'A',
++        umbrellas: &["vImage", "vecLib", "vDSP"],
++        provide: Some(accelerate::provide),
++        data: Some(accelerate::data_symbols),
++        symbol: Some(accelerate::symbol),
++        links: Links {
++            reexports: &[],
++            dependencies: &[
++                framework!("CoreFoundation"),
++                framework!("CoreGraphics"),
++                framework!("CoreVideo"),
++                LIBSYSTEM,
++            ],
++        },
++    },
+ ];
+ 
+ /// Frameworks that macOS keeps in `/System/Library/PrivateFrameworks`.
+@@ -883,6 +900,8 @@ const CV_CONSTANTS: &[(&str, &str)] = &[
+         "_kCVPixelBufferPoolAllocationThresholdKey",
+         "kCVPixelBufferPoolAllocationThresholdKey",
+     ),
++    ("_kCVImageBufferAlphaChannelModeKey", "AlphaChannelMode"),
++    ("_kCVImageBufferAlphaChannelMode_StraightAlpha", "StraightAlpha"),
+ ];
+ 
+ /// CoreFoundation's `CFUserNotification` keys.

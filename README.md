@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/cutmary-logo.png" alt="Cutmary logo" width="160"></p>
+
 # Cutmary — Running macOS CapCut Natively on Linux (`x86_64`) via Rosemary
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20x86__64-blue.svg)](#requirements)
@@ -37,7 +39,9 @@ We have taken CapCut 9.8.0.4799 from failing immediately on the very first Mach-
 | `Parfait.framework` crash handler initialization | **Done** | XNU default entry for `task_get_exception_ports` |
 | `bytenn` AI engine, `mobilecv2`, `MMKV` & `EffectSDK` init | **Done** | All 6 MMKV stores, VECodec callback, and `EffectABConfig` loaded cleanly |
 | Qt 6 platform plugin (`libqcocoa.dylib`, `libqmacstyle.dylib`) & main event loop | **Done** | Fixed upstream Rosemary `NSRunLoop` per-thread isolation bug |
-| Main window rendering & interactive editing verification | **In Progress** | Next selector to implement: `-[NSColorSpace initWithICCProfileData:]` |
+| Main window rendering at fractional Wayland scale (1.25x), no titlebar band | **Done** | Verified live on KDE Plasma Wayland + RTX 5060 Ti |
+| Photo import -> media panel -> timeline (thumbnails) -> effects panel | **Done** | Verified live; see `HANDOFF.md` |
+| Player playback, second import, video (`.mp4`) import, performance | **In Progress** | See open items in `HANDOFF.md` |
 | Portable AppImage / CachyOS binary build | **Scripted** | `scripts/package-appimage.sh` ready once window stability is verified |
 
 ---
@@ -51,7 +55,8 @@ patches/
 ├── 01-darwin-gcd-mach-net-sandbox.patch   # GCD barriers/queues/sources, OSAtomic, kevent64, Mach traps/exception ports, DNS/notifyd, __sandbox_ms
 ├── 02-cf-foundation-iokit-coretext.patch  # Per-thread NSRunLoop fix, NSString/NSData/NSBundle/NSTimeZone, CFNotificationCenter, DiskArbitration, CoreText, IOKit
 ├── 03-security-tls-codesign.patch         # Real LC_CODE_SIGNATURE CodeDirectory parser (SecCodeCopySigningInformation), SSL SecTrust + 48-byte CSSM evidence
-└── 04-appkit-coregraphics-globals.patch   # NSColor/NSWorkspace/CoreGraphics/ImageIO/LaunchServices/Carbon HotKeys, 445 framework globals, fault serialization
+├── 04-appkit-coregraphics-globals.patch   # NSColor/NSWorkspace/CoreGraphics/ImageIO/LaunchServices/Carbon HotKeys, 445 framework globals, fractional Wayland scale, titlebar accessories, QuickLook
+└── 05-media-pipeline-metal-corevideo-runtime.patch  # CVMetal/CVOpenGL texture caches, Accelerate (vImage/vDSP), AVFoundation/AudioToolbox, Metal reflection forms, MSL implicit argument locations, C++ unwinding for dlopen'ed images
 ```
 
 ### Technical Highlights

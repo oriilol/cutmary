@@ -122,4 +122,51 @@ PASOS A EJECUTAR:
 
 ## Resultados CachyOS
 
-*(Pendiente de primera verificación en CachyOS. El agente de CachyOS añadirá aquí sus resultados con fecha, commit probado, GPU/kernel y observaciones.)*
+### 2026-11-25 — CachyOS x86_64, KDE Plasma Wayland 2560×1440 @ 1.25×, NVIDIA GeForce RTX 5060 Ti
+
+Rosemary base `411f2844`, parches `patches/01`–`05` regenerados desde el árbol verificado
+(`git apply --check` limpio sobre la base y los 76 ficheros resultantes idénticos byte a byte).
+
+Lanzamiento:
+
+```bash
+ROSEMARY_DECORATIONS=server ROSEMARY_MENU=none ROSEMARY_KEEP_FAULT_HANDLER=1 \
+  rosemary run --new-instance CapCut.app
+```
+
+Antes de cada lanzamiento hay que borrar los `*.locked` de 0 bytes de
+`com.lveditor.draft/*/` (el launcher lo hace solo); un cierre anómalo de CapCut los deja.
+
+**Verificado en vivo**
+
+- Arranque, Home, editor y apertura de proyectos existentes (`1125 (7)`, `1125 (8)`).
+- Escala fraccional Wayland 1.25× sin borde ni área 80 %×80 %.
+- Ventana maximizada sin franja negra superior: CapCut añade un accesorio de barra de título
+  de 36 pt y Rosemary encogía con él el content view `FullSizeContentView`; en AppKit el
+  accesorio se superpone.
+- Importar una foto `.jpg`: aparece en Medios, en la línea de tiempo con miniaturas y llega
+  al reproductor; el panel de Efectos se abre.
+
+**Arreglos de esta tanda** (en `04`/`05`)
+
+- `CVMetalTextureCache*` y `CVOpenGLTextureCache*` reales (crash en `RendererMetalV2::convertBuffer`).
+- `-[MTLDevice newRenderPipelineStateWithDescriptor:options:reflection:error:]`.
+- `kCVImageBufferAlphaChannelModeKey` / `_StraightAlpha` (débiles; CapCut los desreferencia).
+- QuickLook mínimo: `QLThumbnailImageCreate` (devuelve NULL, como sin generador) y `kQLThumbnailOptionIconModeKey`.
+- MSL §5.2.1: argumentos sin `[[buffer/texture/sampler]]` toman el primer índice libre (los shaders de SPIRV-Cross de CapCut).
+- `_Unwind_*` y ABI C++ de imágenes cargadas con `dlopen` ligados al libunwind/libc++abi del
+  runtime: iban al `libgcc_s` del host, que no lee el compact unwind de macOS y abortaba
+  (`libres_pool.dylib`, comprobado en el core dump).
+
+**Pendiente**
+
+- Importar una segunda foto aborta (core dump disponible para analizar).
+- El reproductor no reproduce y el editor va muy lento (~1 fps).
+- Vídeo `.mp4`: faltan `CV{ColorPrimaries,TransferFunction,YCbCrMatrix}GetStringForIntegerCodePoint`
+  (FFmpeg/libavutil), `CVBufferHasAttachment`, `CVImageBufferGetCleanRect`,
+  `CVPixelBufferCreateWithIOSurface`, `CVIsCompressedPixelFormatAvailable`,
+  `CVDisplayLinkGetCurrentTime` y `CVDisplayLinkGetCurrentCGDisplay`.
+- `frameworks::tests` informa 8 símbolos duplicados (`_CFNotificationCenter*`, `_kCFProxyTypeNone`,
+  `_NSURLTypeIdentifierKey`, `_kCGImageSourceTypeIdentifierHint`); dos tests de appkit fallan
+  (`a_panel_keeps_its_becomes_key_only_if_needed`, `metal_scene_tracks_sibling_order_hiding_and_removal`).
+- Al cerrar la ventana CapCut sigue vivo (comportamiento macOS) y sus helpers CEF quedan huérfanos al salir.

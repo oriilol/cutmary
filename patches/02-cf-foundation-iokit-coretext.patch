@@ -816,10 +816,118 @@ index ef770d50..2a4bc5d8 100644
              "pathsForResourcesOfType:inDirectory:" => class_paths_for_resources_of_type, c"@32@0:8@16@24";
              "bundleWithPath:" => bundle_with_path, c"@24@0:8@16";
 diff --git a/crates/foundation/src/collections.rs b/crates/foundation/src/collections.rs
-index c40a60fa..3580826d 100644
+index c40a60fa..27e8495f 100644
 --- a/crates/foundation/src/collections.rs
 +++ b/crates/foundation/src/collections.rs
-@@ -924,6 +924,105 @@ unsafe extern "C" fn write_to_file(receiver: Id, _sel: Sel, path: Id, atomically
+@@ -772,6 +772,107 @@ unsafe extern "C" fn data_with_contents_of_file_options(
+     data
+ }
+ 
++/// `+[NSData dataWithContentsOfURL:]`: reads a `file:` URL's bytes.
++unsafe extern "C" fn data_with_contents_of_url(_class: Id, _sel: Sel, url: Id) -> Id {
++    let Some(path) = (unsafe { file_argument(url, true) }) else {
++        return std::ptr::null_mut();
++    };
++    let Ok(bytes) = std::fs::read(prefix::ns::existing_host_path(&path)) else {
++        return std::ptr::null_mut();
++    };
++    autoreleased_data(bytes)
++}
++
++/// `+[NSData dataWithContentsOfURL:options:error:]`.
++unsafe extern "C" fn data_with_contents_of_url_options(
++    class: Id,
++    sel: Sel,
++    url: Id,
++    _options: u64,
++    error: *mut Id,
++) -> Id {
++    let data = unsafe { data_with_contents_of_url(class, sel, url) };
++    if !error.is_null() {
++        unsafe {
++            *error = match data.is_null() {
++                true => {
++                    crate::error::make("NSCocoaErrorDomain", 260, "The file couldn't be opened.")
++                }
++                false => std::ptr::null_mut(),
++            };
++        }
++    }
++    data
++}
++
++unsafe extern "C" fn data_init_with_contents_of_file_options(
++    receiver: Id,
++    _sel: Sel,
++    path: Id,
++    _options: u64,
++    error: *mut Id,
++) -> Id {
++    let bytes = unsafe { file_argument(path, false) }
++        .and_then(|p| std::fs::read(prefix::ns::existing_host_path(&p)).ok());
++    if !error.is_null() {
++        unsafe {
++            *error = match bytes.is_some() {
++                true => std::ptr::null_mut(),
++                false => {
++                    crate::error::make("NSCocoaErrorDomain", 260, "The file couldn't be opened.")
++                }
++            };
++        }
++    }
++    match bytes {
++        Some(bytes) => replace_receiver(receiver, bytes),
++        None => {
++            objc::arc::release(receiver);
++            std::ptr::null_mut()
++        }
++    }
++}
++
++unsafe extern "C" fn data_init_with_contents_of_url(receiver: Id, _sel: Sel, url: Id) -> Id {
++    let bytes = unsafe { file_argument(url, true) }
++        .and_then(|p| std::fs::read(prefix::ns::existing_host_path(&p)).ok());
++    match bytes {
++        Some(bytes) => replace_receiver(receiver, bytes),
++        None => {
++            objc::arc::release(receiver);
++            std::ptr::null_mut()
++        }
++    }
++}
++
++unsafe extern "C" fn data_init_with_contents_of_url_options(
++    receiver: Id,
++    _sel: Sel,
++    url: Id,
++    _options: u64,
++    error: *mut Id,
++) -> Id {
++    let bytes = unsafe { file_argument(url, true) }
++        .and_then(|p| std::fs::read(prefix::ns::existing_host_path(&p)).ok());
++    if !error.is_null() {
++        unsafe {
++            *error = match bytes.is_some() {
++                true => std::ptr::null_mut(),
++                false => {
++                    crate::error::make("NSCocoaErrorDomain", 260, "The file couldn't be opened.")
++                }
++            };
++        }
++    }
++    match bytes {
++        Some(bytes) => replace_receiver(receiver, bytes),
++        None => {
++            objc::arc::release(receiver);
++            std::ptr::null_mut()
++        }
++    }
++}
++
+ /// A property list file's root object, autoreleased, if it is an array
+ /// (`want_array`) or a dictionary (otherwise). XML and binary lists go
+ /// through the parser bundle metadata uses; nil for a file that is unreadable,
+@@ -924,6 +1025,105 @@ unsafe extern "C" fn write_to_file(receiver: Id, _sel: Sel, path: Id, atomically
      write_bytes_to_file(&path, bytes, atomically != 0).is_ok() as u8
  }
  
@@ -925,7 +1033,7 @@ index c40a60fa..3580826d 100644
  /// `-[NSArray writeToFile:atomically:]` and `-[NSDictionary ...]`: an XML
  /// property list, or NO for contents that are not property list types.
  unsafe extern "C" fn write_plist_to_file(receiver: Id, _sel: Sel, path: Id, atomically: u8) -> u8 {
-@@ -2143,6 +2242,92 @@ unsafe extern "C" fn data_init_with_base64_string(
+@@ -2143,6 +2343,92 @@ unsafe extern "C" fn data_init_with_base64_string(
      }
  }
  
@@ -1018,7 +1126,16 @@ index c40a60fa..3580826d 100644
  unsafe extern "C" fn data_init_with_capacity(receiver: Id, _sel: Sel, capacity: usize) -> Id {
      replace_receiver(receiver, Vec::with_capacity(capacity.min(1 << 24)))
  }
-@@ -3104,9 +3289,17 @@ pub(crate) fn install() {
+@@ -3099,18 +3385,36 @@ pub(crate) fn install() {
+         "dataWithBytesNoCopy:length:freeWhenDone:"
+             => data_with_bytes_no_copy_free, c"@36@0:8^v16Q24c32";
+         "dataWithContentsOfFile:" => data_with_contents_of_file, c"@24@0:8@16";
++        "dataWithContentsOfMappedFile:" => data_with_contents_of_file, c"@24@0:8@16";
+         "dataWithContentsOfFile:options:error:"
+             => data_with_contents_of_file_options, c"@40@0:8@16Q24^@32";
++        "dataWithContentsOfURL:" => data_with_contents_of_url, c"@24@0:8@16";
++        "dataWithContentsOfURL:options:error:"
++            => data_with_contents_of_url_options, c"@40@0:8@16Q24^@32";
      });
      methods!(data, {
          "writeToFile:atomically:" => write_to_file, c"B28@0:8@16c24";
@@ -1036,6 +1153,16 @@ index c40a60fa..3580826d 100644
          "initWithBytes:length:" => data_init_with_bytes, c"@32@0:8r^v16Q24";
          "initWithBytesNoCopy:length:" => data_init_no_copy, c"@32@0:8^v16Q24";
          "initWithBytesNoCopy:length:freeWhenDone:" => data_init_no_copy_free, c"@36@0:8^v16Q24B32";
+         "initWithContentsOfFile:" => data_init_with_contents_of_file, c"@24@0:8@16";
++        "initWithContentsOfMappedFile:" => data_init_with_contents_of_file, c"@24@0:8@16";
++        "initWithContentsOfFile:options:error:"
++            => data_init_with_contents_of_file_options, c"@40@0:8@16Q24^@32";
++        "initWithContentsOfURL:" => data_init_with_contents_of_url, c"@24@0:8@16";
++        "initWithContentsOfURL:options:error:"
++            => data_init_with_contents_of_url_options, c"@40@0:8@16Q24^@32";
+         "copy" => data_copy, c"@16@0:8";
+         "copyWithZone:" => data_copy_with_zone, c"@24@0:8^v16";
+         "mutableCopy" => data_copy, c"@16@0:8";
 diff --git a/crates/foundation/src/lib.rs b/crates/foundation/src/lib.rs
 index a189df89..bc88dab2 100644
 --- a/crates/foundation/src/lib.rs
@@ -1771,6 +1898,133 @@ index 2f5a9784..928440f4 100644
          "knownTimeZoneNames" => known_time_zone_names, c"@16@0:8";
          "timeZoneWithName:" => time_zone_with_name, c"@24@0:8@16";
          "timeZoneWithAbbreviation:" => time_zone_with_abbreviation, c"@24@0:8@16";
+diff --git a/crates/foundation/src/url.rs b/crates/foundation/src/url.rs
+index 25c8170c..aa253172 100644
+--- a/crates/foundation/src/url.rs
++++ b/crates/foundation/src/url.rs
+@@ -1083,6 +1083,91 @@ unsafe extern "C" fn bookmark_data_with_contents_of_url(
+     }
+ }
+ 
++unsafe extern "C" fn bookmark_data_with_options(
++    receiver: Id,
++    _sel: Sel,
++    _options: usize,
++    _keys: Id,
++    _relative: Id,
++    error: *mut Id,
++) -> Id {
++    if !error.is_null() {
++        unsafe { error.write(std::ptr::null_mut()) };
++    }
++    let Some(url) =
++        (unsafe { corefoundation::url::as_url(receiver as corefoundation::base::CFTypeRef) })
++    else {
++        return std::ptr::null_mut();
++    };
++    let data = corefoundation::collections::new_data(url.text.as_bytes().to_vec());
++    unsafe { corefoundation::api::CFAutorelease(data) as Id }
++}
++
++unsafe extern "C" fn url_by_resolving_bookmark_data(
++    _class: Id,
++    _sel: Sel,
++    bookmark: Id,
++    _options: usize,
++    _relative: Id,
++    is_stale: *mut u8,
++    error: *mut Id,
++) -> Id {
++    if !is_stale.is_null() {
++        unsafe { is_stale.write(0) };
++    }
++    if !error.is_null() {
++        unsafe { error.write(std::ptr::null_mut()) };
++    }
++    let Some(bytes) =
++        (unsafe { corefoundation::collections::data(bookmark as corefoundation::base::CFTypeRef) })
++    else {
++        return std::ptr::null_mut();
++    };
++    let Ok(text) = std::str::from_utf8(bytes) else {
++        return std::ptr::null_mut();
++    };
++    let url = if text.starts_with("file://") || text.contains("://") {
++        corefoundation::url::new(text)
++    } else {
++        corefoundation::url::new_file_url(text, false)
++    };
++    unsafe { corefoundation::api::CFAutorelease(url) as Id }
++}
++
++unsafe extern "C" fn init_by_resolving_bookmark_data(
++    receiver: Id,
++    sel: Sel,
++    bookmark: Id,
++    options: usize,
++    relative: Id,
++    is_stale: *mut u8,
++    error: *mut Id,
++) -> Id {
++    objc::arc::release(receiver);
++    let resolved = unsafe {
++        url_by_resolving_bookmark_data(
++            std::ptr::null_mut(),
++            sel,
++            bookmark,
++            options,
++            relative,
++            is_stale,
++            error,
++        )
++    };
++    if resolved.is_null() {
++        std::ptr::null_mut()
++    } else {
++        objc::arc::retain(resolved)
++    }
++}
++
++unsafe extern "C" fn start_accessing_security_scoped_resource(_receiver: Id, _sel: Sel) -> u8 {
++    1
++}
++
++unsafe extern "C" fn stop_accessing_security_scoped_resource(_receiver: Id, _sel: Sel) {}
++
+ pub(crate) fn install() {
+     let class = corefoundation::url::class();
+     // On `NSURL` rather than on the concrete class, so `+URLWithString:` reaches
+@@ -1099,6 +1184,8 @@ pub(crate) fn install() {
+         "URLWithString:relativeToURL:" => url_with_string_relative_to_url, c"@32@0:8@16@24";
+         "bookmarkDataWithContentsOfURL:error:" => bookmark_data_with_contents_of_url,
+             c"@32@0:8@16^@24";
++        "URLByResolvingBookmarkData:options:relativeToURL:bookmarkDataIsStale:error:"
++            => url_by_resolving_bookmark_data, c"@56@0:8@16Q24@32^c40^@48";
+     });
+     methods!(abstract_class, {
+         "initWithString:" => init_with_string, c"@24@0:8@16";
+@@ -1109,6 +1196,8 @@ pub(crate) fn install() {
+             => init_file_url_with_path_is_directory_relative_to_url, c"@36@0:8@16c24@28";
+         "initFileURLWithPath:" => init_file_url_with_path, c"@24@0:8@16";
+         "initFileURLWithPath:isDirectory:" => init_file_url_with_path_is_directory, c"@28@0:8@16c24";
++        "initByResolvingBookmarkData:options:relativeToURL:bookmarkDataIsStale:error:"
++            => init_by_resolving_bookmark_data, c"@56@0:8@16Q24@32^c40^@48";
+     });
+     methods!(class, {
+         "copy" => url_copy, c"@16@0:8";
+@@ -1151,6 +1240,12 @@ pub(crate) fn install() {
+         "resourceValuesForKeys:error:" => resource_values_for_keys, c"@32@0:8@16^@24";
+         "getResourceValue:forKey:error:" => get_resource_value, c"B40@0:8^@16@24^@32";
+         "setResourceValue:forKey:error:" => set_resource_value, c"B40@0:8@16@24^@32";
++        "bookmarkDataWithOptions:includingResourceValuesForKeys:relativeToURL:error:"
++            => bookmark_data_with_options, c"@48@0:8Q16@24@32^@40";
++        "startAccessingSecurityScopedResource"
++            => start_accessing_security_scoped_resource, c"c16@0:8";
++        "stopAccessingSecurityScopedResource"
++            => stop_accessing_security_scoped_resource, c"v16@0:8";
+     });
+ }
+ 
 diff --git a/crates/foundation/tests/string_init.rs b/crates/foundation/tests/string_init.rs
 index 28cc224c..b403c888 100644
 --- a/crates/foundation/tests/string_init.rs
