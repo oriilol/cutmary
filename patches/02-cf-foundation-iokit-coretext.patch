@@ -390,10 +390,10 @@ index 22c1a9cf..11d9e489 100644
  /// bytes an `NSString` caller asks for.
  ///
 diff --git a/crates/corefoundation/src/sysconfig.rs b/crates/corefoundation/src/sysconfig.rs
-index 295160ae..cc952296 100644
+index 295160ae..a191bb48 100644
 --- a/crates/corefoundation/src/sysconfig.rs
 +++ b/crates/corefoundation/src/sysconfig.rs
-@@ -832,9 +832,18 @@ const KEY_STRINGS: &[(&str, &str)] = &[
+@@ -832,9 +832,17 @@ const KEY_STRINGS: &[(&str, &str)] = &[
          "_kSCPropNetProxiesProxyAutoConfigURLString",
          "ProxyAutoConfigURLString",
      ),
@@ -404,7 +404,6 @@ index 295160ae..cc952296 100644
      ("_kSCPropNetProxiesSOCKSEnable", "SOCKSEnable"),
      ("_kSCPropNetProxiesSOCKSPort", "SOCKSPort"),
      ("_kSCPropNetProxiesSOCKSProxy", "SOCKSProxy"),
-+    ("_kCFProxyTypeNone", "kCFProxyTypeNone"),
 +    ("_kCFProxyTypeHTTP", "kCFProxyTypeHTTP"),
 +    ("_kCFProxyTypeHTTPS", "kCFProxyTypeHTTPS"),
 +    ("_kCFProxyTypeSOCKS", "kCFProxyTypeSOCKS"),
@@ -412,7 +411,7 @@ index 295160ae..cc952296 100644
  ];
  
  /// The `kSC*` globals, as `(Mach-O name, address)`.
-@@ -854,8 +863,28 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+@@ -854,8 +862,28 @@ pub fn data_symbols() -> Vec<(String, u64)> {
          .collect()
  }
  

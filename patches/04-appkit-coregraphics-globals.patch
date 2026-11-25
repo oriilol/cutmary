@@ -253,10 +253,10 @@ index 9f459b6a..26746c61 100644
      methods!(window, {
 diff --git a/crates/appkit/src/capcut_globals.rs b/crates/appkit/src/capcut_globals.rs
 new file mode 100644
-index 00000000..08f36cae
+index 00000000..06d223bc
 --- /dev/null
 +++ b/crates/appkit/src/capcut_globals.rs
-@@ -0,0 +1,507 @@
+@@ -0,0 +1,506 @@
 +//! Additional Apple framework constant globals needed by CEF and CapCut.
 +
 +pub const STRING_GLOBALS: &[(&str, &str)] = &[
@@ -496,7 +496,6 @@ index 00000000..08f36cae
 +    ("_kCGImageSourceCreateThumbnailFromImageAlways", "kCGImageSourceCreateThumbnailFromImageAlways"),
 +    ("_kCGImageSourceCreateThumbnailWithTransform", "kCGImageSourceCreateThumbnailWithTransform"),
 +    ("_kCGImageSourceThumbnailMaxPixelSize", "kCGImageSourceThumbnailMaxPixelSize"),
-+    ("_kCGImageSourceTypeIdentifierHint", "kCGImageSourceTypeIdentifierHint"),
 +    ("_kCIAttributeClass", "kCIAttributeClass"),
 +    ("_kCIAttributeDefault", "kCIAttributeDefault"),
 +    ("_kCIAttributeSliderMax", "kCIAttributeSliderMax"),

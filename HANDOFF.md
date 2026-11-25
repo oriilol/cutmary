@@ -185,7 +185,7 @@ línea de tiempo (4 clips), botón Export activo. El panel de Medios ya no se at
   (FFmpeg/libavutil), `CVBufferHasAttachment`, `CVImageBufferGetCleanRect`,
   `CVPixelBufferCreateWithIOSurface`, `CVIsCompressedPixelFormatAvailable`,
   `CVDisplayLinkGetCurrentTime` y `CVDisplayLinkGetCurrentCGDisplay`.
-- `frameworks::tests` informa 8 símbolos duplicados (`_CFNotificationCenter*`, `_kCFProxyTypeNone`,
+- `frameworks::tests` informa 6 símbolos duplicados (`_CFNotificationCenter*` y
   `_NSURLTypeIdentifierKey`, `_kCGImageSourceTypeIdentifierHint`); dos tests de appkit fallan
   (`a_panel_keeps_its_becomes_key_only_if_needed`, `metal_scene_tracks_sibling_order_hiding_and_removal`).
 - Al cerrar la ventana CapCut sigue vivo (comportamiento macOS) y sus helpers CEF quedan huérfanos al salir.
