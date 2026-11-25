@@ -50,6 +50,10 @@ Este documento es el canal de comunicación entre el agente de desarrollo en **C
    - Añadidas propiedades reales `isGeometryFlipped`/`setGeometryFlipped:`/`contentsAreFlipped`, `isOpaque`/`setOpaque:`, `needsDisplayOnBoundsChange`/`setNeedsDisplayOnBoundsChange:`, `autoresizingMask`/`setAutoresizingMask:` en `CALayer` y `keyViewSelectionDirection` (más helpers de key-view loop marcados `STUB:`) en `NSWindow`, necesarios al desbloquear el renderizado de CEF.
 9. **`fix(security): SecureTransport SSL* y SecPKCS12Import para libqsecuretransportbackend.dylib` (`patches/03-...`, `patches/04-...`)**:
    - Añadido `crates/security/src/ssl.rs` con `SSLContext` CF real (creación, cifrados soportados, setters/getters de estado/versión) y claves `kSecImport*`; handshake/read/write devuelven `errSSLClosedAbort` (`STUB:`) en lugar de crashear en `0x0` cuando Qt abre sockets TLS al crear un proyecto.
+10. **`fix(appkit): NSWindow worksWhenModal y flags de panel` (`patches/04-appkit-coregraphics-globals.patch`)**:
+    - Añadidos `worksWhenModal`, `setWorksWhenModal:`, `becomesKeyOnlyIfNeeded`, `setBecomesKeyOnlyIfNeeded:`, `isFloatingPanel`, `setFloatingPanel:` en `NSWindow`.
+11. **`fix(foundation): NSLock y NSRecursiveLock reales` (`patches/02-cf-foundation-iokit-coretext.patch`)**:
+    - Añadido `crates/foundation/src/lock.rs` con `pthread_mutex_t` real (normal para `NSLock`, `PTHREAD_MUTEX_RECURSIVE` para `NSRecursiveLock`), soportando `init`, `dealloc`, `lock`, `unlock`, `tryLock`, `lockBeforeDate:`, `name`, `setName:` (requerido por `libcccreator.dylib` al abrir el editor de vídeo).
 
 ---
 

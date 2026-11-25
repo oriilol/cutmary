@@ -1036,6 +1036,232 @@ index c40a60fa..3580826d 100644
          "initWithBytes:length:" => data_init_with_bytes, c"@32@0:8r^v16Q24";
          "initWithBytesNoCopy:length:" => data_init_no_copy, c"@32@0:8^v16Q24";
          "initWithBytesNoCopy:length:freeWhenDone:" => data_init_no_copy_free, c"@36@0:8^v16Q24B32";
+diff --git a/crates/foundation/src/lib.rs b/crates/foundation/src/lib.rs
+index a189df89..bc88dab2 100644
+--- a/crates/foundation/src/lib.rs
++++ b/crates/foundation/src/lib.rs
+@@ -46,6 +46,7 @@ pub mod pool;
+ pub mod processinfo;
+ pub mod proxy;
+ pub mod runtime;
++mod lock;
+ mod signature;
+ pub mod string;
+ pub mod strings;
+@@ -91,6 +92,7 @@ pub fn bootstrap() {
+         distributed::install();
+         constant::install();
+         declare_abstract();
++        lock::install();
+         bundle::class::install();
+         filemanager::install();
+         exception::install();
+diff --git a/crates/foundation/src/lock.rs b/crates/foundation/src/lock.rs
+new file mode 100644
+index 00000000..c3e1791e
+--- /dev/null
++++ b/crates/foundation/src/lock.rs
+@@ -0,0 +1,200 @@
++//! `NSLock` and `NSRecursiveLock` backed by real `libc::pthread_mutex_t`.
++
++use std::collections::HashMap;
++use std::sync::{Arc, LazyLock, Mutex};
++
++use objc::object::Id;
++use objc::sel::Sel;
++
++use crate::define::methods;
++
++struct LockState {
++    mutex: Box<libc::pthread_mutex_t>,
++    name: Mutex<usize>,
++}
++
++// SAFETY: `pthread_mutex_t` is specifically designed for cross-thread sharing.
++unsafe impl Send for LockState {}
++unsafe impl Sync for LockState {}
++
++impl LockState {
++    fn new(recursive: bool) -> Self {
++        let mut mutex = Box::new(unsafe { std::mem::zeroed::<libc::pthread_mutex_t>() });
++        unsafe {
++            let mut attr = std::mem::zeroed::<libc::pthread_mutexattr_t>();
++            libc::pthread_mutexattr_init(&mut attr);
++            if recursive {
++                libc::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_RECURSIVE);
++            }
++            libc::pthread_mutex_init(&mut *mutex, &attr);
++            libc::pthread_mutexattr_destroy(&mut attr);
++        }
++        Self {
++            mutex,
++            name: Mutex::new(0),
++        }
++    }
++
++    fn lock(&self) {
++        unsafe {
++            libc::pthread_mutex_lock(self.mutex.as_ref() as *const _ as *mut _);
++        }
++    }
++
++    fn unlock(&self) {
++        unsafe {
++            libc::pthread_mutex_unlock(self.mutex.as_ref() as *const _ as *mut _);
++        }
++    }
++
++    fn try_lock(&self) -> bool {
++        unsafe { libc::pthread_mutex_trylock(self.mutex.as_ref() as *const _ as *mut _) == 0 }
++    }
++}
++
++impl Drop for LockState {
++    fn drop(&mut self) {
++        let name = *self.name.lock().unwrap_or_else(|e| e.into_inner());
++        if name != 0 {
++            objc::arc::release(name as Id);
++        }
++        unsafe {
++            libc::pthread_mutex_destroy(&mut *self.mutex);
++        }
++    }
++}
++
++static LOCKS: LazyLock<Mutex<HashMap<usize, Arc<LockState>>>> =
++    LazyLock::new(|| Mutex::new(HashMap::new()));
++
++fn is_recursive(receiver: Id) -> bool {
++    let Some(class) = (unsafe { objc::object::class_of(receiver) }) else {
++        return false;
++    };
++    class.name_str() == "NSRecursiveLock"
++        || class
++            .chain()
++            .any(|ancestor| ancestor.name_str() == "NSRecursiveLock")
++}
++
++fn state_for(receiver: Id) -> Arc<LockState> {
++    let mut table = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
++    table
++        .entry(receiver as usize)
++        .or_insert_with(|| Arc::new(LockState::new(is_recursive(receiver))))
++        .clone()
++}
++
++unsafe extern "C" fn init(receiver: Id, _sel: Sel) -> Id {
++    if !receiver.is_null() {
++        let _ = state_for(receiver);
++    }
++    receiver
++}
++
++unsafe extern "C" fn dealloc(receiver: Id, _sel: Sel) {
++    if !receiver.is_null() {
++        LOCKS
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .remove(&(receiver as usize));
++        objc::arc::finalize(receiver);
++    }
++}
++
++unsafe extern "C" fn lock(receiver: Id, _sel: Sel) {
++    if !receiver.is_null() {
++        state_for(receiver).lock();
++    }
++}
++
++unsafe extern "C" fn unlock(receiver: Id, _sel: Sel) {
++    if !receiver.is_null() {
++        state_for(receiver).unlock();
++    }
++}
++
++unsafe extern "C" fn try_lock(receiver: Id, _sel: Sel) -> u8 {
++    if receiver.is_null() {
++        return 0;
++    }
++    u8::from(state_for(receiver).try_lock())
++}
++
++unsafe extern "C" fn lock_before_date(receiver: Id, _sel: Sel, limit: Id) -> u8 {
++    if receiver.is_null() {
++        return 0;
++    }
++    let st = state_for(receiver);
++    if st.try_lock() {
++        return 1;
++    }
++    // Check deadline from NSDate -timeIntervalSinceNow if provided.
++    let timeout_secs = if !limit.is_null() {
++        unsafe {
++            let f: unsafe extern "C" fn(Id, Sel) -> f64 = std::mem::transmute(objc::msg::entry());
++            f(limit, objc::sel::get("timeIntervalSinceNow"))
++        }
++    } else {
++        0.0
++    };
++    if timeout_secs <= 0.0 {
++        return 0;
++    }
++    let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(timeout_secs);
++    while std::time::Instant::now() < deadline {
++        if st.try_lock() {
++            return 1;
++        }
++        std::thread::sleep(std::time::Duration::from_millis(1));
++    }
++    u8::from(st.try_lock())
++}
++
++unsafe extern "C" fn get_name(receiver: Id, _sel: Sel) -> Id {
++    if receiver.is_null() {
++        return std::ptr::null_mut();
++    }
++    let st = state_for(receiver);
++    let ptr = *st.name.lock().unwrap_or_else(|e| e.into_inner());
++    if ptr == 0 {
++        std::ptr::null_mut()
++    } else {
++        objc::arc::autorelease(objc::arc::retain(ptr as Id))
++    }
++}
++
++unsafe extern "C" fn set_name(receiver: Id, _sel: Sel, new_name: Id) {
++    if receiver.is_null() {
++        return;
++    }
++    let st = state_for(receiver);
++    let retained = if new_name.is_null() {
++        0
++    } else {
++        objc::arc::retain(new_name) as usize
++    };
++    let old = {
++        let mut guard = st.name.lock().unwrap_or_else(|e| e.into_inner());
++        std::mem::replace(&mut *guard, retained)
++    };
++    if old != 0 {
++        objc::arc::release(old as Id);
++    }
++}
++
++pub(crate) fn install() {
++    for name in [c"NSLock", c"NSRecursiveLock"] {
++        let class = corefoundation::base::abstract_class(name, None);
++        methods!(class, {
++            "init" => init, c"@16@0:8";
++            "dealloc" => dealloc, c"v16@0:8";
++            "lock" => lock, c"v16@0:8";
++            "unlock" => unlock, c"v16@0:8";
++            "tryLock" => try_lock, c"B16@0:8";
++            "lockBeforeDate:" => lock_before_date, c"B24@0:8@16";
++            "name" => get_name, c"@16@0:8";
++            "setName:" => set_name, c"v24@0:8@16";
++        });
++    }
++}
 diff --git a/crates/foundation/src/string.rs b/crates/foundation/src/string.rs
 index 2764ea14..6a7145f4 100644
 --- a/crates/foundation/src/string.rs
