@@ -1187,3 +1187,34 @@ index 187134ec..5ee70aa7 100644
          // The level-specific entry points take the same arguments, the level
          // included, and differ only in what Apple records alongside.
          "_os_log_debug_impl" => _os_log_impl,
+diff --git a/crates/darwin/src/spawn.rs b/crates/darwin/src/spawn.rs
+index dc6174f7..3f8c9089 100644
+--- a/crates/darwin/src/spawn.rs
++++ b/crates/darwin/src/spawn.rs
+@@ -1421,6 +1421,18 @@ pub unsafe extern "C" fn attr_setarchpref_np(
+     unsafe { attr_setbinpref_np(at, count, prefs, taken) }
+ }
+ 
++/// `int posix_spawnattr_set_csm_np(posix_spawnattr_t *, uint32_t)`.
++///
++/// Advisory macOS Core Scheduling Mode (e.g. `POSIX_SPAWN_NP_CSM_ALL` /
++/// `POSIX_SPAWN_NP_CSM_NOSMT`) requested by Chromium/CEF when spawning helper
++/// processes. Accepted as a no-op on Linux.
++pub unsafe extern "C" fn attr_set_csm_np(at: *mut c_void, _flags: u32) -> c_int {
++    if at.is_null() {
++        return libc::EINVAL;
++    }
++    0
++}
++
+ /// Spawn a child for a framework's process API, such as `NSTask`.
+ ///
+ /// Launched as the guest's own `posix_spawn` would launch it, so `path` and
+@@ -1555,6 +1567,7 @@ exports::exports! {
+         "posix_spawnattr_setsigdefault" => attr_setsigdefault,
+         "posix_spawnattr_setbinpref_np" => attr_setbinpref_np,
+         "posix_spawnattr_setarchpref_np" => attr_setarchpref_np,
++        "posix_spawnattr_set_csm_np" => attr_set_csm_np,
+     }
+ }
+ 

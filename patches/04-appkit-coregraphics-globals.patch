@@ -1317,7 +1317,7 @@ index f5fe44f7..38554e1b 100644
          "launchApplicationAtURL:options:configuration:error:" => launch_application,
              c"@48@0:8@16Q24@32^@40";
 diff --git a/crates/rosemary/src/abi/table.rs b/crates/rosemary/src/abi/table.rs
-index 8f85a506..a0b43c95 100644
+index 8f85a506..6be402cc 100644
 --- a/crates/rosemary/src/abi/table.rs
 +++ b/crates/rosemary/src/abi/table.rs
 @@ -437,6 +437,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
@@ -1328,6 +1328,14 @@ index 8f85a506..a0b43c95 100644
      sig!("CFBundleLoadExecutable", U8, P),
      sig!("CFBundleGetFunctionPointerForName", P, P, P),
      sig!("CFBundleGetDataPointerForName", P, P, P),
+@@ -3265,6 +3266,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+     sig!("posix_spawnattr_setpgroup", I32, P, I32),
+     sig!("posix_spawnattr_setbinpref_np", I32, P, U64, P, P),
+     sig!("posix_spawnattr_setarchpref_np", I32, P, U64, P, P, P),
++    sig!("posix_spawnattr_set_csm_np", I32, P, U32),
+     // `short flags`, which SysV passes in the low half of a register and
+     // AAPCS64 reads back out of one: narrower than the slot on both sides.
+     sig!("posix_spawnattr_setflags", I32, P, U32),
 diff --git a/crates/rosemary/src/fault.rs b/crates/rosemary/src/fault.rs
 index 8d6b8e84..95a0de52 100644
 --- a/crates/rosemary/src/fault.rs
