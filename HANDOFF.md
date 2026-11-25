@@ -158,9 +158,29 @@ Antes de cada lanzamiento hay que borrar los `*.locked` de 0 bytes de
   runtime: iban al `libgcc_s` del host, que no lee el compact unwind de macOS y abortaba
   (`libres_pool.dylib`, comprobado en el core dump).
 
+**Segunda tanda (misma tarde)**
+
+Verificado en vivo: importar varias fotos seguidas, miniaturas en el panel de Medios y en la
+línea de tiempo (4 clips), botón Export activo. El panel de Medios ya no se atasca en bucle.
+
+- MSL `isunordered`/`isordered`: los dos shaders de medios de CapCut fallaban al traducirse y
+  CapCut los pedía sin parar (63 787 + 2 083 traducciones fallidas en ~20 s; caché 0 escrituras).
+- SPIR-V: `Ordered`/`Unordered` se emiten con `OpIsNan` (`OpOrdered`/`OpUnordered` son de
+  `Kernel` y el compilador de NVIDIA se caía con ellos); validado con `spirv-val --target-env vulkan1.3`.
+- `-[MTLCommandEncoder device]`.
+- Ventanas no opacas: `-isOpaque`/`-setOpaque:` reales, superficie con alfa y swapchain
+  `PRE_MULTIPLIED` cuando el invitado la pide (el menú de Qt usa una ventana transparente a pantalla completa).
+- Diagnóstico con variables de entorno: `ROSEMARY_TRACE_SIGNALS`, `ROSEMARY_TRACE_FRAMES`,
+  `ROSEMARY_TRACE_SHADER_CACHE`.
+
 **Pendiente**
 
-- Importar una segunda foto aborta (core dump disponible para analizar).
+- El editor sigue yendo con retardo al cargar contenido: CPU (~7 %) y GPU (~1 %) casi ociosas,
+  así que es espera, no cómputo; por localizar.
+- Menú contextual: en Wayland la ventana transparente a pantalla completa de Qt no se puede
+  colocar en (0,0) y sale gris/negra o como ventana aparte. En X11 (XWayland) sale en su sitio
+  pero con fondo gris, y el editor aborta al compartir un contexto GL entre hilos (GLX).
+- La pantalla de inicio no muestra miniaturas de proyectos ni el degradado del botón.
 - El reproductor no reproduce y el editor va muy lento (~1 fps).
 - Vídeo `.mp4`: faltan `CV{ColorPrimaries,TransferFunction,YCbCrMatrix}GetStringForIntegerCodePoint`
   (FFmpeg/libavutil), `CVBufferHasAttachment`, `CVImageBufferGetCleanRect`,

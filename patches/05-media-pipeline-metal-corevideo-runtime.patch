@@ -4611,6 +4611,35 @@ index f38422e9..6c4793b6 100644
  pub(super) unsafe extern "C" fn new_render_pipeline(
      receiver: Id,
      _sel: Sel,
+diff --git a/crates/metal/src/encoder/mod.rs b/crates/metal/src/encoder/mod.rs
+index a00126ec..fb480c4f 100644
+--- a/crates/metal/src/encoder/mod.rs
++++ b/crates/metal/src/encoder/mod.rs
+@@ -728,6 +728,16 @@ fn install_attachment_methods(attachment: &'static objc::class::Class) {
+     }
+ }
+ 
++/// `-[MTLCommandEncoder device]`: the device of the queue the encoder's
++/// command buffer came from.
++unsafe extern "C" fn encoder_device(receiver: Id, sel: Sel) -> Id {
++    // SAFETY: an encoder of this crate's, whose command buffer and queue are too.
++    unsafe {
++        let command_buffer = object::body::<Encoder>(receiver).command_buffer;
++        queue_device(command_buffer_queue(command_buffer, sel), sel)
++    }
++}
++
+ pub(crate) fn install() {
+     parallel::install();
+     object::register::<CommandQueue>(c"RosemaryMTLCommandQueue");
+@@ -777,6 +787,7 @@ pub(crate) fn install() {
+ 
+     let encoder = objc::class::lookup(c"RosemaryMTLCommandEncoder").expect("just registered");
+     methods!(encoder, {
++        "device" => encoder_device, c"@16@0:8";
+         "endEncoding" => end_encoding, c"v16@0:8";
+         "dealloc" => encoder_dealloc, c"v16@0:8";
+         "setComputePipelineState:" => set_compute_pipeline, c"v24@0:8@16";
 diff --git a/crates/metal/src/lib.rs b/crates/metal/src/lib.rs
 index e3039156..b4c5fa9e 100644
 --- a/crates/metal/src/lib.rs
@@ -4624,6 +4653,151 @@ index e3039156..b4c5fa9e 100644
              "currentAllocatedSize" => current_allocated_size, c"Q16@0:8";
              "newFence" => new_fence, c"@16@0:8";
              "newEvent" => new_event, c"@16@0:8";
+diff --git a/crates/metal/src/swapchain/mod.rs b/crates/metal/src/swapchain/mod.rs
+index 1d278874..fd7df756 100644
+--- a/crates/metal/src/swapchain/mod.rs
++++ b/crates/metal/src/swapchain/mod.rs
+@@ -293,6 +293,9 @@ struct Swapchain {
+     /// For a window whose surface shows its alpha, the pass that makes its
+     /// content opaque and rounds its corners. `None` presents opaque.
+     corners: Option<corners::Corners>,
++    /// A window the guest made non-opaque: its content's alpha reaches the
++    /// compositor unsealed, as a translucent macOS window's does.
++    see_through: bool,
+     pool: vk::CommandPool,
+     frames: Vec<Frame>,
+     frame: usize,
+@@ -1430,7 +1433,7 @@ fn present_impl(
+                     Ok(mut swapchain) => {
+                         reset_retry(window);
+                         gpu::milestone("window swapchain");
+-                        if swapchain.corners.is_none() {
++                        if swapchain.corners.is_none() && !swapchain.see_through {
+                             appkit::decor::presented_opaque(window as sdl3::Window);
+                         }
+                         let rate = sdl3::video::cached_window_refresh_rate(window as sdl3::Window)
+@@ -4837,10 +4840,11 @@ impl Swapchain {
+             });
+         }
+         drop(wsi);
+-        // Only a window made with room for rounded corners has a surface
+-        // that shows alpha; see `appkit::window`.
++        // Only a window made with room for rounded corners, or one the guest
++        // made non-opaque, has a surface that shows alpha; see `appkit::window`.
+         let transparent = snapshot.flags & sdl3::video::flags::TRANSPARENT != 0;
+-        let corners = match transparent {
++        let see_through = transparent && appkit::window::shows_alpha(window as sdl3::Window);
++        let corners = match transparent && !see_through {
+             true => corners::Corners::new(gpu)
+                 .inspect_err(|reason| {
+                     gpu::trace(format!(
+@@ -4852,6 +4856,7 @@ impl Swapchain {
+         };
+         let mut swapchain = Self {
+             window: window as usize,
++            see_through,
+             gpu,
+             surface: surface.take(),
+             handle: vk::SwapchainKHR::null(),
+@@ -4964,7 +4969,7 @@ impl Swapchain {
+         }
+         .map_err(|error| format!("vkGetPhysicalDeviceSurfacePresentModesKHR failed: {error:?}"))?;
+         let present_mode = choose_present_mode(&present_modes);
+-        let alpha = composite_alpha(&capabilities, self.corners.is_some());
++        let alpha = composite_alpha(&capabilities, self.corners.is_some() || self.see_through);
+ 
+         // `0xffff_ffff` in either direction is a surface which takes its size
+         // from the swapchain rather than the other way round.
+diff --git a/crates/metal/src/tests.rs b/crates/metal/src/tests.rs
+index 67d1296e..1f54b43d 100644
+--- a/crates/metal/src/tests.rs
++++ b/crates/metal/src/tests.rs
+@@ -651,6 +651,7 @@ fn a_translated_kernel_runs_on_the_gpu() {
+     unsafe {
+         let command = send(queue, "commandBuffer");
+         let encoder = send(command, "computeCommandEncoder");
++        assert_eq!(send(encoder, "device"), device, "an encoder's device is its queue's");
+         send_with_object(encoder, "setComputePipelineState:", pipeline);
+         set_buffer_at(encoder, buffer, 0, 0);
+         dispatch(encoder, 1);
+diff --git a/crates/metal_translate/src/cache/mod.rs b/crates/metal_translate/src/cache/mod.rs
+index 51962ab8..5539d1ff 100644
+--- a/crates/metal_translate/src/cache/mod.rs
++++ b/crates/metal_translate/src/cache/mod.rs
+@@ -340,11 +340,40 @@ fn cached_in(
+     }
+     MISSES.fetch_add(1, Ordering::Relaxed);
+ 
+-    let library = translate()?;
++    let library = translate();
++    trace_miss(frontend, &key, bytes.len(), &library);
++    let library = library?;
+     queue_entry(path, key, &library);
+     Ok(library)
+ }
+ 
++/// `ROSEMARY_TRACE_SHADER_CACHE`: one line per miss - which input, how big,
++/// and whether translating it worked - so a key translated again and again,
++/// or a failure the caller never reports, shows up.
++fn trace_miss(
++    frontend: Frontend,
++    key: &[u8; 32],
++    len: usize,
++    library: &Result<TranslatedLibrary, TranslateError>,
++) {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    if !*ON.get_or_init(|| std::env::var_os("ROSEMARY_TRACE_SHADER_CACHE").is_some()) {
++        return;
++    }
++    let key: String = key[..8].iter().map(|b| format!("{b:02x}")).collect();
++    match library {
++        Ok(_) => eprintln!(
++            "rosemary: shader cache: miss {key} frontend {} bytes {len} translated",
++            frontend.tag()
++        ),
++        Err(error) => eprintln!(
++            "rosemary: shader cache: miss {key} frontend {} bytes {len} failed: {}",
++            frontend.tag(),
++            error.to_string().lines().next().unwrap_or_default()
++        ),
++    }
++}
++
+ /// The key naming this input, this target, the IR passes the translation
+ /// runs, and this build of the translator.
+ ///
+diff --git a/crates/metal_translate/src/msl/lower/library.rs b/crates/metal_translate/src/msl/lower/library.rs
+index c5b4fc69..6cff3a98 100644
+--- a/crates/metal_translate/src/msl/lower/library.rs
++++ b/crates/metal_translate/src/msl/lower/library.rs
+@@ -523,6 +523,27 @@ impl Lowerer<'_, '_> {
+                     ty: Ty::Scalar(Scalar::Bool),
+                 })
+             }
++            // `isunordered(x, y)` is whether either is NaN, `isordered` its
++            // complement: one comparison each, as `isnan` is with itself.
++            ("isunordered" | "isordered", [a, b]) => {
++                let ty = self.float_common(&[a, b], line)?;
++                let a = self.convert(a.clone(), &ty, line)?;
++                let b = self.convert(b.clone(), &ty, line)?;
++                let bool_ty = Ty::of(Scalar::Bool, ty.lanes().unwrap());
++                let predicate = match name {
++                    "isunordered" => FloatPredicate::Unordered,
++                    _ => FloatPredicate::Ordered,
++                };
++                let op = self.emit(
++                    self.context.ir(&bool_ty),
++                    InstructionKind::FloatCompare {
++                        predicate,
++                        lhs: a.op,
++                        rhs: b.op,
++                    },
++                );
++                Ok(Value { op, ty: bool_ty })
++            }
+             ("isnan" | "isinf" | "isfinite", [v]) => {
+                 let v = self.floating(v.clone(), line)?;
+                 let lanes = v.ty.lanes().unwrap();
 diff --git a/crates/metal_translate/src/msl/lower/mod.rs b/crates/metal_translate/src/msl/lower/mod.rs
 index bae4e37c..75ec23f8 100644
 --- a/crates/metal_translate/src/msl/lower/mod.rs
@@ -4677,14 +4851,73 @@ index bae4e37c..75ec23f8 100644
 +    }
 +    Ok(located)
 +}
+diff --git a/crates/metal_translate/src/spirv/emit/arithmetic.rs b/crates/metal_translate/src/spirv/emit/arithmetic.rs
+index c2ef1e77..5959336f 100644
+--- a/crates/metal_translate/src/spirv/emit/arithmetic.rs
++++ b/crates/metal_translate/src/spirv/emit/arithmetic.rs
+@@ -227,7 +227,15 @@ impl Emitter {
+                         FloatPredicate::OrderedGreaterEqual => {
+                             b.f_ord_greater_than_equal(ty, id, x, y)
+                         }
+-                        FloatPredicate::Ordered => b.ordered(ty, id, x, y),
++                        // `OpOrdered` and `OpUnordered` are the `Kernel`
++                        // capability's; a Vulkan shader spells them with
++                        // `OpIsNan`.
++                        FloatPredicate::Ordered => {
++                            let x_nan = b.is_nan(ty, None, x)?;
++                            let y_nan = b.is_nan(ty, None, y)?;
++                            let either = b.logical_or(ty, None, x_nan, y_nan)?;
++                            b.logical_not(ty, id, either)
++                        }
+                         FloatPredicate::UnorderedEqual => b.f_unord_equal(ty, id, x, y),
+                         FloatPredicate::UnorderedNotEqual => b.f_unord_not_equal(ty, id, x, y),
+                         FloatPredicate::UnorderedLessThan => b.f_unord_less_than(ty, id, x, y),
+@@ -240,7 +248,11 @@ impl Emitter {
+                         FloatPredicate::UnorderedGreaterEqual => {
+                             b.f_unord_greater_than_equal(ty, id, x, y)
+                         }
+-                        FloatPredicate::Unordered => b.unordered(ty, id, x, y),
++                        FloatPredicate::Unordered => {
++                            let x_nan = b.is_nan(ty, None, x)?;
++                            let y_nan = b.is_nan(ty, None, y)?;
++                            b.logical_or(ty, id, x_nan, y_nan)
++                        }
+                     },
+                 )?;
+             }
 diff --git a/crates/metal_translate/tests/translate.rs b/crates/metal_translate/tests/translate.rs
-index 251f932e..f7a732b5 100644
+index 251f932e..9bfc1160 100644
 --- a/crates/metal_translate/tests/translate.rs
 +++ b/crates/metal_translate/tests/translate.rs
-@@ -687,6 +687,31 @@ fn rejects_a_target_without_required_capabilities() {
+@@ -687,6 +687,56 @@ fn rejects_a_target_without_required_capabilities() {
      assert_eq!(error.diagnostics[0].phase, Phase::SpirvEmission);
  }
  
++/// `isunordered` and `isordered` (MSL 6.5): CapCut's media shaders use them,
++/// and a library that fails to translate is asked for again on every frame.
++#[test]
++fn source_msl_lowers_ordered_comparisons() {
++    let source = r#"
++#include <metal_stdlib>
++using namespace metal;
++kernel void k(device float4* out [[buffer(0)]], constant float4& a [[buffer(1)]]) {
++    half h = half(a.w);
++    bool s = isunordered(a.x, a.y);
++    bool4 v = isordered(a, a.yxwz);
++    bool m = isunordered(a.z, h);
++    out[0] = float4(float(s), float(all(v)), float(m), 0.0);
++}
++"#;
++    let library = translate_msl(source, &TargetProfile::vulkan_1_3()).unwrap();
++    let module = rspirv::dr::load_words(&library.entries[0].words).unwrap();
++    let ops: Vec<Op> = module.functions.iter().flat_map(|f| &f.blocks).flat_map(|b| &b.instructions).map(|i| i.class.opcode).collect();
++    // Vulkan has no `OpOrdered`/`OpUnordered` (they need `Kernel`): each
++    // operand is tested with `OpIsNan`.
++    assert!(!ops.contains(&Op::Unordered) && !ops.contains(&Op::Ordered));
++    assert_eq!(ops.iter().filter(|op| **op == Op::IsNan).count(), 6);
++    assert_eq!(ops.iter().filter(|op| **op == Op::LogicalNot).count(), 1);
++}
++
 +/// MSL 5.2.1: an argument given no location takes the first free index of
 +/// its kind. SPIRV-Cross emits such arguments; this is CapCut's flip shader.
 +#[test]

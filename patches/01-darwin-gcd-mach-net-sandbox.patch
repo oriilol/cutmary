@@ -1275,6 +1275,86 @@ index 187134ec..5ee70aa7 100644
          // The level-specific entry points take the same arguments, the level
          // included, and differ only in what Apple records alongside.
          "_os_log_debug_impl" => _os_log_impl,
+diff --git a/crates/darwin/src/signal.rs b/crates/darwin/src/signal.rs
+index cb227b07..3c623e6a 100644
+--- a/crates/darwin/src/signal.rs
++++ b/crates/darwin/src/signal.rs
+@@ -873,6 +873,9 @@ extern "C" fn deliver(host: c_int, info: *mut libc::siginfo_t, context: *mut c_v
+         }
+         return;
+     }
++    if TRACE_SIGNALS.load(Ordering::Relaxed) {
++        trace_signal(darwin, host, info, context, handler);
++    }
+     if GUEST_SIGINFO[slot].load(Ordering::Acquire) {
+         // SAFETY: installed as a three-argument handler; the pointers are the
+         // kernel's own.
+@@ -954,9 +957,65 @@ fn guest_view(host_handler: libc::sighandler_t) -> u64 {
+     }
+ }
+ 
++/// `ROSEMARY_TRACE_SIGNALS`: report every signal handed to a guest handler.
++/// Read where handlers are installed, since [`deliver`] may not read the
++/// environment.
++static TRACE_SIGNALS: AtomicBool = AtomicBool::new(false);
++
++/// One line on stderr for a signal [`deliver`] is about to hand to `handler`.
++/// Async-signal-safe: formatted on the stack and written with `write(2)`.
++fn trace_signal(
++    darwin: i32,
++    host: c_int,
++    info: *const libc::siginfo_t,
++    context: *const c_void,
++    handler: u64,
++) {
++    struct Line {
++        bytes: [u8; 192],
++        len: usize,
++    }
++    impl core::fmt::Write for Line {
++        fn write_str(&mut self, s: &str) -> core::fmt::Result {
++            let take = s.len().min(self.bytes.len() - self.len);
++            self.bytes[self.len..self.len + take].copy_from_slice(&s.as_bytes()[..take]);
++            self.len += take;
++            Ok(())
++        }
++    }
++    // SAFETY: the kernel's own arguments to the running handler, or null.
++    let (code, addr) = match unsafe { info.as_ref() } {
++        Some(info) => (info.si_code, unsafe { info.si_addr() } as usize),
++        None => (0, 0),
++    };
++    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
++    // SAFETY: on Linux the third argument is the interrupted `ucontext_t`.
++    let pc = unsafe { context.cast::<libc::ucontext_t>().as_ref() }.map_or(0, |uc| {
++        uc.uc_mcontext.gregs[libc::REG_RIP as usize] as usize
++    });
++    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
++    let pc = context as usize & 0;
++    let mut line = Line {
++        bytes: [0; 192],
++        len: 0,
++    };
++    let _ = core::fmt::write(
++        &mut line,
++        format_args!(
++            "rosemary: signal: {darwin} (host {host}) code {code} addr {addr:#x} pc {pc:#x} -> guest handler {handler:#x}\n"
++        ),
++    );
++    // SAFETY: a live buffer written to stderr.
++    unsafe { libc::write(2, line.bytes.as_ptr().cast(), line.len) };
++}
++
+ /// Install `handler` for `slot` behind [`deliver`], returning what to give
+ /// the host.
+ fn route(slot: usize, handler: u64, siginfo: bool) -> libc::sighandler_t {
++    TRACE_SIGNALS.store(
++        std::env::var_os("ROSEMARY_TRACE_SIGNALS").is_some(),
++        Ordering::Relaxed,
++    );
+     if is_sentinel(handler) {
+         if !observed(slot) {
+             return handler as libc::sighandler_t;
 diff --git a/crates/darwin/src/spawn.rs b/crates/darwin/src/spawn.rs
 index dc6174f7..3f8c9089 100644
 --- a/crates/darwin/src/spawn.rs

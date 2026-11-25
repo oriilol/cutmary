@@ -1943,7 +1943,7 @@ index a4137b46..a052c984 100644
          "_kCGDisplayShowDuplicateLowResolutionModes",
          "kCGDisplayShowDuplicateLowResolutionModes",
 diff --git a/crates/appkit/src/opengl.rs b/crates/appkit/src/opengl.rs
-index a1151f4f..0f72114d 100644
+index a1151f4f..6f0c3610 100644
 --- a/crates/appkit/src/opengl.rs
 +++ b/crates/appkit/src/opengl.rs
 @@ -1382,12 +1382,17 @@ unsafe extern "C" fn make_current_context(receiver: Id, _sel: Sel) {
@@ -1970,7 +1970,86 @@ index a1151f4f..0f72114d 100644
      chrome_blit::fit_viewport(drawable_window(context), window, sdl);
  
      if holds_primary {
-@@ -2420,6 +2425,41 @@ mod chrome_blit {
+@@ -2059,7 +2064,78 @@ unsafe extern "C" fn flush_buffer(receiver: Id, _sel: Sel) {
+         if sdl3::video::gl_current_window() == window {
+             chrome_blit::mask_outside_logical_frame(drawable_window(context_of(receiver)), window);
+         }
++        let started = std::time::Instant::now();
+         sdl3::video::swap_window(window);
++        frame_trace::record(window, started.elapsed());
++    }
++}
++
++/// `ROSEMARY_TRACE_FRAMES`: how often each GL window presents and how long its
++/// swaps block - a window that redraws late either swaps rarely or waits in
++/// the swap for the compositor.
++mod frame_trace {
++    use std::sync::Mutex;
++    use std::time::{Duration, Instant};
++
++    /// A swap longer than this is reported on its own.
++    const SLOW: Duration = Duration::from_millis(50);
++    /// How often each window's totals are reported.
++    const EVERY: Duration = Duration::from_secs(2);
++
++    struct Window {
++        window: usize,
++        since: Instant,
++        frames: u32,
++        longest: Duration,
++    }
++
++    fn enabled() -> bool {
++        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++        *ON.get_or_init(|| std::env::var_os("ROSEMARY_TRACE_FRAMES").is_some())
++    }
++
++    pub(super) fn record(window: sdl3::Window, swap: Duration) {
++        if !enabled() {
++            return;
++        }
++        static WINDOWS: Mutex<Vec<Window>> = Mutex::new(Vec::new());
++        if swap >= SLOW {
++            eprintln!(
++                "rosemary: frames: SDL window {window:p} swap blocked {} ms",
++                swap.as_millis()
++            );
++        }
++        let mut windows = WINDOWS.lock().unwrap_or_else(|e| e.into_inner());
++        let index = match windows.iter().position(|w| w.window == window as usize) {
++            Some(index) => index,
++            None => {
++                windows.push(Window {
++                    window: window as usize,
++                    since: Instant::now(),
++                    frames: 0,
++                    longest: Duration::ZERO,
++                });
++                windows.len() - 1
++            }
++        };
++        let entry = &mut windows[index];
++        entry.frames += 1;
++        entry.longest = entry.longest.max(swap);
++        let elapsed = entry.since.elapsed();
++        if elapsed >= EVERY {
++            eprintln!(
++                "rosemary: frames: SDL window {window:p} {:.1} fps over {:.1} s, longest swap {} ms",
++                f64::from(entry.frames) / elapsed.as_secs_f64(),
++                elapsed.as_secs_f64(),
++                entry.longest.as_millis()
++            );
++            *entry = Window {
++                window: window as usize,
++                since: Instant::now(),
++                frames: 0,
++                longest: Duration::ZERO,
++            };
++        }
+     }
+ }
+ 
+@@ -2420,6 +2496,41 @@ mod chrome_blit {
          (x, y, w, (clip.y + clip.h - top).clamp(0, h))
      }
  
@@ -2012,7 +2091,7 @@ index a1151f4f..0f72114d 100644
      /// Initialize GL's default viewport for AppKit's drawable, and adjust it
      /// when AppKit's logical content changes without rebinding the context.
      /// If the guest explicitly replaces that viewport, leave its GL state alone.
-@@ -2448,6 +2488,9 @@ mod chrome_blit {
+@@ -2448,6 +2559,9 @@ mod chrome_blit {
              crate::window::content_inset(object),
          );
          let whole = target == (0, 0, pixels.0, pixels.1);
@@ -2022,6 +2101,19 @@ index a1151f4f..0f72114d 100644
          let mut fitted = FITTED.lock().unwrap_or_else(|e| e.into_inner());
          // A viewport belongs to the context and survives SDL window rebinding.
          let item = fitted
+@@ -2608,7 +2722,11 @@ mod chrome_blit {
+         };
+         // SAFETY: a current context, and entry points of its GL.
+         unsafe {
+-            if transparent {
++            // A non-opaque window shows its content's alpha, as Qt's
++            // translucent windows rely on; only an opaque one is sealed.
++            // FIXME (ACCURACY): macOS also asks for the context's surface
++            // opacity to be zero before it composites GL alpha.
++            if transparent && !crate::window::shows_alpha(window) {
+                 let top = chrome.as_ref().map_or(0, |chrome| chrome.height as i32);
+                 let radius = chrome.as_ref().map_or(0.0, |chrome| chrome.radius);
+                 seal(gl, width, height, top, radius);
 diff --git a/crates/appkit/src/panel.rs b/crates/appkit/src/panel.rs
 index e1c81b94..3ff64f36 100644
 --- a/crates/appkit/src/panel.rs
@@ -2058,10 +2150,10 @@ index e1c81b94..3ff64f36 100644
  }
 diff --git a/crates/appkit/src/quicklook.rs b/crates/appkit/src/quicklook.rs
 new file mode 100644
-index 00000000..47c59d63
+index 00000000..ba2d4af4
 --- /dev/null
 +++ b/crates/appkit/src/quicklook.rs
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,21 @@
 +//! QuickLook's thumbnail call, which a program asks before drawing its own.
 +
 +use std::ffi::c_void;
@@ -2074,6 +2166,7 @@ index 00000000..47c59d63
 +/// FIXME (ACCURACY): there are no thumbnail generators here, so every file
 +/// gets the answer macOS gives a file no generator handles: NULL, after which
 +/// a program draws the thumbnail itself.
++#[allow(non_snake_case)]
 +pub unsafe extern "C" fn QLThumbnailImageCreate(
 +    _allocator: *const c_void,
 +    _url: *const c_void,
@@ -2480,10 +2573,20 @@ index 221c3265..124745ae 100644
      let window = unsafe { window_of(receiver) };
      // SAFETY: null or a window this crate made.
 diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
-index 484056dd..8e439605 100644
+index 484056dd..e95da93d 100644
 --- a/crates/appkit/src/window.rs
 +++ b/crates/appkit/src/window.rs
-@@ -150,6 +150,9 @@ mod style {
+@@ -89,6 +89,9 @@ pub struct Window {
+     size_pending: usize,
+     /// `-setTitlebarAppearsTransparent:`.
+     titlebar_transparent: usize,
++    /// Nonzero after `-setOpaque:NO`: the window shows what lies behind
++    /// wherever its content leaves alpha.
++    non_opaque: usize,
+     /// `-setTitleVisibility:`, `NSWindowTitleHidden` being 1.
+     title_visibility: isize,
+     /// `-windowController`, not retained: the controller owns the window.
+@@ -150,6 +153,9 @@ mod style {
      /// `NSWindowStyleMaskFullScreen`, which AppKit sets and clears itself;
      /// see `style_mask`.
      pub const FULL_SCREEN: usize = 1 << 14;
@@ -2493,7 +2596,15 @@ index 484056dd..8e439605 100644
  }
  
  /// The `NSWindowLevel`s that say what a window is *for*.
-@@ -793,7 +796,8 @@ fn accessory_view(controller: Id) -> Id {
+@@ -571,6 +577,7 @@ fn rehome_popup_descendants(old: sdl3::Window, replacement: sdl3::Window) {
+         };
+         let flags = (creation_flags(window_of(object).style_mask, api)
+             & !sdl3::video::flags::BORDERLESS)
++            | alpha_flag(object)
+             | popup;
+         let Some(new) =
+             sdl3::video::create_popup_window(new_parent, x, y, width.max(1), height.max(1), flags)
+@@ -793,7 +800,8 @@ fn accessory_view(controller: Id) -> Id {
  }
  
  /// Place the accessories along the top of the frame view, each its own
@@ -2503,7 +2614,7 @@ index 484056dd..8e439605 100644
  ///
  /// FIXME (ACCURACY): an accessory placed at the titlebar's leading or
  /// trailing edge goes under it with the rest, since the titlebar here is not
-@@ -811,6 +815,7 @@ fn layout_titlebar(object: Id, size: NSSize) {
+@@ -811,6 +819,7 @@ fn layout_titlebar(object: Id, size: NSSize) {
          },
      );
      let mut top = size.height;
@@ -2511,7 +2622,7 @@ index 484056dd..8e439605 100644
      for controller in accessories_of(object) {
          let view = accessory_view(controller);
          if view.is_null() || crate::props::integer(controller, "hidden") != 0 {
-@@ -821,6 +826,9 @@ fn layout_titlebar(object: Id, size: NSSize) {
+@@ -821,6 +830,9 @@ fn layout_titlebar(object: Id, size: NSSize) {
              (None, Some(least)) => least.max(crate::view::frame_of(view).size.height),
              (None, None) => crate::view::frame_of(view).size.height,
          };
@@ -2521,7 +2632,7 @@ index 484056dd..8e439605 100644
          top -= height;
          send_frame(
              view,
-@@ -833,6 +841,16 @@ fn layout_titlebar(object: Id, size: NSSize) {
+@@ -833,6 +845,16 @@ fn layout_titlebar(object: Id, size: NSSize) {
              },
          );
      }
@@ -2538,7 +2649,7 @@ index 484056dd..8e439605 100644
      if !window.content_view.is_null() {
          send_frame(
              window.content_view,
-@@ -840,7 +858,7 @@ fn layout_titlebar(object: Id, size: NSSize) {
+@@ -840,7 +862,7 @@ fn layout_titlebar(object: Id, size: NSSize) {
                  origin: NSPoint::default(),
                  size: NSSize {
                      width: size.width,
@@ -2547,7 +2658,7 @@ index 484056dd..8e439605 100644
                  },
              },
          );
-@@ -983,8 +1001,14 @@ pub(crate) fn content_inset(object: Id) -> CGFloat {
+@@ -983,8 +1005,14 @@ pub(crate) fn content_inset(object: Id) -> CGFloat {
  }
  
  fn inset_of(object: Id, style_mask: usize, fullscreen: bool) -> CGFloat {
@@ -2563,7 +2674,7 @@ index 484056dd..8e439605 100644
          style_mask & style::TITLED != 0,
          is_panel(object),
          fullscreen,
-@@ -1629,7 +1653,10 @@ pub unsafe fn init_with_content_rect_for_tests(window: Id, rect: NSRect) -> bool
+@@ -1629,7 +1657,10 @@ pub unsafe fn init_with_content_rect_for_tests(window: Id, rect: NSRect) -> bool
  /// outright - so a guest which asks for an `NSOpenGLContext` has its window
  /// rebuilt as an OpenGL one; see [`rebuild_for_opengl`].
  fn creation_flags(style_mask: usize, api: Api) -> u64 {
@@ -2575,7 +2686,43 @@ index 484056dd..8e439605 100644
      if matches!(api, Api::OpenGl) {
          flags |= sdl3::video::flags::OPENGL;
      }
-@@ -2904,6 +2931,9 @@ unsafe extern "C" fn user_space_scale_factor(receiver: Id, sel: Sel) -> f64 {
+@@ -1742,7 +1773,7 @@ fn remake(receiver: Id, api: Api, want: Presentation) -> bool {
+     let shown = window.shown != 0;
+     let (x, y, _, _) = crate::geometry::rect_to_sdl(window.requested);
+ 
+-    let flags = creation_flags(window.style_mask, api);
++    let flags = creation_flags(window.style_mask, api) | alpha_flag(receiver);
+     let new = match want.popup_flags() {
+         Some(popup) => {
+             let parent = popup_parent(receiver);
+@@ -2461,13 +2492,19 @@ fn order_front(receiver: Id, make_key: bool) {
+     // window its style mask and its level after making it, and reuses one
+     // window as a dialog, then as a tooltip. A popup's parent has to be on the
+     // screen, so a popup with nothing to hang off stays a toplevel.
+-    if want != presentation_of_sdl(window.sdl)
+-        && !(want != Presentation::Toplevel && popup_parent(receiver).is_null())
+-    {
+-        let api = match draws_with_opengl(window.sdl) {
+-            true => Api::OpenGl,
+-            false => Api::Undecided,
+-        };
++    let api = match draws_with_opengl(window.sdl) {
++        true => Api::OpenGl,
++        false => Api::Undecided,
++    };
++    let kind_changed = want != presentation_of_sdl(window.sdl)
++        && !(want != Presentation::Toplevel && popup_parent(receiver).is_null());
++    // Whether the window shows what lies behind it is only known once the
++    // guest has finished making it - Qt answers `-isOpaque` from a format it
++    // sets after `-initWithContentRect:` - and SDL fixes it at creation.
++    let transparent = sdl3::video::flags::TRANSPARENT;
++    let wants_alpha = (creation_flags(window.style_mask, api) | alpha_flag(receiver)) & transparent;
++    let alpha_changed = wants_alpha != sdl3::video::window_flags(window.sdl) & transparent;
++    if kind_changed || alpha_changed {
+         remake(receiver, api, want);
+     }
+     let window = window_of(receiver);
+@@ -2904,6 +2941,9 @@ unsafe extern "C" fn user_space_scale_factor(receiver: Id, sel: Sel) -> f64 {
  }
  
  unsafe extern "C" fn backing_scale_factor(receiver: Id, _sel: Sel) -> CGFloat {
@@ -2585,7 +2732,7 @@ index 484056dd..8e439605 100644
      let sdl = window_of(receiver).sdl;
      match sdl.is_null() {
          true => 1.0,
-@@ -3035,8 +3065,12 @@ unsafe extern "C" fn set_style_mask(receiver: Id, _sel: Sel, mask: usize) {
+@@ -3035,8 +3075,12 @@ unsafe extern "C" fn set_style_mask(receiver: Id, _sel: Sel, mask: usize) {
      if window.style_mask != mask {
          trace!("{receiver:p} style {:#x} -> {mask:#x}", window.style_mask);
      }
@@ -2598,7 +2745,7 @@ index 484056dd..8e439605 100644
  }
  
  /// The content size the guest last asked this window for, in the units
-@@ -3756,6 +3790,19 @@ unsafe extern "C" fn parent_window(receiver: Id, _sel: Sel) -> Id {
+@@ -3756,8 +3800,61 @@ unsafe extern "C" fn parent_window(receiver: Id, _sel: Sel) -> Id {
  
  unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _flag: u8) {}
  
@@ -2617,8 +2764,61 @@ index 484056dd..8e439605 100644
 +
  unsafe extern "C" fn ignored_object(_receiver: Id, _sel: Sel, _object: Id) {}
  
++unsafe extern "C" fn is_opaque(receiver: Id, _sel: Sel) -> u8 {
++    u8::from(window_of(receiver).non_opaque == 0)
++}
++
++/// `-setOpaque:`. The host surface gets its alpha channel when the window is
++/// next made, which for a GL window is when it is remade for its context;
++/// see [`alpha_flag`].
++///
++/// FIXME (ACCURACY): a window made non-opaque after its host surface exists
++/// stays opaque until it is remade.
++unsafe extern "C" fn set_opaque(receiver: Id, _sel: Sel, flag: u8) {
++    window_of(receiver).non_opaque = usize::from(flag == 0);
++}
++
++/// Whether `sdl` belongs to a window the guest made non-opaque.
++pub fn shows_alpha(sdl: sdl3::Window) -> bool {
++    let object = window_for(sdl);
++    !object.is_null() && window_of(object).non_opaque != 0
++}
++
++/// `TRANSPARENT` for a non-opaque window where the host composites alpha:
++/// an X11 window needs a compositing manager for it, as the chrome's corners do.
++///
++/// The window is asked, not read: Qt's `QNSWindow` overrides `-isOpaque` to
++/// follow its surface format and never sends `-setOpaque:`.
++fn alpha_flag(object: Id) -> u64 {
++    // SAFETY: `-isOpaque` is `BOOL (id, SEL)` on every window.
++    let opaque = unsafe {
++        let f: unsafe extern "C" fn(Id, Sel) -> u8 = std::mem::transmute(objc::msg::entry());
++        f(object, objc::sel::get("isOpaque"))
++    };
++    window_of(object).non_opaque = usize::from(opaque == 0);
++    trace!("{object:p} isOpaque {}", opaque != 0);
++    let alpha = sdl3::video::is_wayland() || sdl3::desktop::active();
++    match alpha && window_of(object).non_opaque != 0 {
++        true => sdl3::video::flags::TRANSPARENT,
++        false => 0,
++    }
++}
++
  unsafe extern "C" fn set_titlebar_transparent(receiver: Id, _sel: Sel, flag: u8) {
-@@ -4134,6 +4181,18 @@ pub(crate) fn install() {
+     window_of(receiver).titlebar_transparent = usize::from(flag != 0);
+ }
+@@ -4060,8 +4157,8 @@ pub(crate) fn install() {
+         "styleMask" => style_mask, c"Q16@0:8";
+         "setStyleMask:" => set_style_mask, c"v24@0:8Q16";
+         "setReleasedWhenClosed:" => ignored_flag, c"v20@0:8c16";
+-        "isOpaque" => yes, c"c16@0:8";
+-        "setOpaque:" => ignored_flag, c"v20@0:8c16";
++        "isOpaque" => is_opaque, c"c16@0:8";
++        "setOpaque:" => set_opaque, c"v20@0:8c16";
+         "setHidesOnDeactivate:" => set_hides_on_deactivate, c"v20@0:8c16";
+         "hidesOnDeactivate" => hides_on_deactivate, c"c16@0:8";
+         "setExcludedFromWindowsMenu:" => set_excluded_from_windows_menu, c"v20@0:8c16";
+@@ -4134,6 +4231,18 @@ pub(crate) fn install() {
          "firstResponder" => first_responder, c"@16@0:8";
          "makeFirstResponder:" => make_first_responder, c"c24@0:8@16";
          "initialFirstResponder" => initial_first_responder, c"@16@0:8";
@@ -2637,10 +2837,31 @@ index 484056dd..8e439605 100644
          "nextResponder" => next_responder, c"@16@0:8";
          "setNextResponder:" => set_next_responder, c"v24@0:8@16";
          "setInitialFirstResponder:" => set_initial_first_responder, c"v24@0:8@16";
-@@ -4594,6 +4653,69 @@ mod tests {
+@@ -4594,6 +4703,90 @@ mod tests {
  
      /// A view that outlives its window must not answer `-window` with it:
      /// Studio's dock panels are freed while Qt still holds their views.
++    /// Qt's translucent windows - CapCut's full-screen menu overlay - say
++    /// `-setOpaque:NO` and must read it back.
++    #[test]
++    fn a_window_remembers_it_is_not_opaque() {
++        crate::bootstrap();
++        let window = objc::object::create_instance(objc::class::lookup(c"NSWindow").unwrap(), 0);
++        // SAFETY: a window this test made, sent the selectors it implements.
++        unsafe {
++            assert_eq!(
++                is_opaque(window, objc::sel::get("isOpaque")),
++                1,
++                "opaque by default"
++            );
++            set_opaque(window, objc::sel::get("setOpaque:"), 0);
++            assert_eq!(is_opaque(window, objc::sel::get("isOpaque")), 0);
++            set_opaque(window, objc::sel::get("setOpaque:"), 1);
++            assert_eq!(is_opaque(window, objc::sel::get("isOpaque")), 1);
++        }
++        objc::arc::release(window);
++    }
++
 +    /// CapCut's editor: a 36pt bottom accessory on a full-size content view
 +    /// window, which must not push the content view down.
 +    #[test]
