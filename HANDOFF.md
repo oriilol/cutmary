@@ -249,3 +249,14 @@ ventana la capa del reproductor se dibuja fuera de su caja (blanco sobre timelin
 aunque la escena reporta marcos correctos (`780x439@653,79`, `954x439@566,79`): hay tres capas
 Metal del reproductor apiladas en el mismo sitio. Siguiente: volcar el contenido de cada drawable.
 
+**Red: más hipótesis descartadas (26-nov, noche)**
+
+- `SCDynamicStoreCopyProxies` devolviendo diccionario vacío en vez de NULL: probado en vivo, sin cambio
+  (C2PA sigue con `biz response is null`, sin conexiones nuevas). Revertido.
+- `NSRegularExpression` (único import sin enlazar de `libsscronet`): solo se usa en una función que
+  valida un patrón (`libsscronet+0x411860`, devuelve `error == nil`); con la clase ausente devuelve
+  "válido". No bloquea nada.
+- Siguiente idea: poner breakpoints en las funciones de error de TTNet/Cronet (p. ej. donde se
+  construye la respuesta de error de `URLRequest`) para ver qué código `net::ERR_*` se devuelve
+  antes de la resolución DNS.
+
