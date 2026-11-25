@@ -4078,7 +4078,7 @@ index fc4d6388..5ebc71fa 100644
      fn a_started_link_calls_back_on_its_own_thread() {
          FIRED.store(0, Ordering::SeqCst);
 diff --git a/crates/corevideo/src/pixel_buffer.rs b/crates/corevideo/src/pixel_buffer.rs
-index a1e29683..d312601f 100644
+index a1e29683..20dc94a0 100644
 --- a/crates/corevideo/src/pixel_buffer.rs
 +++ b/crates/corevideo/src/pixel_buffer.rs
 @@ -28,7 +28,7 @@ const NV12_VIDEO: u32 = u32::from_be_bytes(*b"420v");
@@ -4106,7 +4106,16 @@ index a1e29683..d312601f 100644
          }
      }
  }
-@@ -251,10 +253,16 @@ macro_rules! forward_foreign {
+@@ -161,6 +163,8 @@ struct State {
+     memory: Memory,
+     data_size: usize,
+     locks: AtomicUsize,
++    cpu_generation: std::sync::atomic::AtomicU64,
++    metal_textures: std::sync::Mutex<Vec<texture_cache::CachedMetalTexture>>,
+     attachments: std::sync::Mutex<attachments::Attachments>,
+ }
+ 
+@@ -251,10 +255,16 @@ macro_rules! forward_foreign {
  }
  
  mod attachments;
@@ -4123,7 +4132,34 @@ index a1e29683..d312601f 100644
  
  fn aligned(value: usize, alignment: usize) -> Option<usize> {
      let remainder = value % alignment;
-@@ -987,6 +995,9 @@ pub unsafe extern "C" fn CVPixelBufferLockBaseAddress(buffer: CFTypeRef, flags:
+@@ -515,6 +525,8 @@ pub unsafe extern "C" fn CVPixelBufferCreate(
+                 memory: Memory::Owned(data),
+                 data_size: size,
+                 locks: AtomicUsize::new(0),
++                cpu_generation: std::sync::atomic::AtomicU64::new(1),
++                metal_textures: Default::default(),
+                 attachments: Default::default(),
+             },
+             out,
+@@ -625,6 +637,8 @@ pub unsafe extern "C" fn CVPixelBufferCreateWithBytes(
+                 },
+                 data_size,
+                 locks: AtomicUsize::new(0),
++                cpu_generation: std::sync::atomic::AtomicU64::new(1),
++                metal_textures: Default::default(),
+                 attachments: Default::default(),
+             },
+             out,
+@@ -726,6 +740,8 @@ pub unsafe extern "C" fn CVPixelBufferCreateWithPlanarBytes(
+                 },
+                 data_size,
+                 locks: AtomicUsize::new(0),
++                cpu_generation: std::sync::atomic::AtomicU64::new(1),
++                metal_textures: Default::default(),
+                 attachments: Default::default(),
+             },
+             out,
+@@ -987,6 +1003,9 @@ pub unsafe extern "C" fn CVPixelBufferLockBaseAddress(buffer: CFTypeRef, flags:
      let Some(state) = state(buffer) else {
          return INVALID_ARGUMENT;
      };
@@ -4133,17 +4169,29 @@ index a1e29683..d312601f 100644
      // An overflowing count is refused rather than wrapped back to unlocked.
      match state
          .locks
-@@ -1007,6 +1018,9 @@ pub unsafe extern "C" fn CVPixelBufferUnlockBaseAddress(buffer: CFTypeRef, flags
+@@ -1007,15 +1026,32 @@ pub unsafe extern "C" fn CVPixelBufferUnlockBaseAddress(buffer: CFTypeRef, flags
      let Some(state) = state(buffer) else {
          return INVALID_ARGUMENT;
      };
 +    if let Memory::Surface(surface) = &state.memory {
-+        return surface.unlock(&state.locks, flags);
++        let rc = surface.unlock(&state.locks, flags);
++        if rc == SUCCESS && (flags & READ_ONLY) == 0 {
++            state.cpu_generation.fetch_add(1, Ordering::Release);
++        }
++        return rc;
 +    }
      match state
          .locks
          .try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
-@@ -1016,6 +1030,11 @@ pub unsafe extern "C" fn CVPixelBufferUnlockBaseAddress(buffer: CFTypeRef, flags
+     {
+-        Ok(_) => SUCCESS,
++        Ok(_) => {
++            if (flags & READ_ONLY) == 0 {
++                state.cpu_generation.fetch_add(1, Ordering::Release);
++            }
++            SUCCESS
++        }
+         Err(_) => ERROR,
      }
  }
  
@@ -4155,7 +4203,7 @@ index a1e29683..d312601f 100644
  /// A CPU-allocated CVPixelBuffer has no IOSurface backing.
  ///
  /// FIXME (ACCURACY): a buffer created with kCVPixelBufferIOSurfacePropertiesKey
-@@ -1028,7 +1047,10 @@ pub unsafe extern "C" fn CVPixelBufferGetIOSurface(buffer: CFTypeRef) -> CFTypeR
+@@ -1028,7 +1064,10 @@ pub unsafe extern "C" fn CVPixelBufferGetIOSurface(buffer: CFTypeRef) -> CFTypeR
          fn(CFTypeRef) -> CFTypeRef,
          (buffer)
      );
@@ -4167,7 +4215,7 @@ index a1e29683..d312601f 100644
  }
  
  /// A copy of this runtime's `buffer` made by the host CoreVideo, for a host
-@@ -1129,6 +1151,133 @@ mod tests {
+@@ -1129,6 +1168,133 @@ mod tests {
          out
      }
  
@@ -4465,10 +4513,10 @@ index 00000000..f4b355e4
 +}
 diff --git a/crates/corevideo/src/pixel_buffer/surface.rs b/crates/corevideo/src/pixel_buffer/surface.rs
 new file mode 100644
-index 00000000..e5757e6e
+index 00000000..4b4a1085
 --- /dev/null
 +++ b/crates/corevideo/src/pixel_buffer/surface.rs
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,154 @@
 +//! Pixel buffers sharing the storage and CPU access protocol of an IOSurface.
 +
 +use super::*;
@@ -4527,7 +4575,11 @@ index 00000000..e5757e6e
 +impl Drop for Backing {
 +    fn drop(&mut self) {
 +        unsafe {
++            let id = iosurface::IOSurfaceGetID(self.object);
 +            iosurface::IOSurfaceDecrementUseCount(self.object);
++            if iosurface::IOSurfaceIsInUse(self.object) == 0 {
++                super::texture_cache::evict_surface(id);
++            }
 +            corefoundation::api::CFRelease(self.object);
 +        }
 +    }
@@ -4611,6 +4663,8 @@ index 00000000..e5757e6e
 +                    access: Mutex::new(()),
 +                }),
 +                locks: AtomicUsize::new(0),
++                cpu_generation: std::sync::atomic::AtomicU64::new(1),
++                metal_textures: Default::default(),
 +                attachments: Default::default(),
 +            },
 +            out,
@@ -4619,19 +4673,22 @@ index 00000000..e5757e6e
 +}
 diff --git a/crates/corevideo/src/pixel_buffer/texture_cache.rs b/crates/corevideo/src/pixel_buffer/texture_cache.rs
 new file mode 100644
-index 00000000..8a28b0fb
+index 00000000..2cbb1af5
 --- /dev/null
 +++ b/crates/corevideo/src/pixel_buffer/texture_cache.rs
-@@ -0,0 +1,715 @@
+@@ -0,0 +1,922 @@
 +//! `CVMetalTextureCache` and `CVOpenGLTextureCache`: GPU textures made from
 +//! pixel buffers.
 +//!
-+//! FIXME (ACCURACY): a texture is a copy of the buffer's pixels taken when it
-+//! is made. On macOS it shares the buffer's IOSurface, so CPU writes made later
-+//! show through without a new texture; a flush therefore has nothing to do.
++//! Metal textures are cached per `(device, backing, plane, pixel_format, size)`
++//! so producer and consumer callers referencing the same `CVPixelBuffer` or
++//! `IOSurface` share one GPU `MTLTexture`, while CPU write unlocks re-upload
++//! updated pixels on the next lookup.
 +
++use std::collections::HashMap;
 +use std::ffi::c_void;
-+use std::sync::OnceLock;
++use std::sync::{Mutex, OnceLock};
++use std::sync::atomic::Ordering;
 +
 +use corefoundation::base::CFTypeRef;
 +use objc::class::Class;
@@ -4642,16 +4699,74 @@ index 00000000..8a28b0fb
 +    BGRA, CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRowOfPlane,
 +    CVPixelBufferGetHeightOfPlane, CVPixelBufferGetPixelFormatType, CVPixelBufferGetPlaneCount,
 +    CVPixelBufferGetWidthOfPlane, CVPixelBufferLockBaseAddress, CVPixelBufferUnlockBaseAddress,
-+    ERROR, INVALID_ARGUMENT, READ_ONLY, SUCCESS, attribute, state,
++    ERROR, INVALID_ARGUMENT, Memory, READ_ONLY, SUCCESS, attribute, state,
 +};
 +
 +/// `kCVReturnPixelBufferNotOpenGLCompatible`.
 +const NOT_OPENGL_COMPATIBLE: i32 = -6683;
 +/// `kCVReturnPixelBufferNotMetalCompatible`.
 +const NOT_METAL_COMPATIBLE: i32 = -6684;
-+/// `MTLTextureUsageShaderRead`, what a cache texture is for unless the
-+/// attributes say otherwise.
++/// `MTLTextureUsageShaderRead`, `ShaderWrite`, `RenderTarget`.
 +const MTL_TEXTURE_USAGE_SHADER_READ: u64 = 1;
++const MTL_TEXTURE_USAGE_SHADER_WRITE: u64 = 2;
++const MTL_TEXTURE_USAGE_RENDER_TARGET: u64 = 4;
++
++#[derive(Clone, Copy, Eq, Hash, PartialEq)]
++struct SurfaceTextureKey {
++    surface_id: u32,
++    device: usize,
++    plane: usize,
++    pixel_format: u64,
++    width: usize,
++    height: usize,
++}
++
++pub(super) struct CachedMetalTexture {
++    device: usize,
++    plane: usize,
++    pixel_format: u64,
++    width: usize,
++    height: usize,
++    texture: usize,
++    cpu_gen: u64,
++    surface_seed: u32,
++}
++
++impl Drop for CachedMetalTexture {
++    fn drop(&mut self) {
++        if self.texture != 0 {
++            objc::arc::release(self.texture as Id);
++        }
++    }
++}
++
++static IOSURFACE_TEXTURES: OnceLock<Mutex<HashMap<SurfaceTextureKey, CachedMetalTexture>>> =
++    OnceLock::new();
++
++fn iosurface_textures() -> &'static Mutex<HashMap<SurfaceTextureKey, CachedMetalTexture>> {
++    IOSURFACE_TEXTURES.get_or_init(|| Mutex::new(HashMap::new()))
++}
++
++/// Drop cached Metal textures for an `IOSurface` once its use count returns to 0.
++pub(super) fn evict_surface(surface_id: u32) {
++    let mut dropped = Vec::new();
++    {
++        let mut map = iosurface_textures()
++            .lock()
++            .unwrap_or_else(|e| e.into_inner());
++        let keys: Vec<SurfaceTextureKey> = map
++            .keys()
++            .copied()
++            .filter(|k| k.surface_id == surface_id)
++            .collect();
++        for key in keys {
++            if let Some(entry) = map.remove(&key) {
++                dropped.push(entry);
++            }
++        }
++    }
++    drop(dropped);
++}
 +/// `kCVPixelFormatType_32ARGB`.
 +const ARGB: u32 = 0x20;
 +const RGBA: u32 = u32::from_be_bytes(*b"RGBA");
@@ -4883,12 +4998,136 @@ index 00000000..8a28b0fb
 +        return NOT_METAL_COMPATIBLE;
 +    }
 +    // SAFETY: null or a CF value from the caller's dictionary.
-+    let usage = unsafe {
++    let requested_usage = unsafe {
 +        corefoundation::collections::number(attribute(texture_attributes, "MetalTextureUsage"))
 +    }
 +    .and_then(|n| u64::try_from(n.as_i64()).ok())
-+    .unwrap_or(MTL_TEXTURE_USAGE_SHADER_READ);
-+    let texture = make_metal_texture(cache.device, pixel_format, width, height, usage, &view);
++    .unwrap_or(0);
++    let usage = requested_usage | MTL_TEXTURE_USAGE_SHADER_READ | MTL_TEXTURE_USAGE_RENDER_TARGET;
++    let Some(pb_state) = state(image) else {
++        unlock(image);
++        return INVALID_ARGUMENT;
++    };
++    let cpu_gen = pb_state.cpu_generation.load(Ordering::Acquire);
++    let texture = match &pb_state.memory {
++        Memory::Surface(surface) => {
++            // SAFETY: live IOSurface owned by this pixel buffer.
++            let surface_id = unsafe { iosurface::IOSurfaceGetID(surface.object) };
++            let surface_seed = unsafe { iosurface::IOSurfaceGetSeed(surface.object) };
++            let key = SurfaceTextureKey {
++                surface_id,
++                device: cache.device as usize,
++                plane,
++                pixel_format,
++                width,
++                height,
++            };
++            let existing = {
++                let mut map = iosurface_textures()
++                    .lock()
++                    .unwrap_or_else(|e| e.into_inner());
++                map.get_mut(&key).map(|entry| {
++                    let dirty = entry.cpu_gen != cpu_gen || entry.surface_seed != surface_seed;
++                    entry.cpu_gen = cpu_gen;
++                    entry.surface_seed = surface_seed;
++                    (objc::arc::retain(entry.texture as Id), dirty)
++                })
++            };
++            match existing {
++                Some((tex, dirty)) => {
++                    if dirty {
++                        upload_metal_plane(tex, width, height, &view);
++                    }
++                    tex
++                }
++                None => {
++                    let tex = make_metal_texture(
++                        cache.device,
++                        pixel_format,
++                        width,
++                        height,
++                        usage,
++                        &view,
++                    );
++                    if !tex.is_null() {
++                        let mut map = iosurface_textures()
++                            .lock()
++                            .unwrap_or_else(|e| e.into_inner());
++                        map.insert(
++                            key,
++                            CachedMetalTexture {
++                                device: cache.device as usize,
++                                plane,
++                                pixel_format,
++                                width,
++                                height,
++                                texture: objc::arc::retain(tex) as usize,
++                                cpu_gen,
++                                surface_seed,
++                            },
++                        );
++                    }
++                    tex
++                }
++            }
++        }
++        _ => {
++            let existing = {
++                let mut list = pb_state
++                    .metal_textures
++                    .lock()
++                    .unwrap_or_else(|e| e.into_inner());
++                list.iter_mut()
++                    .find(|e| {
++                        e.device == cache.device as usize
++                            && e.plane == plane
++                            && e.pixel_format == pixel_format
++                            && e.width == width
++                            && e.height == height
++                    })
++                    .map(|entry| {
++                        let dirty = entry.cpu_gen != cpu_gen;
++                        entry.cpu_gen = cpu_gen;
++                        (objc::arc::retain(entry.texture as Id), dirty)
++                    })
++            };
++            match existing {
++                Some((tex, dirty)) => {
++                    if dirty {
++                        upload_metal_plane(tex, width, height, &view);
++                    }
++                    tex
++                }
++                None => {
++                    let tex = make_metal_texture(
++                        cache.device,
++                        pixel_format,
++                        width,
++                        height,
++                        usage,
++                        &view,
++                    );
++                    if !tex.is_null() {
++                        let mut list = pb_state
++                            .metal_textures
++                            .lock()
++                            .unwrap_or_else(|e| e.into_inner());
++                        list.push(CachedMetalTexture {
++                            device: cache.device as usize,
++                            plane,
++                            pixel_format,
++                            width,
++                            height,
++                            texture: objc::arc::retain(tex) as usize,
++                            cpu_gen,
++                            surface_seed: 0,
++                        });
++                    }
++                    tex
++                }
++            }
++        }
++    };
 +    unlock(image);
 +    if texture.is_null() {
 +        return NOT_METAL_COMPATIBLE;
@@ -4902,6 +5141,25 @@ index 00000000..8a28b0fb
 +    // SAFETY: as above.
 +    unsafe { *out = made };
 +    SUCCESS
++}
++
++fn upload_metal_plane(texture: Id, width: usize, height: usize, view: &PlaneView) {
++    // SAFETY: an `id<MTLTexture>` made on this runtime and a locked plane view.
++    unsafe {
++        let replace: unsafe extern "C" fn(Id, Sel, Region, u64, *const c_void, u64) =
++            std::mem::transmute(objc::msg::entry());
++        replace(
++            texture,
++            objc::sel::get("replaceRegion:mipmapLevel:withBytes:bytesPerRow:"),
++            Region {
++                origin: [0; 3],
++                size: [width as u64, height as u64, 1],
++            },
++            0,
++            view.base.cast(),
++            view.bytes_per_row as u64,
++        );
++    }
 +}
 +
 +/// A new texture on `device` holding `view`'s pixels, owned by the caller.
@@ -4933,30 +5191,33 @@ index 00000000..8a28b0fb
 +            return std::ptr::null_mut();
 +        }
 +        let set_usage: unsafe extern "C" fn(Id, Sel, u64) = std::mem::transmute(objc::msg::entry());
-+        set_usage(descriptor, objc::sel::get("setUsage:"), usage);
 +        let new_texture: unsafe extern "C" fn(Id, Sel, Id) -> Id =
 +            std::mem::transmute(objc::msg::entry());
-+        let texture = new_texture(
++        // Try Read | Write | RenderTarget first so compute + render passes can
++        // both target the shared texture; fall back to Read | RenderTarget for
++        // formats without storage support.
++        set_usage(
++            descriptor,
++            objc::sel::get("setUsage:"),
++            usage | MTL_TEXTURE_USAGE_SHADER_WRITE,
++        );
++        let mut texture = new_texture(
 +            device,
 +            objc::sel::get("newTextureWithDescriptor:"),
 +            descriptor,
 +        );
 +        if texture.is_null() {
++            set_usage(descriptor, objc::sel::get("setUsage:"), usage);
++            texture = new_texture(
++                device,
++                objc::sel::get("newTextureWithDescriptor:"),
++                descriptor,
++            );
++        }
++        if texture.is_null() {
 +            return texture;
 +        }
-+        let replace: unsafe extern "C" fn(Id, Sel, Region, u64, *const c_void, u64) =
-+            std::mem::transmute(objc::msg::entry());
-+        replace(
-+            texture,
-+            objc::sel::get("replaceRegion:mipmapLevel:withBytes:bytesPerRow:"),
-+            Region {
-+                origin: [0; 3],
-+                size: [width as u64, height as u64, 1],
-+            },
-+            0,
-+            view.base.cast(),
-+            view.bytes_per_row as u64,
-+        );
++        upload_metal_plane(texture, width, height, view);
 +        texture
 +    }
 +}

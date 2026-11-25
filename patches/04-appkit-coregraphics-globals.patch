@@ -2869,7 +2869,7 @@ index 978f00ea..1c2f11fd 100644
      // dictionary's retain is the only one that matters. Mixing an owned value
      // in with autoreleased ones is how a leak or a double release gets written.
 diff --git a/crates/appkit/src/view.rs b/crates/appkit/src/view.rs
-index 221c3265..d7f73aac 100644
+index 221c3265..c8683004 100644
 --- a/crates/appkit/src/view.rs
 +++ b/crates/appkit/src/view.rs
 @@ -470,6 +470,34 @@ pub(crate) fn surface_poll_visits_for_test() -> usize {
@@ -2917,8 +2917,37 @@ index 221c3265..d7f73aac 100644
      // SAFETY: a view of this crate's.
      let window = unsafe { window_of(receiver) };
      // SAFETY: null or a window this crate made.
+@@ -3573,6 +3604,19 @@ unsafe extern "C" fn ignored(_receiver: Id, _sel: Sel) {}
+ 
+ unsafe extern "C" fn ignored_object(_receiver: Id, _sel: Sel, _object: Id) {}
+ 
++unsafe extern "C" fn ignored_drag_image(
++    _receiver: Id,
++    _sel: Sel,
++    _image: Id,
++    _at: NSPoint,
++    _offset: NSSize,
++    _event: Id,
++    _pasteboard: Id,
++    _source: Id,
++    _slide_back: u8,
++) {
++}
++
+ unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _flag: u8) {}
+ 
+ unsafe extern "C" fn ignored_integer(_receiver: Id, _sel: Sel, _value: isize) {}
+@@ -3714,6 +3758,8 @@ pub(crate) fn install() {
+         // no observable result other than which future drag messages arrive.
+         "registerForDraggedTypes:" => ignored_object, c"v24@0:8@16";
+         "unregisterDraggedTypes" => ignored, c"v16@0:8";
++        "dragImage:at:offset:event:pasteboard:source:slideBack:" => ignored_drag_image,
++            c"v84@0:8@16{CGPoint=dd}24{CGSize=dd}40@56@64@72c80";
+         "setAutoresizingMask:" => set_autoresizing_mask, c"v24@0:8Q16";
+         "autoresizingMask" => autoresizing_mask, c"Q16@0:8";
+         "setAutoresizesSubviews:" => set_autoresizes_subviews, c"v20@0:8c16";
 diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
-index 484056dd..bd30d34a 100644
+index 484056dd..db80e0d0 100644
 --- a/crates/appkit/src/window.rs
 +++ b/crates/appkit/src/window.rs
 @@ -89,6 +89,9 @@ pub struct Window {
@@ -3102,7 +3131,7 @@ index 484056dd..bd30d34a 100644
  }
  
  /// The content size the guest last asked this window for, in the units
-@@ -3756,8 +3803,61 @@ unsafe extern "C" fn parent_window(receiver: Id, _sel: Sel) -> Id {
+@@ -3756,8 +3803,74 @@ unsafe extern "C" fn parent_window(receiver: Id, _sel: Sel) -> Id {
  
  unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _flag: u8) {}
  
@@ -3121,6 +3150,19 @@ index 484056dd..bd30d34a 100644
 +
  unsafe extern "C" fn ignored_object(_receiver: Id, _sel: Sel, _object: Id) {}
  
++unsafe extern "C" fn ignored_drag_image(
++    _receiver: Id,
++    _sel: Sel,
++    _image: Id,
++    _at: NSPoint,
++    _offset: NSSize,
++    _event: Id,
++    _pasteboard: Id,
++    _source: Id,
++    _slide_back: u8,
++) {
++}
++
 +unsafe extern "C" fn is_opaque(receiver: Id, _sel: Sel) -> u8 {
 +    u8::from(window_of(receiver).non_opaque == 0)
 +}
@@ -3164,7 +3206,7 @@ index 484056dd..bd30d34a 100644
  unsafe extern "C" fn set_titlebar_transparent(receiver: Id, _sel: Sel, flag: u8) {
      window_of(receiver).titlebar_transparent = usize::from(flag != 0);
  }
-@@ -4060,8 +4160,8 @@ pub(crate) fn install() {
+@@ -4060,8 +4173,8 @@ pub(crate) fn install() {
          "styleMask" => style_mask, c"Q16@0:8";
          "setStyleMask:" => set_style_mask, c"v24@0:8Q16";
          "setReleasedWhenClosed:" => ignored_flag, c"v20@0:8c16";
@@ -3175,7 +3217,16 @@ index 484056dd..bd30d34a 100644
          "setHidesOnDeactivate:" => set_hides_on_deactivate, c"v20@0:8c16";
          "hidesOnDeactivate" => hides_on_deactivate, c"c16@0:8";
          "setExcludedFromWindowsMenu:" => set_excluded_from_windows_menu, c"v20@0:8c16";
-@@ -4134,6 +4234,18 @@ pub(crate) fn install() {
+@@ -4100,6 +4213,8 @@ pub(crate) fn install() {
+         // keeps SDL's window setup from failing on it.
+         "registerForDraggedTypes:" => ignored_object, c"v24@0:8@16";
+         "unregisterDraggedTypes" => ignored, c"v16@0:8";
++        "dragImage:at:offset:event:pasteboard:source:slideBack:" => ignored_drag_image,
++            c"v84@0:8@16{CGPoint=dd}24{CGSize=dd}40@56@64@72c80";
+         // The window is always presented in the host's colour space; SDL 1.2 sets sRGB.
+         "setColorSpace:" => ignored_object, c"v24@0:8@16";
+         // No shadow is drawn, so there is none to recompute.
+@@ -4134,6 +4249,18 @@ pub(crate) fn install() {
          "firstResponder" => first_responder, c"@16@0:8";
          "makeFirstResponder:" => make_first_responder, c"c24@0:8@16";
          "initialFirstResponder" => initial_first_responder, c"@16@0:8";
@@ -3194,7 +3245,7 @@ index 484056dd..bd30d34a 100644
          "nextResponder" => next_responder, c"@16@0:8";
          "setNextResponder:" => set_next_responder, c"v24@0:8@16";
          "setInitialFirstResponder:" => set_initial_first_responder, c"v24@0:8@16";
-@@ -4594,6 +4706,90 @@ mod tests {
+@@ -4594,6 +4721,90 @@ mod tests {
  
      /// A view that outlives its window must not answer `-window` with it:
      /// Studio's dock panels are freed while Qt still holds their views.
