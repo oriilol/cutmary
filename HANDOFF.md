@@ -16,9 +16,9 @@ Este documento es el canal de comunicación entre el agente de desarrollo en **C
   - Arranca completo, carga ~198 hilos y ~2 GiB RSS.
   - Renderiza la **ventana principal de inicio (Home)** con barra de título macOS y el diálogo modal **"Terms of Service and Privacy Policy"** (`Agree and continue`).
   - Resuelto el crash frecuente a los ~7s por corrupción de heap / double-free (Qt 6.2.2 `QRhiMetal` hacía `objc_release` sobre `[NSString stringWithUTF8String:"main0"]`).
-  - **Pendiente / en curso en Colab**:
-    1. Crash intermitente en hilo de fondo: `SIGSEGV at 0x0` llamado desde `Chromium Embedded Framework+0x46093c6`.
-    2. Pulsar **"Agree and continue"** -> **"+ New project"** para entrar al **Editor de Vídeo** y arreglar los siguientes selectores/símbolos/crashes.
+  - Resuelto el crash de CEF (`SIGSEGV at 0x0` desde `Chromium Embedded Framework+0x46093c6`) implementando `posix_spawnattr_set_csm_np`; los procesos helper de CEF ya arrancan sin crashear.
+  - **En curso en Colab**:
+    - Pulsar **"Agree and continue"** -> **"+ New project"** para entrar al **Editor de Vídeo** y arreglar los siguientes selectores/símbolos/crashes.
 
 ---
 
@@ -37,8 +37,11 @@ Este documento es el canal de comunicación entre el agente de desarrollo en **C
 4. **`fix(foundation): CFBundleGetAllBundles y NSBundle allBundles/allFrameworks` (`patches/02-...`, `patches/04-...`)**:
    - Implementado `CFBundleGetAllBundles` (evita `SIGSEGV` en `QtCore` `QLibraryInfo::path`).
    - `+[NSBundle allFrameworks]` devuelve solo bundles `.framework` (sin el bundle principal de la app); `+[NSBundle allBundles]` devuelve los no-framework (incluyendo el principal).
-5. **`fix(darwin/mach): MACH_SEND_TIMEOUT` (`patches/01-darwin-gcd-mach-net-sandbox.patch`)**:
-   - `crates/darwin/src/mach/wire.rs` ahora respeta `MACH_SEND_TIMEOUT` usando `MSG_DONTWAIT` + espera acotada cuando el socket Unix dgram está lleno (`EAGAIN`), evitando que `CrBrowserMain` se bloquee indefinidamente en `unix_wait_for_peer`.
+5. **`fix(darwin/mach,kqueue): MACH_SEND_TIMEOUT + kevent64 MACH_RCV_MSG` (`patches/01-darwin-gcd-mach-net-sandbox.patch`)**:
+   - `crates/darwin/src/mach/wire.rs` respeta `MACH_SEND_TIMEOUT` usando `MSG_DONTWAIT` + espera acotada cuando el socket Unix dgram está lleno (`EAGAIN`).
+   - `crates/darwin/src/kqueue.rs::kevent64` ahora implementa `MACH_RCV_MSG` real (recibe/drena el mensaje Mach en `(ext[0], ext[1])` con `mach_msg` no bloqueante y devuelve `mach_msg_return_t` en `event.fflags`). Antes `kevent64` descartaba `MACH_RCV_MSG`, haciendo que los 5 hilos `MessagePumpKqueue` de Chromium/TTNet girasen al 100% CPU sin drenar sus puertos y bloqueando `CrBrowserMain` (congelando la UI) en `sendmsg` (`unix_wait_for_peer`) al llenarse `max_dgram_qlen=10`.
+6. **`fix(darwin/spawn): posix_spawnattr_set_csm_np` (`patches/01-...`, `patches/04-...`)**:
+   - Implementado `posix_spawnattr_set_csm_np` (no-op aceptado en Linux, `EINVAL` si `attr == NULL`), resolviendo el `SIGSEGV at 0x0` desde `Chromium Embedded Framework+0x46093c6` al lanzar procesos helper de CEF.
 6. **`fix(corefoundation,foundation): interning de NSString ASCII cortos` (`patches/02-cf-foundation-iokit-coretext.patch`)**:
    - Interning sin tope artificial como `__NSCFConstantString` inmortal para ASCII `<= 9` bytes únicamente cuando el receptor es exactamente la clase `NSString` en `+[NSString stringWithUTF8String:]` y `+[NSString stringWithCString:encoding:]` (8-bit).
    - `+[NSMutableString stringWithUTF8String:]` y `+[NSMutableString stringWithCString:encoding:]` siempre devuelven una copia mutable nueva (verificado con test en `crates/foundation/tests/string_init.rs`); subclases de `NSString` tampoco usan el interning.

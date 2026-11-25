@@ -516,10 +516,36 @@ index a117644e..07339932 100644
  ///
  /// The block is copied, as `dispatch_async` copies one, and run through the
 diff --git a/crates/darwin/src/kqueue.rs b/crates/darwin/src/kqueue.rs
-index d641e342..633dce47 100644
+index d641e342..4a231c31 100644
 --- a/crates/darwin/src/kqueue.rs
 +++ b/crates/darwin/src/kqueue.rs
-@@ -2069,13 +2069,98 @@ fn signals_pending<B: ReadinessBackend>(state: &Queue<B>) -> bool {
+@@ -115,6 +115,7 @@ const SOCKEV_DISCONNECTED: isize = 0x2;
+ /// `MACH_RCV_MSG` in an `EVFILT_MACHPORT` registration's `fflags`: receive the
+ /// message into the event. Only `kevent64`/`kevent_qos` have room for it.
+ const MACH_RCV_MSG: u32 = 0x0000_0002;
++const MACH_RCV_TIMEOUT: u32 = 0x0000_0100;
+ 
+ /// What one `EV_ADD` recorded.
+ #[derive(Clone, Copy)]
+@@ -170,6 +171,9 @@ struct Queue<B: ReadinessBackend> {
+     /// keeps the descriptor open, so its number cannot be reused while the
+     /// host still watches it.
+     port_watch: HashMap<c_int, Arc<Receiver>>,
++    /// `kevent64` `EVFILT_MACHPORT` registrations that requested `MACH_RCV_MSG`:
++    /// `ident -> (rcv_buf, rcv_size, rcv_fflags)`.
++    mach_rcv: HashMap<usize, (u64, u64, u32)>,
+     /// Triggered `EVFILT_USER` idents, in the order they were triggered, and
+     /// the set form of the same thing - a second trigger before the first is
+     /// delivered is one event, not two.
+@@ -194,6 +198,7 @@ impl<B: ReadinessBackend> Queue<B> {
+         Self {
+             registrations: Registrations::new(),
+             port_watch: HashMap::new(),
++            mach_rcv: HashMap::new(),
+             triggered: VecDeque::new(),
+             triggered_set: HashSet::new(),
+             sources: HashMap::new(),
+@@ -2069,13 +2074,160 @@ fn signals_pending<B: ReadinessBackend>(state: &Queue<B>) -> bool {
          .any(|r| r.enabled && state.backend.signals(r.ident as i32) > r.seen)
  }
  
@@ -558,21 +584,41 @@ index d641e342..633dce47 100644
 +        crate::errno::set(libc::EINVAL);
 +        return -1;
 +    }
-+    let ch_vec: Vec<Kevent> = if nchanges == 0 {
-+        Vec::new()
++    let raw_changes: &[Kevent64] = if nchanges == 0 {
++        &[]
 +    } else {
 +        unsafe { std::slice::from_raw_parts(changes, nchanges as usize) }
-+            .iter()
-+            .map(|c| Kevent {
-+                ident: c.ident as usize,
-+                filter: c.filter,
-+                flags: c.flags,
-+                fflags: c.fflags & !MACH_RCV_MSG,
-+                data: c.data as isize,
-+                udata: c.udata as usize,
-+            })
-+            .collect()
 +    };
++    if !raw_changes.is_empty()
++        && let Some(state) = queue_of(queue)
++    {
++        let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
++        for c in raw_changes {
++            if c.filter == EVFILT_MACHPORT {
++                let ident = c.ident as usize;
++                if c.flags & EV_DELETE != 0 {
++                    state.mach_rcv.remove(&ident);
++                } else if c.flags & EV_ADD != 0 {
++                    if c.fflags & MACH_RCV_MSG != 0 {
++                        state.mach_rcv.insert(ident, (c.ext[0], c.ext[1], c.fflags));
++                    } else {
++                        state.mach_rcv.remove(&ident);
++                    }
++                }
++            }
++        }
++    }
++    let ch_vec: Vec<Kevent> = raw_changes
++        .iter()
++        .map(|c| Kevent {
++            ident: c.ident as usize,
++            filter: c.filter,
++            flags: c.flags,
++            fflags: c.fflags & !MACH_RCV_MSG,
++            data: c.data as isize,
++            udata: c.udata as usize,
++        })
++        .collect();
 +    let mut ev_vec = vec![Kevent::default(); nevents as usize];
 +    let rc = unsafe {
 +        kevent(
@@ -593,16 +639,58 @@ index d641e342..633dce47 100644
 +        )
 +    };
 +    if rc > 0 {
++        let state_arc = queue_of(queue);
 +        let out_slice = unsafe { std::slice::from_raw_parts_mut(events, rc as usize) };
 +        for (dst, src) in out_slice.iter_mut().zip(ev_vec.iter().take(rc as usize)) {
++            let mut fflags = src.fflags;
++            let mut ext = [0u64, 0u64];
++            if src.filter == EVFILT_MACHPORT
++                && (src.flags & EV_ERROR == 0)
++                && let Some(ref state_arc) = state_arc
++            {
++                let rcv_cfg = {
++                    let mut state = state_arc.lock().unwrap_or_else(|e| e.into_inner());
++                    let cfg = state.mach_rcv.get(&src.ident).copied();
++                    if src.flags & EV_ONESHOT != 0 {
++                        state.mach_rcv.remove(&src.ident);
++                    }
++                    cfg
++                };
++                if let Some((rcv_buf, rcv_size, rcv_fflags)) = rcv_cfg {
++                    let mut scratch = [0u8; 64];
++                    let (buf_ptr, buf_size) = if rcv_buf != 0 && rcv_size > 0 {
++                        (rcv_buf as *mut c_void, rcv_size.min(u32::MAX as u64) as u32)
++                    } else {
++                        (scratch.as_mut_ptr().cast::<c_void>(), scratch.len() as u32)
++                    };
++                    let rcv_name = if src.data > 0 {
++                        src.data as u32
++                    } else {
++                        src.ident as u32
++                    };
++                    let kr = unsafe {
++                        crate::mach::msg::mach_msg(
++                            buf_ptr,
++                            (rcv_fflags | MACH_RCV_TIMEOUT) as i32,
++                            0,
++                            buf_size,
++                            rcv_name,
++                            0,
++                            0,
++                        )
++                    };
++                    fflags = kr as u32;
++                    ext = [rcv_buf, rcv_size];
++                }
++            }
 +            *dst = Kevent64 {
 +                ident: src.ident as u64,
 +                filter: src.filter,
 +                flags: src.flags,
-+                fflags: src.fflags,
++                fflags,
 +                data: src.data as i64,
 +                udata: src.udata as u64,
-+                ext: [0, 0],
++                ext,
 +            };
 +        }
 +    }
