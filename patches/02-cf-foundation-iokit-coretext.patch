@@ -1,5 +1,5 @@
 diff --git a/crates/corefoundation/src/api.rs b/crates/corefoundation/src/api.rs
-index 7d2c5e9..01010b6 100644
+index 7d2c5e9a..cf490a39 100644
 --- a/crates/corefoundation/src/api.rs
 +++ b/crates/corefoundation/src/api.rs
 @@ -2293,6 +2293,197 @@ pub unsafe extern "C" fn CFStringConvertIANACharSetNameToEncoding(name: CFTypeRe
@@ -200,8 +200,44 @@ index 7d2c5e9..01010b6 100644
  /// `Boolean CFArrayContainsValue(CFArrayRef, CFRange, const void *)`, with the
  /// range flattened.
  ///
+@@ -3364,6 +3555,35 @@ pub unsafe extern "C" fn CFRunLoopSourceIsValid(source: CFTypeRef) -> Boolean {
+     unsafe { borrow::<Source>(source) }.is_some_and(|s| s.is_valid()) as Boolean
+ }
+ 
++/// `CFRunLoopSourceRef CFMachPortCreateRunLoopSource(CFAllocatorRef, CFMachPortRef, CFIndex)`
++///
++/// Returns NULL when `port` is NULL (matching CoreFoundation). For a non-NULL
++/// port, returns an inert version-0 run-loop source so callers such as Qt's
++/// `libqcocoa` can register it with `CFRunLoopAddSource` without faulting.
++pub unsafe extern "C" fn CFMachPortCreateRunLoopSource(
++    allocator: CFAllocatorRef,
++    port: CFTypeRef,
++    order: CFIndex,
++) -> CFTypeRef {
++    if port.is_null() {
++        return std::ptr::null();
++    }
++    // STUB: Mach port messages are not delivered to this run-loop source yet.
++    let context = CFRunLoopSourceContext {
++        version: 0,
++        info: std::ptr::null_mut(),
++        retain: std::ptr::null(),
++        release: std::ptr::null(),
++        copy_description: std::ptr::null(),
++        equal: std::ptr::null(),
++        hash: std::ptr::null(),
++        schedule: std::ptr::null(),
++        cancel: std::ptr::null(),
++        perform: None,
++    };
++    unsafe { CFRunLoopSourceCreate(allocator, order, &context) }
++}
++
+ pub unsafe extern "C" fn CFRunLoopAddSource(loop_: CFTypeRef, source: CFTypeRef, mode: CFTypeRef) {
+     let (Some(l), Some(s)) = (unsafe { borrow::<RunLoop>(loop_) }, unsafe {
+         borrow::<Source>(source)
 diff --git a/crates/corefoundation/src/diskarbitration.rs b/crates/corefoundation/src/diskarbitration.rs
-index 779f97a..52cc9c1 100644
+index 779f97a4..52cc9c12 100644
 --- a/crates/corefoundation/src/diskarbitration.rs
 +++ b/crates/corefoundation/src/diskarbitration.rs
 @@ -51,11 +51,60 @@ pub unsafe extern "C" fn disk_copy_description(disk: CFTypeRef) -> CFTypeRef {
@@ -266,10 +302,18 @@ index 779f97a..52cc9c1 100644
  }
  
 diff --git a/crates/corefoundation/src/lib.rs b/crates/corefoundation/src/lib.rs
-index 5613a60..c2e6b8b 100644
+index 5613a609..9c0c4a0a 100644
 --- a/crates/corefoundation/src/lib.rs
 +++ b/crates/corefoundation/src/lib.rs
-@@ -211,6 +211,22 @@ exports::exports! {
+@@ -185,6 +185,7 @@ exports::exports! {
+         "CFRunLoopSourceSignal" => api::CFRunLoopSourceSignal,
+         "CFRunLoopSourceInvalidate" => api::CFRunLoopSourceInvalidate,
+         "CFRunLoopSourceIsValid" => api::CFRunLoopSourceIsValid,
++        "CFMachPortCreateRunLoopSource" => api::CFMachPortCreateRunLoopSource,
+         "CFRunLoopAddSource" => api::CFRunLoopAddSource,
+         "CFRunLoopObserverCreate" => api::CFRunLoopObserverCreate,
+         "CFRunLoopObserverInvalidate" => api::CFRunLoopObserverInvalidate,
+@@ -211,6 +212,22 @@ exports::exports! {
          "CFStringGetSystemEncoding" => api::CFStringGetSystemEncoding,
          "CFStringConvertWindowsCodepageToEncoding" => api::CFStringConvertWindowsCodepageToEncoding,
          "CFStringConvertIANACharSetNameToEncoding" => api::CFStringConvertIANACharSetNameToEncoding,
@@ -293,7 +337,7 @@ index 5613a60..c2e6b8b 100644
          "CFArrayAppendArray" => api::CFArrayAppendArray,
          "CFRunLoopRemoveSource" => api::CFRunLoopRemoveSource,
 diff --git a/crates/corefoundation/src/sysconfig.rs b/crates/corefoundation/src/sysconfig.rs
-index 295160a..cc95229 100644
+index 295160ae..cc952296 100644
 --- a/crates/corefoundation/src/sysconfig.rs
 +++ b/crates/corefoundation/src/sysconfig.rs
 @@ -832,9 +832,18 @@ const KEY_STRINGS: &[(&str, &str)] = &[
@@ -345,7 +389,7 @@ index 295160a..cc95229 100644
          "SCNetworkReachabilityCreateWithName" => SCNetworkReachabilityCreateWithName,
          "SCNetworkReachabilityCreateWithAddressPair" => SCNetworkReachabilityCreateWithAddressPair,
 diff --git a/crates/coretext/src/lib.rs b/crates/coretext/src/lib.rs
-index 6877de8..2473c74 100644
+index 6877de80..2473c748 100644
 --- a/crates/coretext/src/lib.rs
 +++ b/crates/coretext/src/lib.rs
 @@ -1112,6 +1112,33 @@ pub unsafe extern "C" fn CTFontManagerCreateFontDescriptorFromData(data: CFTypeR
@@ -399,7 +443,7 @@ index 6877de8..2473c74 100644
          "CTFontDescriptorCreateWithNameAndSize" => CTFontDescriptorCreateWithNameAndSize,
          "CTFontDescriptorCreateMatchingFontDescriptors" => CTFontDescriptorCreateMatchingFontDescriptors,
 diff --git a/crates/foundation/src/bundle.rs b/crates/foundation/src/bundle.rs
-index ef770d5..24e38ba 100644
+index ef770d50..24e38ba0 100644
 --- a/crates/foundation/src/bundle.rs
 +++ b/crates/foundation/src/bundle.rs
 @@ -475,6 +475,28 @@ impl Layout {
@@ -591,7 +635,7 @@ index ef770d5..24e38ba 100644
          class_methods!(class, {
              "mainBundle" => main_bundle, c"@16@0:8";
 diff --git a/crates/foundation/src/collections.rs b/crates/foundation/src/collections.rs
-index c40a60f..20d67cf 100644
+index c40a60fa..20d67cf9 100644
 --- a/crates/foundation/src/collections.rs
 +++ b/crates/foundation/src/collections.rs
 @@ -2143,6 +2143,92 @@ unsafe extern "C" fn data_init_with_base64_string(
@@ -700,7 +744,7 @@ index c40a60f..20d67cf 100644
          "initWithBytesNoCopy:length:" => data_init_no_copy, c"@32@0:8^v16Q24";
          "initWithBytesNoCopy:length:freeWhenDone:" => data_init_no_copy_free, c"@36@0:8^v16Q24B32";
 diff --git a/crates/foundation/src/string.rs b/crates/foundation/src/string.rs
-index 2764ea1..09a5281 100644
+index 2764ea14..09a52818 100644
 --- a/crates/foundation/src/string.rs
 +++ b/crates/foundation/src/string.rs
 @@ -961,6 +961,73 @@ unsafe extern "C" fn range_of_character(receiver: Id, sel: Sel, set: Id) -> NSRa
@@ -859,7 +903,7 @@ index 2764ea1..09a5281 100644
          "decomposedStringWithCanonicalMapping" => decomposed_canonical, c"@16@0:8";
          "precomposedStringWithCompatibilityMapping" => precomposed_compatibility, c"@16@0:8";
 diff --git a/crates/foundation/src/timer.rs b/crates/foundation/src/timer.rs
-index 17e80c0..1e72ee1 100644
+index 17e80c09..1e72ee19 100644
 --- a/crates/foundation/src/timer.rs
 +++ b/crates/foundation/src/timer.rs
 @@ -287,13 +287,13 @@ fn make(
@@ -1100,7 +1144,7 @@ index 17e80c0..1e72ee1 100644
          "currentMode" => current_mode, c"@16@0:8";
      });
 diff --git a/crates/foundation/src/timezone.rs b/crates/foundation/src/timezone.rs
-index 2f5a978..928440f 100644
+index 2f5a9784..928440f4 100644
 --- a/crates/foundation/src/timezone.rs
 +++ b/crates/foundation/src/timezone.rs
 @@ -252,12 +252,23 @@ unsafe extern "C" fn name(receiver: Id, _sel: Sel) -> Id {
@@ -1128,7 +1172,7 @@ index 2f5a978..928440f 100644
          "timeZoneWithName:" => time_zone_with_name, c"@24@0:8@16";
          "timeZoneWithAbbreviation:" => time_zone_with_abbreviation, c"@24@0:8@16";
 diff --git a/crates/iokit/src/power.rs b/crates/iokit/src/power.rs
-index 8029edf..08b77be 100644
+index 8029edf8..08b77bef 100644
 --- a/crates/iokit/src/power.rs
 +++ b/crates/iokit/src/power.rs
 @@ -90,10 +90,54 @@ pub unsafe extern "C" fn IOPMAssertionRelease(_assertion: u32) -> i32 {
@@ -1187,7 +1231,7 @@ index 8029edf..08b77be 100644
          "IOPSCopyPowerSourcesList" => IOPSCopyPowerSourcesList,
          "IOPSGetPowerSourceDescription" => IOPSGetPowerSourceDescription,
 diff --git a/crates/iokit/src/registry.rs b/crates/iokit/src/registry.rs
-index 1264cf2..bc33985 100644
+index 1264cf20..bc339856 100644
 --- a/crates/iokit/src/registry.rs
 +++ b/crates/iokit/src/registry.rs
 @@ -728,10 +728,30 @@ pub unsafe extern "C" fn IODisplayCreateInfoDictionary(
