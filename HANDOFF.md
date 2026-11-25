@@ -48,6 +48,8 @@ Este documento es el canal de comunicación entre el agente de desarrollo en **C
    - Evita el double-free de Qt 6.2.2 `QRhiMetal` al liberar `[NSString stringWithUTF8String:"main0"]`.
 8. **`fix(appkit): CALayer geometryFlipped/opaque/autoresizingMask y NSWindow keyViewSelectionDirection` (`patches/04-appkit-coregraphics-globals.patch`)**:
    - Añadidas propiedades reales `isGeometryFlipped`/`setGeometryFlipped:`/`contentsAreFlipped`, `isOpaque`/`setOpaque:`, `needsDisplayOnBoundsChange`/`setNeedsDisplayOnBoundsChange:`, `autoresizingMask`/`setAutoresizingMask:` en `CALayer` y `keyViewSelectionDirection` (más helpers de key-view loop marcados `STUB:`) en `NSWindow`, necesarios al desbloquear el renderizado de CEF.
+9. **`fix(security): SecureTransport SSL* y SecPKCS12Import para libqsecuretransportbackend.dylib` (`patches/03-...`, `patches/04-...`)**:
+   - Añadido `crates/security/src/ssl.rs` con `SSLContext` CF real (creación, cifrados soportados, setters/getters de estado/versión) y claves `kSecImport*`; handshake/read/write devuelven `errSSLClosedAbort` (`STUB:`) en lugar de crashear en `0x0` cuando Qt abre sockets TLS al crear un proyecto.
 
 ---
 

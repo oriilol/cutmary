@@ -1449,7 +1449,7 @@ index f5fe44f7..38554e1b 100644
          "launchApplicationAtURL:options:configuration:error:" => launch_application,
              c"@48@0:8@16Q24@32^@40";
 diff --git a/crates/rosemary/src/abi/table.rs b/crates/rosemary/src/abi/table.rs
-index 8f85a506..6be402cc 100644
+index 8f85a506..090a2936 100644
 --- a/crates/rosemary/src/abi/table.rs
 +++ b/crates/rosemary/src/abi/table.rs
 @@ -437,6 +437,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
@@ -1460,7 +1460,41 @@ index 8f85a506..6be402cc 100644
      sig!("CFBundleLoadExecutable", U8, P),
      sig!("CFBundleGetFunctionPointerForName", P, P, P),
      sig!("CFBundleGetDataPointerForName", P, P, P),
-@@ -3265,6 +3266,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -1615,6 +1616,33 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+     sig!("SecCertificateCreateWithData", P, P, P),
+     sig!("SecPolicyCreateBasicX509", P),
+     sig!("SecTrustCreateWithCertificates", I32, P, P, P),
++    sig!("SSLCreateContext", P, P, I32, I32),
++    sig!("SSLClose", I32, P),
++    sig!("SSLGetSessionState", I32, P, P),
++    sig!("SSLGetNumberSupportedCiphers", I32, P, P),
++    sig!("SSLGetSupportedCiphers", I32, P, P, P),
++    sig!("SSLSetEnabledCiphers", I32, P, P, U64),
++    sig!("SSLSetIOFuncs", I32, P, P, P),
++    sig!("SSLSetConnection", I32, P, P),
++    sig!("SSLSetPeerDomainName", I32, P, P, U64),
++    sig!("SSLSetProtocolVersionMin", I32, P, I32),
++    sig!("SSLSetProtocolVersionMax", I32, P, I32),
++    sig!("SSLSetSessionOption", I32, P, I32, U8),
++    sig!("SSLSetCertificate", I32, P, P),
++    sig!("SSLSetClientSideAuthenticate", I32, P, I32),
++    sig!("SSLSetDiffieHellmanParams", I32, P, P, U64),
++    sig!("SSLSetALPNProtocols", I32, P, P),
++    sig!("SSLCopyALPNProtocols", I32, P, P),
++    sig!("SSLCopyPeerTrust", I32, P, P),
++    sig!("SSLGetNegotiatedCipher", I32, P, P),
++    sig!("SSLGetNegotiatedProtocolVersion", I32, P, P),
++    sig!("SSLHandshake", I32, P),
++    sig!("SSLRead", I32, P, P, U64, P),
++    sig!("SSLWrite", I32, P, P, U64, P),
++    sig!("SecPKCS12Import", I32, P, P, P),
++    sig!("SecKeychainCreate", I32, P, U32, P, U8, P, P),
++    sig!("SecKeychainDelete", I32, P),
++    sig!("SecKeychainSetSettings", I32, P, P),
+     sig!("SecTrustSetOptions", I32, P, U32),
+     sig!("SecTrustEvaluate", I32, P, P),
+     sig!("SecRandomCopyBytes", I32, P, U64, P),
+@@ -3265,6 +3293,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
      sig!("posix_spawnattr_setpgroup", I32, P, I32),
      sig!("posix_spawnattr_setbinpref_np", I32, P, U64, P, P),
      sig!("posix_spawnattr_setarchpref_np", I32, P, U64, P, P, P),

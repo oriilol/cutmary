@@ -1,5 +1,5 @@
 diff --git a/crates/security/src/codesign.rs b/crates/security/src/codesign.rs
-index 179e028..cdfc2f4 100644
+index 179e028e..cdfc2f4a 100644
 --- a/crates/security/src/codesign.rs
 +++ b/crates/security/src/codesign.rs
 @@ -37,9 +37,17 @@ const CSSLOT_CODEDIRECTORY: u32 = 0;
@@ -158,7 +158,7 @@ index 179e028..cdfc2f4 100644
  }
  
 diff --git a/crates/security/src/keychain.rs b/crates/security/src/keychain.rs
-index 5d855a5..52f549a 100644
+index 5d855a56..52f549ae 100644
 --- a/crates/security/src/keychain.rs
 +++ b/crates/security/src/keychain.rs
 @@ -50,6 +50,13 @@ pub const KEYS: &[(&str, &str)] = &[
@@ -305,10 +305,34 @@ index 5d855a5..52f549a 100644
  }
  
 diff --git a/crates/security/src/lib.rs b/crates/security/src/lib.rs
-index 2a805b1..b0e6d6b 100644
+index 2a805b1b..43eff63d 100644
 --- a/crates/security/src/lib.rs
 +++ b/crates/security/src/lib.rs
-@@ -35,5 +35,8 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+@@ -1,6 +1,7 @@
+ pub mod codesign;
+ pub mod keychain;
+ mod requirement;
++pub mod ssl;
+ pub mod status;
+ pub mod task;
+ pub mod trust;
+@@ -8,6 +9,7 @@ pub mod trust;
+ exports::group! {
+     codesign,
+     keychain,
++    ssl,
+     status,
+     task,
+     trust,
+@@ -19,6 +21,7 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+     let mut symbols: Vec<_> = keychain::KEYS
+         .iter()
+         .chain(trust::KEYS)
++        .chain(ssl::KEYS)
+         .map(|(symbol, text)| {
+             (
+                 (*symbol).to_string(),
+@@ -35,5 +38,8 @@ pub fn data_symbols() -> Vec<(String, u64)> {
          random.to_string(),
          corefoundation::base::global_cell(random, 0),
      ));
@@ -317,8 +341,353 @@ index 2a805b1..b0e6d6b 100644
 +    }
      symbols
  }
+diff --git a/crates/security/src/ssl.rs b/crates/security/src/ssl.rs
+new file mode 100644
+index 00000000..fd16a498
+--- /dev/null
++++ b/crates/security/src/ssl.rs
+@@ -0,0 +1,339 @@
++//! SecureTransport (`SSL*`) and PKCS#12 import support for Qt's
++//! `libqsecuretransportbackend.dylib`.
++//!
++//! STUB: Context creation, cipher enumeration, and configuration setters keep
++//! real state on a CoreFoundation-allocated `SSLContext` object, while
++//! handshake/read/write currently fail cleanly with `errSSLClosedAbort`
++//! instead of jumping through an unbound symbol at 0x0.
++
++#![allow(non_snake_case)]
++
++use std::ffi::{c_char, c_int, c_void};
++use std::sync::OnceLock;
++
++use corefoundation::base::CFTypeRef;
++use objc::class::Class;
++
++const ERR_SEC_SUCCESS: i32 = 0;
++const ERR_SEC_PARAM: i32 = -50;
++const ERR_SEC_UNIMPLEMENTED: i32 = -4;
++const ERR_SSL_CLOSED_ABORT: i32 = -9806;
++
++/// `kSecImport*` global string keys used by `SecPKCS12Import`.
++pub const KEYS: &[(&str, &str)] = &[
++    ("_kSecImportExportKeychain", "keychain"),
++    ("_kSecImportExportPassphrase", "passphrase"),
++    ("_kSecImportItemCertChain", "chain"),
++    ("_kSecImportItemIdentity", "identity"),
++];
++
++/// Standard TLS 1.2 / 1.3 cipher suite IDs reported by `SSLGetSupportedCiphers`.
++const SUPPORTED_CIPHERS: &[u16] = &[
++    0x1301, // TLS_AES_128_GCM_SHA256
++    0x1302, // TLS_AES_256_GCM_SHA384
++    0x1303, // TLS_CHACHA20_POLY1305_SHA256
++    0xC02F, // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
++    0xC030, // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
++    0xC02B, // TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
++    0xC02C, // TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
++];
++
++#[repr(C)]
++struct SslContext {
++    _isa: *const Class,
++    state: i32,
++    min_version: i32,
++    max_version: i32,
++    negotiated_version: i32,
++    negotiated_cipher: u16,
++}
++
++fn ssl_context_class() -> &'static Class {
++    static CLASS: OnceLock<usize> = OnceLock::new();
++    let ptr = *CLASS.get_or_init(|| {
++        let class = corefoundation::base::register(
++            c"RosemarySSLContext",
++            None,
++            std::mem::size_of::<SslContext>(),
++            false,
++        );
++        objc::class::ptr(class) as usize
++    });
++    // SAFETY: registered once for the life of the process.
++    unsafe { &*(ptr as *const Class) }
++}
++
++pub unsafe extern "C" fn SSLCreateContext(
++    _alloc: CFTypeRef,
++    _protocol_side: i32,
++    _connection_type: i32,
++) -> CFTypeRef {
++    let ctx: *mut SslContext = unsafe { corefoundation::base::allocate(ssl_context_class()) };
++    if ctx.is_null() {
++        return std::ptr::null();
++    }
++    unsafe {
++        (*ctx).state = 0; // kSSLIdle
++        (*ctx).min_version = 7; // kTLSProtocol12
++        (*ctx).max_version = 10; // kTLSProtocol13
++        (*ctx).negotiated_version = 0;
++        (*ctx).negotiated_cipher = 0;
++    }
++    ctx as CFTypeRef
++}
++
++pub unsafe extern "C" fn SSLClose(ctx: CFTypeRef) -> i32 {
++    if ctx.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    unsafe { (*(ctx as *mut SslContext)).state = 3 }; // kSSLClosed
++    ERR_SEC_SUCCESS
++}
++
++pub unsafe extern "C" fn SSLGetSessionState(ctx: CFTypeRef, state: *mut i32) -> i32 {
++    if ctx.is_null() || state.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    unsafe { *state = (*(ctx as *const SslContext)).state };
++    ERR_SEC_SUCCESS
++}
++
++pub unsafe extern "C" fn SSLGetNumberSupportedCiphers(ctx: CFTypeRef, num_ciphers: *mut usize) -> i32 {
++    if ctx.is_null() || num_ciphers.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    unsafe { *num_ciphers = SUPPORTED_CIPHERS.len() };
++    ERR_SEC_SUCCESS
++}
++
++pub unsafe extern "C" fn SSLGetSupportedCiphers(
++    ctx: CFTypeRef,
++    ciphers: *mut u16,
++    num_ciphers: *mut usize,
++) -> i32 {
++    if ctx.is_null() || ciphers.is_null() || num_ciphers.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    let cap = unsafe { *num_ciphers };
++    let count = cap.min(SUPPORTED_CIPHERS.len());
++    unsafe {
++        std::ptr::copy_nonoverlapping(SUPPORTED_CIPHERS.as_ptr(), ciphers, count);
++        *num_ciphers = count;
++    }
++    ERR_SEC_SUCCESS
++}
++
++pub unsafe extern "C" fn SSLSetEnabledCiphers(
++    ctx: CFTypeRef,
++    _ciphers: *const u16,
++    _num_ciphers: usize,
++) -> i32 {
++    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++}
++
++pub unsafe extern "C" fn SSLSetIOFuncs(
++    ctx: CFTypeRef,
++    _read_func: *const c_void,
++    _write_func: *const c_void,
++) -> i32 {
++    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++}
++
++pub unsafe extern "C" fn SSLSetConnection(ctx: CFTypeRef, _connection: *const c_void) -> i32 {
++    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++}
++
++pub unsafe extern "C" fn SSLSetPeerDomainName(
++    ctx: CFTypeRef,
++    _peer_name: *const c_char,
++    _peer_name_len: usize,
++) -> i32 {
++    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++}
++
++pub unsafe extern "C" fn SSLSetProtocolVersionMin(ctx: CFTypeRef, min_version: i32) -> i32 {
++    if ctx.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    unsafe { (*(ctx as *mut SslContext)).min_version = min_version };
++    ERR_SEC_SUCCESS
++}
++
++pub unsafe extern "C" fn SSLSetProtocolVersionMax(ctx: CFTypeRef, max_version: i32) -> i32 {
++    if ctx.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    unsafe { (*(ctx as *mut SslContext)).max_version = max_version };
++    ERR_SEC_SUCCESS
++}
++
++pub unsafe extern "C" fn SSLSetSessionOption(
++    ctx: CFTypeRef,
++    _option: i32,
++    _value: u8,
++) -> i32 {
++    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++}
++
++pub unsafe extern "C" fn SSLSetCertificate(ctx: CFTypeRef, _cert_refs: CFTypeRef) -> i32 {
++    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++}
++
++pub unsafe extern "C" fn SSLSetClientSideAuthenticate(ctx: CFTypeRef, _auth: i32) -> i32 {
++    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++}
++
++pub unsafe extern "C" fn SSLSetDiffieHellmanParams(
++    ctx: CFTypeRef,
++    _dh_params: *const c_void,
++    _dh_params_len: usize,
++) -> i32 {
++    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++}
++
++pub unsafe extern "C" fn SSLSetALPNProtocols(ctx: CFTypeRef, _protocols: CFTypeRef) -> i32 {
++    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++}
++
++pub unsafe extern "C" fn SSLCopyALPNProtocols(
++    ctx: CFTypeRef,
++    protocols: *mut CFTypeRef,
++) -> i32 {
++    if ctx.is_null() || protocols.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    unsafe { *protocols = std::ptr::null() };
++    ERR_SEC_SUCCESS
++}
++
++pub unsafe extern "C" fn SSLCopyPeerTrust(ctx: CFTypeRef, trust: *mut CFTypeRef) -> i32 {
++    if ctx.is_null() || trust.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    unsafe { *trust = std::ptr::null() };
++    ERR_SEC_SUCCESS
++}
++
++pub unsafe extern "C" fn SSLGetNegotiatedCipher(ctx: CFTypeRef, cipher: *mut u16) -> i32 {
++    if ctx.is_null() || cipher.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    unsafe { *cipher = (*(ctx as *const SslContext)).negotiated_cipher };
++    ERR_SEC_SUCCESS
++}
++
++pub unsafe extern "C" fn SSLGetNegotiatedProtocolVersion(
++    ctx: CFTypeRef,
++    protocol: *mut i32,
++) -> i32 {
++    if ctx.is_null() || protocol.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    unsafe { *protocol = (*(ctx as *const SslContext)).negotiated_version };
++    ERR_SEC_SUCCESS
++}
++
++// STUB: SecureTransport TLS handshake not yet wired to rustls.
++pub unsafe extern "C" fn SSLHandshake(ctx: CFTypeRef) -> i32 {
++    if ctx.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    unsafe { (*(ctx as *mut SslContext)).state = 4 }; // kSSLAborted
++    ERR_SSL_CLOSED_ABORT
++}
++
++// STUB: SecureTransport TLS read not yet wired to rustls.
++pub unsafe extern "C" fn SSLRead(
++    ctx: CFTypeRef,
++    _data: *mut c_void,
++    _data_len: usize,
++    processed: *mut usize,
++) -> i32 {
++    if !processed.is_null() {
++        unsafe { *processed = 0 };
++    }
++    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SSL_CLOSED_ABORT }
++}
++
++// STUB: SecureTransport TLS write not yet wired to rustls.
++pub unsafe extern "C" fn SSLWrite(
++    ctx: CFTypeRef,
++    _data: *const c_void,
++    _data_len: usize,
++    processed: *mut usize,
++) -> i32 {
++    if !processed.is_null() {
++        unsafe { *processed = 0 };
++    }
++    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SSL_CLOSED_ABORT }
++}
++
++// STUB: PKCS#12 import not yet implemented.
++pub unsafe extern "C" fn SecPKCS12Import(
++    _pkcs12_data: CFTypeRef,
++    _options: CFTypeRef,
++    items: *mut CFTypeRef,
++) -> i32 {
++    if !items.is_null() {
++        unsafe { *items = std::ptr::null() };
++    }
++    ERR_SEC_UNIMPLEMENTED
++}
++
++// STUB: legacy keychain creation/deletion/settings used by Qt SecureTransport backend.
++pub unsafe extern "C" fn SecKeychainCreate(
++    _path_name: *const c_char,
++    _password_len: u32,
++    _password: *const c_void,
++    _prompt_user: u8,
++    _initial_access: CFTypeRef,
++    keychain: *mut CFTypeRef,
++) -> c_int {
++    if !keychain.is_null() {
++        unsafe { *keychain = std::ptr::null() };
++    }
++    ERR_SEC_UNIMPLEMENTED
++}
++
++pub unsafe extern "C" fn SecKeychainDelete(_keychain_or_array: CFTypeRef) -> c_int {
++    ERR_SEC_UNIMPLEMENTED
++}
++
++pub unsafe extern "C" fn SecKeychainSetSettings(
++    _keychain: CFTypeRef,
++    _new_settings: *const c_void,
++) -> c_int {
++    ERR_SEC_UNIMPLEMENTED
++}
++
++exports::exports! {
++    functions {
++        "SSLCreateContext" => SSLCreateContext,
++        "SSLClose" => SSLClose,
++        "SSLGetSessionState" => SSLGetSessionState,
++        "SSLGetNumberSupportedCiphers" => SSLGetNumberSupportedCiphers,
++        "SSLGetSupportedCiphers" => SSLGetSupportedCiphers,
++        "SSLSetEnabledCiphers" => SSLSetEnabledCiphers,
++        "SSLSetIOFuncs" => SSLSetIOFuncs,
++        "SSLSetConnection" => SSLSetConnection,
++        "SSLSetPeerDomainName" => SSLSetPeerDomainName,
++        "SSLSetProtocolVersionMin" => SSLSetProtocolVersionMin,
++        "SSLSetProtocolVersionMax" => SSLSetProtocolVersionMax,
++        "SSLSetSessionOption" => SSLSetSessionOption,
++        "SSLSetCertificate" => SSLSetCertificate,
++        "SSLSetClientSideAuthenticate" => SSLSetClientSideAuthenticate,
++        "SSLSetDiffieHellmanParams" => SSLSetDiffieHellmanParams,
++        "SSLSetALPNProtocols" => SSLSetALPNProtocols,
++        "SSLCopyALPNProtocols" => SSLCopyALPNProtocols,
++        "SSLCopyPeerTrust" => SSLCopyPeerTrust,
++        "SSLGetNegotiatedCipher" => SSLGetNegotiatedCipher,
++        "SSLGetNegotiatedProtocolVersion" => SSLGetNegotiatedProtocolVersion,
++        "SSLHandshake" => SSLHandshake,
++        "SSLRead" => SSLRead,
++        "SSLWrite" => SSLWrite,
++        "SecPKCS12Import" => SecPKCS12Import,
++        "SecKeychainCreate" => SecKeychainCreate,
++        "SecKeychainDelete" => SecKeychainDelete,
++        "SecKeychainSetSettings" => SecKeychainSetSettings,
++    }
++}
 diff --git a/crates/security/src/trust.rs b/crates/security/src/trust.rs
-index 498fb63..bbd4a32 100644
+index 498fb631..bbd4a324 100644
 --- a/crates/security/src/trust.rs
 +++ b/crates/security/src/trust.rs
 @@ -61,9 +61,16 @@ enum Payload {
