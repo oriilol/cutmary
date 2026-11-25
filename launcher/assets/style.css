@@ -1,0 +1,27 @@
+/* Cutmary launcher styling on top of Libadwaita. */
+.cutmary-hero-icon {
+  -gtk-icon-shadow: 0 6px 18px alpha(black, 0.35);
+}
+
+.cutmary-title {
+  font-size: 30pt;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.cutmary-cta {
+  min-width: 220px;
+  min-height: 46px;
+  font-size: 13pt;
+  font-weight: 700;
+}
+
+.cutmary-progress {
+  min-width: 360px;
+}
+
+.cutmary-log {
+  font-family: monospace;
+  font-size: 9.5pt;
+  padding: 12px;
+}
