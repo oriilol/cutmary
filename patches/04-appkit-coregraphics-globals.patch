@@ -1264,6 +1264,18 @@ index f5fe44f7..38554e1b 100644
          "runningApplications" => workspace_running_applications, c"@16@0:8";
          "launchApplicationAtURL:options:configuration:error:" => launch_application,
              c"@48@0:8@16Q24@32^@40";
+diff --git a/crates/rosemary/src/abi/table.rs b/crates/rosemary/src/abi/table.rs
+index 8f85a506..a0b43c95 100644
+--- a/crates/rosemary/src/abi/table.rs
++++ b/crates/rosemary/src/abi/table.rs
+@@ -437,6 +437,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+     sig!("CFBundleGetIdentifier", P, P),
+     sig!("CFBundleGetInfoDictionary", P, P),
+     sig!("CFBundleGetMainBundle", P),
++    sig!("CFBundleGetAllBundles", P),
+     sig!("CFBundleLoadExecutable", U8, P),
+     sig!("CFBundleGetFunctionPointerForName", P, P, P),
+     sig!("CFBundleGetDataPointerForName", P, P, P),
 diff --git a/crates/rosemary/src/fault.rs b/crates/rosemary/src/fault.rs
 index 8d6b8e84..95a0de52 100644
 --- a/crates/rosemary/src/fault.rs

@@ -443,7 +443,7 @@ index 6877de80..2473c748 100644
          "CTFontDescriptorCreateWithNameAndSize" => CTFontDescriptorCreateWithNameAndSize,
          "CTFontDescriptorCreateMatchingFontDescriptors" => CTFontDescriptorCreateMatchingFontDescriptors,
 diff --git a/crates/foundation/src/bundle.rs b/crates/foundation/src/bundle.rs
-index ef770d50..24e38ba0 100644
+index ef770d50..369d3cdf 100644
 --- a/crates/foundation/src/bundle.rs
 +++ b/crates/foundation/src/bundle.rs
 @@ -475,6 +475,28 @@ impl Layout {
@@ -475,7 +475,74 @@ index ef770d50..24e38ba0 100644
      /// The main nib, if the `Info.plist` names one and it is there.
      ///
      /// `.nib` and `.storyboardc` are both directories in a modern bundle and a
-@@ -1953,6 +1975,106 @@ pub(crate) mod class {
+@@ -529,6 +551,13 @@ pub mod cf {
+         super::class::main_object()
+     }
+ 
++    /// `CFArrayRef CFBundleGetAllBundles(void)`
++    ///
++    /// A `Get`, returning an autoreleased array of all known bundles.
++    unsafe extern "C" fn CFBundleGetAllBundles() -> Id {
++        super::class::all_bundles_array()
++    }
++
+     /// `CFURLRef CFBundleCopyResourceURL(CFBundleRef, CFStringRef name,
+     /// CFStringRef type, CFStringRef subDirName)`
+     ///
+@@ -1021,6 +1050,7 @@ pub mod cf {
+         functions {
+             "CFBundleCopyLocalizedString" => CFBundleCopyLocalizedString,
+             "CFBundleGetMainBundle" => CFBundleGetMainBundle,
++            "CFBundleGetAllBundles" => CFBundleGetAllBundles,
+             "CFBundleCopyResourceURL" => CFBundleCopyResourceURL,
+             "CFBundleCopyExecutableURL" => CFBundleCopyExecutableURL,
+             "CFBundleCopyBundleURL" => CFBundleCopyBundleURL,
+@@ -1429,6 +1459,44 @@ pub(crate) mod class {
+             .map_or(std::ptr::null_mut(), |object| object as Id)
+     }
+ 
++    /// An autoreleased array of all known `NSBundle` / `CFBundleRef` objects.
++    pub(crate) fn all_bundles_array() -> Id {
++        use corefoundation::base::CFTypeRef;
++        let mut items: Vec<CFTypeRef> = Vec::new();
++        let main = main_object();
++        if !main.is_null() {
++            items.push(main as CFTypeRef);
++        }
++        {
++            let interned = INTERNED.lock().unwrap_or_else(|e| e.into_inner());
++            for (_, object) in interned.iter() {
++                let ptr = *object as CFTypeRef;
++                if !ptr.is_null() && !items.contains(&ptr) {
++                    items.push(ptr);
++                }
++            }
++        }
++        {
++            let provided = PROVIDED.lock().unwrap_or_else(|e| e.into_inner());
++            for (_, object) in provided.iter() {
++                let ptr = *object as CFTypeRef;
++                if !ptr.is_null() && !items.contains(&ptr) {
++                    items.push(ptr);
++                }
++            }
++        }
++        let array = corefoundation::collections::new_array(
++            &items,
++            corefoundation::callbacks::Policy::from_type_callbacks(),
++            false,
++        );
++        unsafe { corefoundation::api::CFAutorelease(array) as Id }
++    }
++
++    unsafe extern "C" fn all_bundles(_class: Id, _sel: Sel) -> Id {
++        all_bundles_array()
++    }
++
+     /// One `NSBundle` per bundle directory for the life of the process, as
+     /// Apple's: a program compares bundles by identity.
+     fn interned(class: Id, layout: super::Layout) -> Id {
+@@ -1953,6 +2021,106 @@ pub(crate) mod class {
          path(unsafe { layout_of(receiver) }.and_then(|b| b.resource_in(name, kind, directory)))
      }
  
@@ -582,7 +649,7 @@ index ef770d50..24e38ba0 100644
      /// `-infoDictionary`: the whole `Info.plist` as objects.
      ///
      /// This was refused until `crate::objectify` existed, and the reason is
-@@ -1972,6 +2094,18 @@ pub(crate) mod class {
+@@ -1972,6 +2140,18 @@ pub(crate) mod class {
          std::ptr::null()
      }
  
@@ -601,7 +668,7 @@ index ef770d50..24e38ba0 100644
      pub(crate) fn install() {
          let class =
              corefoundation::base::register(c"NSBundle", None, std::mem::size_of::<Body>(), false);
-@@ -1980,6 +2114,9 @@ pub(crate) mod class {
+@@ -1980,6 +2160,9 @@ pub(crate) mod class {
              "bundleURL" => bundle_url, c"@16@0:8";
              "resourceURL" => resource_url, c"@16@0:8";
              "executableURL" => executable_url, c"@16@0:8";
@@ -611,7 +678,7 @@ index ef770d50..24e38ba0 100644
              "resourcePath" => resource_path, c"@16@0:8";
              "executablePath" => executable_path, c"@16@0:8";
              "executableArchitectures" => executable_architectures, c"@16@0:8";
-@@ -1991,7 +2128,12 @@ pub(crate) mod class {
+@@ -1991,7 +2174,12 @@ pub(crate) mod class {
              "pathForResource:ofType:" => path_for_resource, c"@32@0:8@16@24";
              "URLForResource:withExtension:" => url_for_resource, c"@32@0:8@16@24";
              "pathForResource:ofType:inDirectory:" => path_for_resource_in_directory, c"@40@0:8@16@24@32";
@@ -624,7 +691,7 @@ index ef770d50..24e38ba0 100644
              "executableName" => executable_name, c"*16@0:8";
              "localizedStringForKey:value:table:" => localized_string_for_key, c"@40@0:8@16@24@32";
              "preferredLocalizations" => preferred_localizations, c"@16@0:8";
-@@ -2001,7 +2143,8 @@ pub(crate) mod class {
+@@ -2001,10 +2189,13 @@ pub(crate) mod class {
              "classNamed:" => class_named, c"#24@0:8@16";
              "principalClass" => principal_class, c"#16@0:8";
              "localizations" => localizations, c"@16@0:8";
@@ -634,6 +701,11 @@ index ef770d50..24e38ba0 100644
          });
          class_methods!(class, {
              "mainBundle" => main_bundle, c"@16@0:8";
++            "allBundles" => all_bundles, c"@16@0:8";
++            "allFrameworks" => all_bundles, c"@16@0:8";
+             "bundleForClass:" => bundle_for_class, c"@24@0:8#16";
+             "pathsForResourcesOfType:inDirectory:" => class_paths_for_resources_of_type, c"@32@0:8@16@24";
+             "bundleWithPath:" => bundle_with_path, c"@24@0:8@16";
 diff --git a/crates/foundation/src/collections.rs b/crates/foundation/src/collections.rs
 index c40a60fa..4fcb3669 100644
 --- a/crates/foundation/src/collections.rs
