@@ -4654,20 +4654,23 @@ index e3039156..b4c5fa9e 100644
              "newFence" => new_fence, c"@16@0:8";
              "newEvent" => new_event, c"@16@0:8";
 diff --git a/crates/metal/src/swapchain/mod.rs b/crates/metal/src/swapchain/mod.rs
-index 1d278874..fd7df756 100644
+index 1d278874..c89fd69d 100644
 --- a/crates/metal/src/swapchain/mod.rs
 +++ b/crates/metal/src/swapchain/mod.rs
-@@ -293,6 +293,9 @@ struct Swapchain {
+@@ -293,6 +293,12 @@ struct Swapchain {
      /// For a window whose surface shows its alpha, the pass that makes its
      /// content opaque and rounds its corners. `None` presents opaque.
      corners: Option<corners::Corners>,
 +    /// A window the guest made non-opaque: its content's alpha reaches the
 +    /// compositor unsealed, as a translucent macOS window's does.
 +    see_through: bool,
++    /// Whether this swapchain has presented since it was made, for
++    /// `ROSEMARY_METAL_STATS` to time a window's first frame.
++    first_presented: bool,
      pool: vk::CommandPool,
      frames: Vec<Frame>,
      frame: usize,
-@@ -1430,7 +1433,7 @@ fn present_impl(
+@@ -1430,7 +1436,7 @@ fn present_impl(
                      Ok(mut swapchain) => {
                          reset_retry(window);
                          gpu::milestone("window swapchain");
@@ -4676,7 +4679,7 @@ index 1d278874..fd7df756 100644
                              appkit::decor::presented_opaque(window as sdl3::Window);
                          }
                          let rate = sdl3::video::cached_window_refresh_rate(window as sdl3::Window)
-@@ -4837,10 +4840,11 @@ impl Swapchain {
+@@ -4837,10 +4843,11 @@ impl Swapchain {
              });
          }
          drop(wsi);
@@ -4691,15 +4694,16 @@ index 1d278874..fd7df756 100644
              true => corners::Corners::new(gpu)
                  .inspect_err(|reason| {
                      gpu::trace(format!(
-@@ -4852,6 +4856,7 @@ impl Swapchain {
+@@ -4852,6 +4859,8 @@ impl Swapchain {
          };
          let mut swapchain = Self {
              window: window as usize,
 +            see_through,
++            first_presented: false,
              gpu,
              surface: surface.take(),
              handle: vk::SwapchainKHR::null(),
-@@ -4964,7 +4969,7 @@ impl Swapchain {
+@@ -4964,7 +4973,7 @@ impl Swapchain {
          }
          .map_err(|error| format!("vkGetPhysicalDeviceSurfacePresentModesKHR failed: {error:?}"))?;
          let present_mode = choose_present_mode(&present_modes);
@@ -4708,6 +4712,34 @@ index 1d278874..fd7df756 100644
  
          // `0xffff_ffff` in either direction is a surface which takes its size
          // from the swapchain rather than the other way round.
+@@ -5071,8 +5080,11 @@ impl Swapchain {
+             format!("vkGetSwapchainImagesKHR failed with {error:?}")
+         })?;
+         if crate::stats::enabled() {
++            self.first_presented = false;
+             eprintln!(
+-                "rosemary: Metal: swapchain mode={present_mode:?} images min={} max={} requested={count} actual={}",
++                "rosemary: Metal: [{:.1} ms] window {:#x} swapchain mode={present_mode:?} images min={} max={} requested={count} actual={}",
++                sdl3::video::uptime_ms(),
++                self.window,
+                 capabilities.min_image_count,
+                 capabilities.max_image_count,
+                 images.len()
+@@ -5751,6 +5763,14 @@ impl Swapchain {
+         if present_fence.is_some() && present_fence_will_signal(&result, *GAMESCOPE_WSI) {
+             self.presented[index as usize].pending = true;
+         }
++        if result.is_ok() && !self.first_presented && crate::stats::enabled() {
++            self.first_presented = true;
++            eprintln!(
++                "rosemary: Metal: [{:.1} ms] window {:#x} first frame presented",
++                sdl3::video::uptime_ms(),
++                self.window
++            );
++        }
+         match result {
+             Ok(suboptimal) => {
+                 if suboptimal {
 diff --git a/crates/metal/src/tests.rs b/crates/metal/src/tests.rs
 index 67d1296e..1f54b43d 100644
 --- a/crates/metal/src/tests.rs

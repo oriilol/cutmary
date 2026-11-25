@@ -967,6 +967,22 @@ index 54e4cb04..021d34c3 100644
          "opacity" => opacity, c"f16@0:8";
          "contents" => contents, c"@16@0:8";
          "setContents:" => set_contents, c"v24@0:8@16";
+diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
+index 44ed1219..b181a297 100644
+--- a/crates/appkit/src/event.rs
++++ b/crates/appkit/src/event.rs
+@@ -710,6 +710,11 @@ pub(crate) fn deliver_past_modal(event: sdl3::video::Event) {
+             x,
+             y,
+         } => {
++            // Timed against the window trace, so a click can be matched to
++            // the windows the guest makes in answer.
++            crate::window::trace(format_args!(
++                "mouse button {button} down {down} in SDL window {id}"
++            ));
+             // The point the guest sees: a disassociated pointer's click lands
+             // where its cursor froze, not where SDL's integrated position is.
+             let (cx, cy) = track_pointer(id, x, y);
 diff --git a/crates/appkit/src/graphics.rs b/crates/appkit/src/graphics.rs
 index 77c23d3c..c23fab39 100644
 --- a/crates/appkit/src/graphics.rs
@@ -2573,7 +2589,7 @@ index 221c3265..124745ae 100644
      let window = unsafe { window_of(receiver) };
      // SAFETY: null or a window this crate made.
 diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
-index 484056dd..e95da93d 100644
+index 484056dd..bd30d34a 100644
 --- a/crates/appkit/src/window.rs
 +++ b/crates/appkit/src/window.rs
 @@ -89,6 +89,9 @@ pub struct Window {
@@ -2596,7 +2612,19 @@ index 484056dd..e95da93d 100644
  }
  
  /// The `NSWindowLevel`s that say what a window is *for*.
-@@ -571,6 +577,7 @@ fn rehome_popup_descendants(old: sdl3::Window, replacement: sdl3::Window) {
+@@ -505,7 +511,10 @@ pub(crate) fn trace(args: std::fmt::Arguments) {
+     if !tracing() {
+         return;
+     }
+-    let line = format!("rosemary: appkit: window: {args}");
++    let line = format!(
++        "rosemary: appkit: window: [{:.1} ms] {args}",
++        sdl3::video::uptime_ms()
++    );
+     eprintln!("{line}");
+     crate::event::debug_log(&line);
+ }
+@@ -571,6 +580,7 @@ fn rehome_popup_descendants(old: sdl3::Window, replacement: sdl3::Window) {
          };
          let flags = (creation_flags(window_of(object).style_mask, api)
              & !sdl3::video::flags::BORDERLESS)
@@ -2604,7 +2632,7 @@ index 484056dd..e95da93d 100644
              | popup;
          let Some(new) =
              sdl3::video::create_popup_window(new_parent, x, y, width.max(1), height.max(1), flags)
-@@ -793,7 +800,8 @@ fn accessory_view(controller: Id) -> Id {
+@@ -793,7 +803,8 @@ fn accessory_view(controller: Id) -> Id {
  }
  
  /// Place the accessories along the top of the frame view, each its own
@@ -2614,7 +2642,7 @@ index 484056dd..e95da93d 100644
  ///
  /// FIXME (ACCURACY): an accessory placed at the titlebar's leading or
  /// trailing edge goes under it with the rest, since the titlebar here is not
-@@ -811,6 +819,7 @@ fn layout_titlebar(object: Id, size: NSSize) {
+@@ -811,6 +822,7 @@ fn layout_titlebar(object: Id, size: NSSize) {
          },
      );
      let mut top = size.height;
@@ -2622,7 +2650,7 @@ index 484056dd..e95da93d 100644
      for controller in accessories_of(object) {
          let view = accessory_view(controller);
          if view.is_null() || crate::props::integer(controller, "hidden") != 0 {
-@@ -821,6 +830,9 @@ fn layout_titlebar(object: Id, size: NSSize) {
+@@ -821,6 +833,9 @@ fn layout_titlebar(object: Id, size: NSSize) {
              (None, Some(least)) => least.max(crate::view::frame_of(view).size.height),
              (None, None) => crate::view::frame_of(view).size.height,
          };
@@ -2632,7 +2660,7 @@ index 484056dd..e95da93d 100644
          top -= height;
          send_frame(
              view,
-@@ -833,6 +845,16 @@ fn layout_titlebar(object: Id, size: NSSize) {
+@@ -833,6 +848,16 @@ fn layout_titlebar(object: Id, size: NSSize) {
              },
          );
      }
@@ -2649,7 +2677,7 @@ index 484056dd..e95da93d 100644
      if !window.content_view.is_null() {
          send_frame(
              window.content_view,
-@@ -840,7 +862,7 @@ fn layout_titlebar(object: Id, size: NSSize) {
+@@ -840,7 +865,7 @@ fn layout_titlebar(object: Id, size: NSSize) {
                  origin: NSPoint::default(),
                  size: NSSize {
                      width: size.width,
@@ -2658,7 +2686,7 @@ index 484056dd..e95da93d 100644
                  },
              },
          );
-@@ -983,8 +1005,14 @@ pub(crate) fn content_inset(object: Id) -> CGFloat {
+@@ -983,8 +1008,14 @@ pub(crate) fn content_inset(object: Id) -> CGFloat {
  }
  
  fn inset_of(object: Id, style_mask: usize, fullscreen: bool) -> CGFloat {
@@ -2674,7 +2702,7 @@ index 484056dd..e95da93d 100644
          style_mask & style::TITLED != 0,
          is_panel(object),
          fullscreen,
-@@ -1629,7 +1657,10 @@ pub unsafe fn init_with_content_rect_for_tests(window: Id, rect: NSRect) -> bool
+@@ -1629,7 +1660,10 @@ pub unsafe fn init_with_content_rect_for_tests(window: Id, rect: NSRect) -> bool
  /// outright - so a guest which asks for an `NSOpenGLContext` has its window
  /// rebuilt as an OpenGL one; see [`rebuild_for_opengl`].
  fn creation_flags(style_mask: usize, api: Api) -> u64 {
@@ -2686,7 +2714,7 @@ index 484056dd..e95da93d 100644
      if matches!(api, Api::OpenGl) {
          flags |= sdl3::video::flags::OPENGL;
      }
-@@ -1742,7 +1773,7 @@ fn remake(receiver: Id, api: Api, want: Presentation) -> bool {
+@@ -1742,7 +1776,7 @@ fn remake(receiver: Id, api: Api, want: Presentation) -> bool {
      let shown = window.shown != 0;
      let (x, y, _, _) = crate::geometry::rect_to_sdl(window.requested);
  
@@ -2695,7 +2723,7 @@ index 484056dd..e95da93d 100644
      let new = match want.popup_flags() {
          Some(popup) => {
              let parent = popup_parent(receiver);
-@@ -2461,13 +2492,19 @@ fn order_front(receiver: Id, make_key: bool) {
+@@ -2461,13 +2495,19 @@ fn order_front(receiver: Id, make_key: bool) {
      // window its style mask and its level after making it, and reuses one
      // window as a dialog, then as a tooltip. A popup's parent has to be on the
      // screen, so a popup with nothing to hang off stays a toplevel.
@@ -2722,7 +2750,7 @@ index 484056dd..e95da93d 100644
          remake(receiver, api, want);
      }
      let window = window_of(receiver);
-@@ -2904,6 +2941,9 @@ unsafe extern "C" fn user_space_scale_factor(receiver: Id, sel: Sel) -> f64 {
+@@ -2904,6 +2944,9 @@ unsafe extern "C" fn user_space_scale_factor(receiver: Id, sel: Sel) -> f64 {
  }
  
  unsafe extern "C" fn backing_scale_factor(receiver: Id, _sel: Sel) -> CGFloat {
@@ -2732,7 +2760,7 @@ index 484056dd..e95da93d 100644
      let sdl = window_of(receiver).sdl;
      match sdl.is_null() {
          true => 1.0,
-@@ -3035,8 +3075,12 @@ unsafe extern "C" fn set_style_mask(receiver: Id, _sel: Sel, mask: usize) {
+@@ -3035,8 +3078,12 @@ unsafe extern "C" fn set_style_mask(receiver: Id, _sel: Sel, mask: usize) {
      if window.style_mask != mask {
          trace!("{receiver:p} style {:#x} -> {mask:#x}", window.style_mask);
      }
@@ -2745,7 +2773,7 @@ index 484056dd..e95da93d 100644
  }
  
  /// The content size the guest last asked this window for, in the units
-@@ -3756,8 +3800,61 @@ unsafe extern "C" fn parent_window(receiver: Id, _sel: Sel) -> Id {
+@@ -3756,8 +3803,61 @@ unsafe extern "C" fn parent_window(receiver: Id, _sel: Sel) -> Id {
  
  unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _flag: u8) {}
  
@@ -2807,7 +2835,7 @@ index 484056dd..e95da93d 100644
  unsafe extern "C" fn set_titlebar_transparent(receiver: Id, _sel: Sel, flag: u8) {
      window_of(receiver).titlebar_transparent = usize::from(flag != 0);
  }
-@@ -4060,8 +4157,8 @@ pub(crate) fn install() {
+@@ -4060,8 +4160,8 @@ pub(crate) fn install() {
          "styleMask" => style_mask, c"Q16@0:8";
          "setStyleMask:" => set_style_mask, c"v24@0:8Q16";
          "setReleasedWhenClosed:" => ignored_flag, c"v20@0:8c16";
@@ -2818,7 +2846,7 @@ index 484056dd..e95da93d 100644
          "setHidesOnDeactivate:" => set_hides_on_deactivate, c"v20@0:8c16";
          "hidesOnDeactivate" => hides_on_deactivate, c"c16@0:8";
          "setExcludedFromWindowsMenu:" => set_excluded_from_windows_menu, c"v20@0:8c16";
-@@ -4134,6 +4231,18 @@ pub(crate) fn install() {
+@@ -4134,6 +4234,18 @@ pub(crate) fn install() {
          "firstResponder" => first_responder, c"@16@0:8";
          "makeFirstResponder:" => make_first_responder, c"c24@0:8@16";
          "initialFirstResponder" => initial_first_responder, c"@16@0:8";
@@ -2837,7 +2865,7 @@ index 484056dd..e95da93d 100644
          "nextResponder" => next_responder, c"@16@0:8";
          "setNextResponder:" => set_next_responder, c"v24@0:8@16";
          "setInitialFirstResponder:" => set_initial_first_responder, c"v24@0:8@16";
-@@ -4594,6 +4703,90 @@ mod tests {
+@@ -4594,6 +4706,90 @@ mod tests {
  
      /// A view that outlives its window must not answer `-window` with it:
      /// Studio's dock panels are freed while Qt still holds their views.
@@ -3043,7 +3071,7 @@ index 8d6b8e84..95a0de52 100644
          return;
      }
 diff --git a/crates/sdl3/src/lib.rs b/crates/sdl3/src/lib.rs
-index e9f30a3b..20dc66ad 100644
+index e9f30a3b..a4b59a1f 100644
 --- a/crates/sdl3/src/lib.rs
 +++ b/crates/sdl3/src/lib.rs
 @@ -4525,6 +4525,26 @@ pub mod video {
@@ -3073,3 +3101,21 @@ index e9f30a3b..20dc66ad 100644
      fn refresh_rate_override() -> Option<f32> {
          static RATE: LazyLock<Option<f32>> = LazyLock::new(|| {
              let value = std::env::var("ROSEMARY_SCREEN_REFRESH_RATE").ok()?;
+@@ -5460,6 +5480,17 @@ pub mod video {
+     ///
+     /// False on the virtual desktop too: a window there is placed, stacked
+     /// and given the pointer by the desktop, whatever shows the desktop.
++    /// Milliseconds since this process first asked, for trace lines from
++    /// different crates to be read against one clock.
++    pub fn uptime_ms() -> f64 {
++        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
++        START
++            .get_or_init(std::time::Instant::now)
++            .elapsed()
++            .as_secs_f64()
++            * 1000.0
++    }
++
+     pub fn is_wayland() -> bool {
+         !crate::desktop::active() && host_is_wayland()
+     }

@@ -189,3 +189,19 @@ línea de tiempo (4 clips), botón Export activo. El panel de Medios ya no se at
   `_NSURLTypeIdentifierKey`, `_kCGImageSourceTypeIdentifierHint`); dos tests de appkit fallan
   (`a_panel_keeps_its_becomes_key_only_if_needed`, `metal_scene_tracks_sibling_order_hiding_and_removal`).
 - Al cerrar la ventana CapCut sigue vivo (comportamiento macOS) y sus helpers CEF quedan huérfanos al salir.
+
+**Medidas de latencia (siguiente paso)**
+
+Con `ROSEMARY_TRACE_WINDOW=1 ROSEMARY_METAL_STATS=1` (líneas con `[ms]` en un mismo reloj):
+
+- Clic derecho → CapCut crea la ventana del menú: ~100–140 ms (lógica de CapCut; CPU casi
+  ociosa, o sea espera). Ventana → primer frame: ~50 ms. Total ~150–190 ms.
+- Render: ~125 fps, hueco máximo entre frames ~11 ms; la GPU no es el cuello de botella.
+- Cada menú crea una ventana nueva a pantalla completa que se crea dos veces (al iniciarse y al
+  saber en `orderFront` que es transparente). Crearla ya transparente ahorraría parte de los 50 ms.
+- Menú opaco a veces: cuando además se rehace como ventana OpenGL (1 de cada ~10), su superficie
+  GL no pide canal alfa.
+- Estirar fotos en la línea de tiempo también va con retardo. Para ver en qué espera CapCut hace
+  falta un muestreador nativo: `ROSEMARY_PROFILE` solo funciona en modo emulado, y gdb
+  (lanzando con `PR_SET_PTRACER` para no necesitar `ptrace_scope=0`) la encuentra ociosa.
+
