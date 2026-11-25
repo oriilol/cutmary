@@ -1,3 +1,15 @@
+diff --git a/crates/security/Cargo.toml b/crates/security/Cargo.toml
+index 7574d66f..625dec80 100644
+--- a/crates/security/Cargo.toml
++++ b/crates/security/Cargo.toml
+@@ -14,6 +14,7 @@ darwin.workspace = true
+ machish.workspace = true
+ foundation.workspace = true
+ getrandom.workspace = true
++rustls.workspace = true
+ rustls-pki-types.workspace = true
+ webpki.workspace = true
+ webpki-roots.workspace = true
 diff --git a/crates/security/src/codesign.rs b/crates/security/src/codesign.rs
 index 179e028e..cdfc2f4a 100644
 --- a/crates/security/src/codesign.rs
@@ -343,30 +355,56 @@ index 2a805b1b..43eff63d 100644
  }
 diff --git a/crates/security/src/ssl.rs b/crates/security/src/ssl.rs
 new file mode 100644
-index 00000000..fd16a498
+index 00000000..90cbe154
 --- /dev/null
 +++ b/crates/security/src/ssl.rs
-@@ -0,0 +1,339 @@
-+//! SecureTransport (`SSL*`) and PKCS#12 import support for Qt's
+@@ -0,0 +1,1050 @@
++//! SecureTransport (`SSL*`) backed by `rustls` and PKCS#12 stubs for Qt's
 +//! `libqsecuretransportbackend.dylib`.
 +//!
-+//! STUB: Context creation, cipher enumeration, and configuration setters keep
-+//! real state on a CoreFoundation-allocated `SSLContext` object, while
-+//! handshake/read/write currently fail cleanly with `errSSLClosedAbort`
-+//! instead of jumping through an unbound symbol at 0x0.
++//! Runs real TLS 1.2 / 1.3 handshakes and encrypted reads/writes over the
++//! caller's `SSLSetIOFuncs` non-blocking callbacks, exposes peer certificate
++//! chains via `SSLCopyPeerTrust` (compatible with `SecTrustEvaluate`), and
++//! honors `kSSLSessionOptionBreakOnServerAuth` (`errSSLPeerAuthCompleted`) and
++//! ALPN negotiation.
 +
 +#![allow(non_snake_case)]
 +
 +use std::ffi::{c_char, c_int, c_void};
-+use std::sync::OnceLock;
++use std::io::{self, Read, Write};
++use std::sync::{Arc, OnceLock};
 +
 +use corefoundation::base::CFTypeRef;
 +use objc::class::Class;
++use objc::object::Id;
++use objc::sel::Sel;
++use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
++use rustls::{ClientConfig, ClientConnection, ProtocolVersion, RootCertStore};
 +
 +const ERR_SEC_SUCCESS: i32 = 0;
 +const ERR_SEC_PARAM: i32 = -50;
 +const ERR_SEC_UNIMPLEMENTED: i32 = -4;
++
++const ERR_SSL_PROTOCOL: i32 = -9800;
++const ERR_SSL_WOULD_BLOCK: i32 = -9803;
++const ERR_SSL_CLOSED_GRACEFUL: i32 = -9805;
 +const ERR_SSL_CLOSED_ABORT: i32 = -9806;
++const ERR_SSL_BAD_CERT: i32 = -9808;
++const ERR_SSL_PEER_AUTH_COMPLETED: i32 = -9841;
++
++const SSL_STATE_IDLE: i32 = 0;
++const SSL_STATE_HANDSHAKE: i32 = 1;
++const SSL_STATE_CONNECTED: i32 = 2;
++const SSL_STATE_CLOSED: i32 = 3;
++const SSL_STATE_ABORTED: i32 = 4;
++
++const SSL_PROTOCOL_TLS_1_2: i32 = 8;
++const SSL_PROTOCOL_TLS_1_3: i32 = 10;
++
++const SSL_OPT_BREAK_ON_SERVER_AUTH: i32 = 0;
++
++type SslReadFunc = unsafe extern "C" fn(*const c_void, *mut c_void, *mut usize) -> i32;
++type SslWriteFunc = unsafe extern "C" fn(*const c_void, *const c_void, *mut usize) -> i32;
 +
 +/// `kSecImport*` global string keys used by `SecPKCS12Import`.
 +pub const KEYS: &[(&str, &str)] = &[
@@ -387,14 +425,50 @@ index 00000000..fd16a498
 +    0xC02C, // TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
 +];
 +
-+#[repr(C)]
-+struct SslContext {
-+    _isa: *const Class,
++struct SslInner {
 +    state: i32,
 +    min_version: i32,
 +    max_version: i32,
 +    negotiated_version: i32,
 +    negotiated_cipher: u16,
++    read_func: Option<SslReadFunc>,
++    write_func: Option<SslWriteFunc>,
++    connection: *const c_void,
++    peer_name: Option<String>,
++    alpn_protocols: Vec<Vec<u8>>,
++    break_on_server_auth: bool,
++    peer_auth_done: bool,
++    peer_auth_pending: bool,
++    conn: Option<ClientConnection>,
++    pending_write: Vec<u8>,
++}
++
++impl Default for SslInner {
++    fn default() -> Self {
++        Self {
++            state: SSL_STATE_IDLE,
++            min_version: SSL_PROTOCOL_TLS_1_2,
++            max_version: SSL_PROTOCOL_TLS_1_3,
++            negotiated_version: 0,
++            negotiated_cipher: 0,
++            read_func: None,
++            write_func: None,
++            connection: std::ptr::null(),
++            peer_name: None,
++            alpn_protocols: Vec::new(),
++            break_on_server_auth: false,
++            peer_auth_done: false,
++            peer_auth_pending: false,
++            conn: None,
++            pending_write: Vec::new(),
++        }
++    }
++}
++
++#[repr(C)]
++struct SslContext {
++    _isa: *const Class,
++    inner: *mut SslInner,
 +}
 +
 +fn ssl_context_class() -> &'static Class {
@@ -406,10 +480,247 @@ index 00000000..fd16a498
 +            std::mem::size_of::<SslContext>(),
 +            false,
 +        );
++        class.replace_method(
++            objc::sel::get("dealloc"),
++            ssl_dealloc as *const c_void,
++            c"v16@0:8",
++        );
 +        objc::class::ptr(class) as usize
 +    });
 +    // SAFETY: registered once for the life of the process.
 +    unsafe { &*(ptr as *const Class) }
++}
++
++unsafe extern "C" fn ssl_dealloc(receiver: Id, _sel: Sel) {
++    let ctx = receiver as *mut SslContext;
++    unsafe {
++        if !(*ctx).inner.is_null() {
++            drop(Box::from_raw((*ctx).inner));
++            (*ctx).inner = std::ptr::null_mut();
++        }
++        objc::arc::finalize(receiver);
++    }
++}
++
++unsafe fn inner_mut<'a>(ctx: CFTypeRef) -> Option<&'a mut SslInner> {
++    if ctx.is_null() {
++        return None;
++    }
++    let ptr = unsafe { (*(ctx as *const SslContext)).inner };
++    if ptr.is_null() {
++        None
++    } else {
++        Some(unsafe { &mut *ptr })
++    }
++}
++
++/// Shared root certificate store built once from Mozilla's WebPKI roots.
++fn root_store() -> Arc<RootCertStore> {
++    static ROOTS: OnceLock<Arc<RootCertStore>> = OnceLock::new();
++    ROOTS
++        .get_or_init(|| {
++            let mut roots = RootCertStore::empty();
++            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
++            Arc::new(roots)
++        })
++        .clone()
++}
++
++/// Certificate verifier used when `kSSLSessionOptionBreakOnServerAuth` is set:
++/// SecureTransport hands the server's certificate chain to the caller via
++/// `errSSLPeerAuthCompleted` + `SSLCopyPeerTrust`, and the caller (e.g. Qt)
++/// evaluates trust itself via `SecTrustEvaluate`. Signature checks on TLS 1.2/1.3
++/// handshake messages are still verified using `ring`.
++#[derive(Debug)]
++struct DeferredServerAuthVerifier {
++    provider: Arc<rustls::crypto::CryptoProvider>,
++}
++
++impl rustls::client::danger::ServerCertVerifier for DeferredServerAuthVerifier {
++    fn verify_server_cert(
++        &self,
++        _end_entity: &CertificateDer<'_>,
++        _intermediates: &[CertificateDer<'_>],
++        _server_name: &ServerName<'_>,
++        _ocsp_response: &[u8],
++        _now: UnixTime,
++    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
++        Ok(rustls::client::danger::ServerCertVerified::assertion())
++    }
++
++    fn verify_tls12_signature(
++        &self,
++        message: &[u8],
++        cert: &CertificateDer<'_>,
++        dss: &rustls::DigitallySignedStruct,
++    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
++        rustls::crypto::verify_tls12_signature(
++            message,
++            cert,
++            dss,
++            &self.provider.signature_verification_algorithms,
++        )
++    }
++
++    fn verify_tls13_signature(
++        &self,
++        message: &[u8],
++        cert: &CertificateDer<'_>,
++        dss: &rustls::DigitallySignedStruct,
++    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
++        rustls::crypto::verify_tls13_signature(
++            message,
++            cert,
++            dss,
++            &self.provider.signature_verification_algorithms,
++        )
++    }
++
++    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
++        self.provider
++            .signature_verification_algorithms
++            .supported_schemes()
++    }
++}
++
++fn build_client_config(inner: &SslInner) -> Result<Arc<ClientConfig>, rustls::Error> {
++    let provider = Arc::new(rustls::crypto::ring::default_provider());
++    let mut versions: Vec<&'static rustls::SupportedProtocolVersion> = Vec::new();
++    if inner.max_version >= SSL_PROTOCOL_TLS_1_3 && inner.min_version <= SSL_PROTOCOL_TLS_1_3 {
++        versions.push(&rustls::version::TLS13);
++    }
++    if inner.min_version <= SSL_PROTOCOL_TLS_1_2 && inner.max_version >= SSL_PROTOCOL_TLS_1_2 {
++        versions.push(&rustls::version::TLS12);
++    }
++    if versions.is_empty() {
++        versions.push(&rustls::version::TLS13);
++        versions.push(&rustls::version::TLS12);
++    }
++
++    let builder = ClientConfig::builder_with_provider(provider.clone())
++        .with_protocol_versions(&versions)?;
++    let mut config = if inner.break_on_server_auth {
++        builder
++            .dangerous()
++            .with_custom_certificate_verifier(Arc::new(DeferredServerAuthVerifier { provider }))
++            .with_no_client_auth()
++    } else {
++        builder
++            .with_root_certificates(root_store())
++            .with_no_client_auth()
++    };
++    if !inner.alpn_protocols.is_empty() {
++        config.alpn_protocols = inner.alpn_protocols.clone();
++    }
++    Ok(Arc::new(config))
++}
++
++fn ensure_connection(inner: &mut SslInner) -> Result<(), i32> {
++    if inner.conn.is_some() {
++        return Ok(());
++    }
++    let config = build_client_config(inner).map_err(|_| ERR_SSL_PROTOCOL)?;
++    let host = inner.peer_name.as_deref().unwrap_or("localhost");
++    let server_name = ServerName::try_from(host.to_owned())
++        .or_else(|_| ServerName::try_from("localhost".to_owned()))
++        .map_err(|_| ERR_SEC_PARAM)?;
++    let conn = ClientConnection::new(config, server_name).map_err(|_| ERR_SSL_PROTOCOL)?;
++    inner.conn = Some(conn);
++    Ok(())
++}
++
++/// Drain any encrypted bytes from `rustls` into `pending_write`, then push them
++/// through the caller's `write_func`.
++fn flush_writes(inner: &mut SslInner) -> i32 {
++    let Some(write_func) = inner.write_func else {
++        return ERR_SSL_CLOSED_ABORT;
++    };
++    if let Some(conn) = inner.conn.as_mut() {
++        while conn.wants_write() {
++            if conn.write_tls(&mut inner.pending_write).is_err() {
++                return ERR_SSL_CLOSED_ABORT;
++            }
++        }
++    }
++    while !inner.pending_write.is_empty() {
++        let mut len = inner.pending_write.len();
++        let status = unsafe {
++            write_func(
++                inner.connection,
++                inner.pending_write.as_ptr().cast(),
++                &mut len,
++            )
++        };
++        let written = len.min(inner.pending_write.len());
++        if written > 0 {
++            inner.pending_write.drain(..written);
++        }
++        if status == ERR_SSL_WOULD_BLOCK {
++            return ERR_SSL_WOULD_BLOCK;
++        }
++        if status != ERR_SEC_SUCCESS {
++            return status;
++        }
++        if written == 0 {
++            return ERR_SSL_WOULD_BLOCK;
++        }
++    }
++    ERR_SEC_SUCCESS
++}
++
++/// Pull encrypted bytes from the caller's `read_func` and feed them into
++/// `rustls`. Note that SecureTransport's non-blocking `read_func` may return
++/// `errSSLWouldBlock` alongside a nonzero byte count, so any received bytes
++/// MUST be fed to `rustls` before returning `errSSLWouldBlock`.
++fn feed_read(inner: &mut SslInner) -> i32 {
++    let Some(read_func) = inner.read_func else {
++        return ERR_SSL_CLOSED_ABORT;
++    };
++    let Some(conn) = inner.conn.as_mut() else {
++        return ERR_SSL_CLOSED_ABORT;
++    };
++    let mut buf = [0u8; 16384];
++    let mut len = buf.len();
++    let status = unsafe { read_func(inner.connection, buf.as_mut_ptr().cast(), &mut len) };
++    let got = len.min(buf.len());
++    if got > 0 {
++        let mut slice = &buf[..got];
++        while !slice.is_empty() {
++            match conn.read_tls(&mut slice) {
++                Ok(0) => break,
++                Ok(_) => {}
++                Err(_) => return ERR_SSL_PROTOCOL,
++            }
++        }
++        if let Err(err) = conn.process_new_packets() {
++            let _ = flush_writes(inner);
++            return match err {
++                rustls::Error::InvalidCertificate(_) => ERR_SSL_BAD_CERT,
++                _ => ERR_SSL_PROTOCOL,
++            };
++        }
++        return ERR_SEC_SUCCESS;
++    }
++    match status {
++        ERR_SSL_WOULD_BLOCK => ERR_SSL_WOULD_BLOCK,
++        ERR_SSL_CLOSED_GRACEFUL => ERR_SSL_CLOSED_GRACEFUL,
++        ERR_SEC_SUCCESS => ERR_SSL_WOULD_BLOCK,
++        other => other,
++    }
++}
++
++fn record_negotiated(inner: &mut SslInner) {
++    let Some(conn) = inner.conn.as_ref() else {
++        return;
++    };
++    inner.negotiated_version = match conn.protocol_version() {
++        Some(ProtocolVersion::TLSv1_3) => SSL_PROTOCOL_TLS_1_3,
++        Some(ProtocolVersion::TLSv1_2) => SSL_PROTOCOL_TLS_1_2,
++        _ => SSL_PROTOCOL_TLS_1_2,
++    };
++    if let Some(suite) = conn.negotiated_cipher_suite() {
++        inner.negotiated_cipher = u16::from(suite.suite());
++    }
 +}
 +
 +pub unsafe extern "C" fn SSLCreateContext(
@@ -422,28 +733,31 @@ index 00000000..fd16a498
 +        return std::ptr::null();
 +    }
 +    unsafe {
-+        (*ctx).state = 0; // kSSLIdle
-+        (*ctx).min_version = 7; // kTLSProtocol12
-+        (*ctx).max_version = 10; // kTLSProtocol13
-+        (*ctx).negotiated_version = 0;
-+        (*ctx).negotiated_cipher = 0;
++        (*ctx).inner = Box::into_raw(Box::new(SslInner::default()));
 +    }
 +    ctx as CFTypeRef
 +}
 +
 +pub unsafe extern "C" fn SSLClose(ctx: CFTypeRef) -> i32 {
-+    if ctx.is_null() {
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
 +        return ERR_SEC_PARAM;
++    };
++    if let Some(conn) = inner.conn.as_mut() {
++        conn.send_close_notify();
 +    }
-+    unsafe { (*(ctx as *mut SslContext)).state = 3 }; // kSSLClosed
++    let _ = flush_writes(inner);
++    inner.state = SSL_STATE_CLOSED;
 +    ERR_SEC_SUCCESS
 +}
 +
 +pub unsafe extern "C" fn SSLGetSessionState(ctx: CFTypeRef, state: *mut i32) -> i32 {
-+    if ctx.is_null() || state.is_null() {
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    if state.is_null() {
 +        return ERR_SEC_PARAM;
 +    }
-+    unsafe { *state = (*(ctx as *const SslContext)).state };
++    unsafe { *state = inner.state };
 +    ERR_SEC_SUCCESS
 +}
 +
@@ -482,46 +796,79 @@ index 00000000..fd16a498
 +
 +pub unsafe extern "C" fn SSLSetIOFuncs(
 +    ctx: CFTypeRef,
-+    _read_func: *const c_void,
-+    _write_func: *const c_void,
++    read_func: *const c_void,
++    write_func: *const c_void,
 +) -> i32 {
-+    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    inner.read_func = if read_func.is_null() {
++        None
++    } else {
++        Some(unsafe { std::mem::transmute::<*const c_void, SslReadFunc>(read_func) })
++    };
++    inner.write_func = if write_func.is_null() {
++        None
++    } else {
++        Some(unsafe { std::mem::transmute::<*const c_void, SslWriteFunc>(write_func) })
++    };
++    ERR_SEC_SUCCESS
 +}
 +
-+pub unsafe extern "C" fn SSLSetConnection(ctx: CFTypeRef, _connection: *const c_void) -> i32 {
-+    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++pub unsafe extern "C" fn SSLSetConnection(ctx: CFTypeRef, connection: *const c_void) -> i32 {
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    inner.connection = connection;
++    ERR_SEC_SUCCESS
 +}
 +
 +pub unsafe extern "C" fn SSLSetPeerDomainName(
 +    ctx: CFTypeRef,
-+    _peer_name: *const c_char,
-+    _peer_name_len: usize,
++    peer_name: *const c_char,
++    peer_name_len: usize,
 +) -> i32 {
-+    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    if peer_name.is_null() || peer_name_len == 0 {
++        inner.peer_name = None;
++    } else {
++        let bytes = unsafe { std::slice::from_raw_parts(peer_name.cast::<u8>(), peer_name_len) };
++        let trimmed = bytes.split(|&b| b == 0).next().unwrap_or(bytes);
++        inner.peer_name = std::str::from_utf8(trimmed).ok().map(str::to_owned);
++    }
++    ERR_SEC_SUCCESS
 +}
 +
 +pub unsafe extern "C" fn SSLSetProtocolVersionMin(ctx: CFTypeRef, min_version: i32) -> i32 {
-+    if ctx.is_null() {
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
 +        return ERR_SEC_PARAM;
-+    }
-+    unsafe { (*(ctx as *mut SslContext)).min_version = min_version };
++    };
++    inner.min_version = min_version;
 +    ERR_SEC_SUCCESS
 +}
 +
 +pub unsafe extern "C" fn SSLSetProtocolVersionMax(ctx: CFTypeRef, max_version: i32) -> i32 {
-+    if ctx.is_null() {
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
 +        return ERR_SEC_PARAM;
-+    }
-+    unsafe { (*(ctx as *mut SslContext)).max_version = max_version };
++    };
++    inner.max_version = max_version;
 +    ERR_SEC_SUCCESS
 +}
 +
 +pub unsafe extern "C" fn SSLSetSessionOption(
 +    ctx: CFTypeRef,
-+    _option: i32,
-+    _value: u8,
++    option: i32,
++    value: u8,
 +) -> i32 {
-+    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    if option == SSL_OPT_BREAK_ON_SERVER_AUTH {
++        inner.break_on_server_auth = value != 0;
++    }
++    ERR_SEC_SUCCESS
 +}
 +
 +pub unsafe extern "C" fn SSLSetCertificate(ctx: CFTypeRef, _cert_refs: CFTypeRef) -> i32 {
@@ -540,34 +887,87 @@ index 00000000..fd16a498
 +    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
 +}
 +
-+pub unsafe extern "C" fn SSLSetALPNProtocols(ctx: CFTypeRef, _protocols: CFTypeRef) -> i32 {
-+    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SEC_SUCCESS }
++pub unsafe extern "C" fn SSLSetALPNProtocols(ctx: CFTypeRef, protocols: CFTypeRef) -> i32 {
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    inner.alpn_protocols.clear();
++    if protocols.is_null() {
++        return ERR_SEC_SUCCESS;
++    }
++    if let Some(array) = unsafe { corefoundation::collections::array(protocols) } {
++        for &item in &array.values {
++            if let Some(s) = unsafe { corefoundation::string::as_string(item) } {
++                let bytes = s.utf8();
++                if !bytes.is_empty() {
++                    inner.alpn_protocols.push(bytes);
++                }
++            }
++        }
++    }
++    ERR_SEC_SUCCESS
 +}
 +
 +pub unsafe extern "C" fn SSLCopyALPNProtocols(
 +    ctx: CFTypeRef,
 +    protocols: *mut CFTypeRef,
 +) -> i32 {
-+    if ctx.is_null() || protocols.is_null() {
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    if protocols.is_null() {
 +        return ERR_SEC_PARAM;
 +    }
-+    unsafe { *protocols = std::ptr::null() };
++    let negotiated = inner
++        .conn
++        .as_ref()
++        .and_then(|c| c.alpn_protocol())
++        .map(|p| corefoundation::string::from_bytes(p, false));
++    if let Some(s) = negotiated {
++        let items = [s];
++        let arr = corefoundation::collections::new_array(
++            &items,
++            corefoundation::callbacks::Policy::from_type_callbacks(),
++            false,
++        );
++        unsafe { corefoundation::api::CFRelease(s) };
++        unsafe { *protocols = arr };
++    } else {
++        unsafe { *protocols = std::ptr::null() };
++    }
 +    ERR_SEC_SUCCESS
 +}
 +
 +pub unsafe extern "C" fn SSLCopyPeerTrust(ctx: CFTypeRef, trust: *mut CFTypeRef) -> i32 {
-+    if ctx.is_null() || trust.is_null() {
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    if trust.is_null() {
 +        return ERR_SEC_PARAM;
 +    }
-+    unsafe { *trust = std::ptr::null() };
++    let chain: Vec<Vec<u8>> = inner
++        .conn
++        .as_ref()
++        .and_then(|c| c.peer_certificates())
++        .map(|certs| certs.iter().map(|c| c.as_ref().to_vec()).collect())
++        .unwrap_or_default();
++    if chain.is_empty() {
++        unsafe { *trust = std::ptr::null() };
++        return ERR_SEC_SUCCESS;
++    }
++    let handle = crate::trust::new_trust(chain, inner.peer_name.clone());
++    unsafe { *trust = handle };
 +    ERR_SEC_SUCCESS
 +}
 +
 +pub unsafe extern "C" fn SSLGetNegotiatedCipher(ctx: CFTypeRef, cipher: *mut u16) -> i32 {
-+    if ctx.is_null() || cipher.is_null() {
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    if cipher.is_null() {
 +        return ERR_SEC_PARAM;
 +    }
-+    unsafe { *cipher = (*(ctx as *const SslContext)).negotiated_cipher };
++    unsafe { *cipher = inner.negotiated_cipher };
 +    ERR_SEC_SUCCESS
 +}
 +
@@ -575,46 +975,185 @@ index 00000000..fd16a498
 +    ctx: CFTypeRef,
 +    protocol: *mut i32,
 +) -> i32 {
-+    if ctx.is_null() || protocol.is_null() {
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    if protocol.is_null() {
 +        return ERR_SEC_PARAM;
 +    }
-+    unsafe { *protocol = (*(ctx as *const SslContext)).negotiated_version };
++    unsafe { *protocol = inner.negotiated_version };
 +    ERR_SEC_SUCCESS
 +}
 +
-+// STUB: SecureTransport TLS handshake not yet wired to rustls.
 +pub unsafe extern "C" fn SSLHandshake(ctx: CFTypeRef) -> i32 {
-+    if ctx.is_null() {
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
 +        return ERR_SEC_PARAM;
++    };
++    if inner.state == SSL_STATE_CONNECTED {
++        return ERR_SEC_SUCCESS;
 +    }
-+    unsafe { (*(ctx as *mut SslContext)).state = 4 }; // kSSLAborted
-+    ERR_SSL_CLOSED_ABORT
++    if inner.peer_auth_pending {
++        inner.peer_auth_pending = false;
++        inner.state = SSL_STATE_CONNECTED;
++        return ERR_SEC_SUCCESS;
++    }
++    if let Err(code) = ensure_connection(inner) {
++        inner.state = SSL_STATE_ABORTED;
++        return code;
++    }
++    inner.state = SSL_STATE_HANDSHAKE;
++
++    loop {
++        let wst = flush_writes(inner);
++        if wst != ERR_SEC_SUCCESS {
++            if wst != ERR_SSL_WOULD_BLOCK {
++                inner.state = SSL_STATE_ABORTED;
++            }
++            return wst;
++        }
++        let handshaking = inner
++            .conn
++            .as_ref()
++            .is_some_and(|c| c.is_handshaking());
++        if !handshaking {
++            record_negotiated(inner);
++            if inner.break_on_server_auth && !inner.peer_auth_done {
++                inner.peer_auth_done = true;
++                inner.peer_auth_pending = true;
++                return ERR_SSL_PEER_AUTH_COMPLETED;
++            }
++            inner.state = SSL_STATE_CONNECTED;
++            return ERR_SEC_SUCCESS;
++        }
++        let rst = feed_read(inner);
++        if rst != ERR_SEC_SUCCESS {
++            if rst != ERR_SSL_WOULD_BLOCK {
++                inner.state = SSL_STATE_ABORTED;
++            }
++            return rst;
++        }
++    }
 +}
 +
-+// STUB: SecureTransport TLS read not yet wired to rustls.
 +pub unsafe extern "C" fn SSLRead(
 +    ctx: CFTypeRef,
-+    _data: *mut c_void,
-+    _data_len: usize,
++    data: *mut c_void,
++    data_len: usize,
 +    processed: *mut usize,
 +) -> i32 {
 +    if !processed.is_null() {
 +        unsafe { *processed = 0 };
 +    }
-+    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SSL_CLOSED_ABORT }
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    if data_len == 0 {
++        return ERR_SEC_SUCCESS;
++    }
++    if data.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    if inner.conn.is_none() {
++        return ERR_SSL_CLOSED_ABORT;
++    }
++
++    let out = unsafe { std::slice::from_raw_parts_mut(data.cast::<u8>(), data_len) };
++    let mut total = 0usize;
++    loop {
++        if total == data_len {
++            if !processed.is_null() {
++                unsafe { *processed = total };
++            }
++            return ERR_SEC_SUCCESS;
++        }
++        let read_res = {
++            let conn = inner.conn.as_mut().expect("checked above");
++            conn.reader().read(&mut out[total..])
++        };
++        match read_res {
++            Ok(0) => {
++                if !processed.is_null() {
++                    unsafe { *processed = total };
++                }
++                inner.state = SSL_STATE_CLOSED;
++                return if total > 0 {
++                    ERR_SEC_SUCCESS
++                } else {
++                    ERR_SSL_CLOSED_GRACEFUL
++                };
++            }
++            Ok(n) => {
++                total += n;
++                continue;
++            }
++            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
++            Err(_) => {
++                if !processed.is_null() {
++                    unsafe { *processed = total };
++                }
++                inner.state = SSL_STATE_ABORTED;
++                return ERR_SSL_CLOSED_ABORT;
++            }
++        }
++        let _ = flush_writes(inner);
++        let rst = feed_read(inner);
++        if rst != ERR_SEC_SUCCESS {
++            if !processed.is_null() {
++                unsafe { *processed = total };
++            }
++            return if rst == ERR_SSL_CLOSED_GRACEFUL && total > 0 {
++                ERR_SEC_SUCCESS
++            } else {
++                rst
++            };
++        }
++    }
 +}
 +
-+// STUB: SecureTransport TLS write not yet wired to rustls.
 +pub unsafe extern "C" fn SSLWrite(
 +    ctx: CFTypeRef,
-+    _data: *const c_void,
-+    _data_len: usize,
++    data: *const c_void,
++    data_len: usize,
 +    processed: *mut usize,
 +) -> i32 {
 +    if !processed.is_null() {
 +        unsafe { *processed = 0 };
 +    }
-+    if ctx.is_null() { ERR_SEC_PARAM } else { ERR_SSL_CLOSED_ABORT }
++    let Some(inner) = (unsafe { inner_mut(ctx) }) else {
++        return ERR_SEC_PARAM;
++    };
++    if inner.conn.is_none() {
++        return ERR_SSL_CLOSED_ABORT;
++    }
++    if !inner.pending_write.is_empty() {
++        let wst = flush_writes(inner);
++        if wst != ERR_SEC_SUCCESS {
++            return wst;
++        }
++    }
++    if data_len == 0 {
++        return ERR_SEC_SUCCESS;
++    }
++    if data.is_null() {
++        return ERR_SEC_PARAM;
++    }
++    let slice = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), data_len) };
++    {
++        let conn = inner.conn.as_mut().expect("checked above");
++        if conn.writer().write_all(slice).is_err() {
++            return ERR_SSL_CLOSED_ABORT;
++        }
++    }
++    let wst = flush_writes(inner);
++    if !processed.is_null() {
++        unsafe { *processed = data_len };
++    }
++    if wst == ERR_SSL_WOULD_BLOCK || wst == ERR_SEC_SUCCESS {
++        wst
++    } else {
++        inner.state = SSL_STATE_ABORTED;
++        wst
++    }
 +}
 +
 +// STUB: PKCS#12 import not yet implemented.
@@ -686,8 +1225,192 @@ index 00000000..fd16a498
 +        "SecKeychainSetSettings" => SecKeychainSetSettings,
 +    }
 +}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::net::TcpStream;
++
++    #[test]
++    fn context_lifecycle_and_alpn_config() {
++        unsafe {
++            let ctx = SSLCreateContext(std::ptr::null(), 1, 0);
++            assert!(!ctx.is_null());
++            let mut state = -1;
++            assert_eq!(SSLGetSessionState(ctx, &mut state), ERR_SEC_SUCCESS);
++            assert_eq!(state, SSL_STATE_IDLE);
++            let host = c"editor-api.capcutapi.com";
++            assert_eq!(
++                SSLSetPeerDomainName(ctx, host.as_ptr(), host.to_bytes().len()),
++                ERR_SEC_SUCCESS
++            );
++            assert_eq!(
++                SSLSetSessionOption(ctx, SSL_OPT_BREAK_ON_SERVER_AUTH, 1),
++                ERR_SEC_SUCCESS
++            );
++            assert_eq!(SSLClose(ctx), ERR_SEC_SUCCESS);
++            assert_eq!(SSLGetSessionState(ctx, &mut state), ERR_SEC_SUCCESS);
++            assert_eq!(state, SSL_STATE_CLOSED);
++            corefoundation::api::CFRelease(ctx);
++        }
++    }
++
++    #[test]
++    fn non_blocking_tls_handshake_against_live_https_if_reachable() {
++        // Integration smoke test against CapCut's Akamai endpoint; skips cleanly offline.
++        let host_name = "editor-api.capcutapi.com";
++        let Ok(stream) = TcpStream::connect((host_name, 443)) else {
++            return;
++        };
++        let _ = stream.set_nonblocking(true);
++
++        unsafe extern "C" fn read_cb(
++            conn: *const c_void,
++            data: *mut c_void,
++            len: *mut usize,
++        ) -> i32 {
++            let stream = unsafe { &mut *(conn as *mut TcpStream) };
++            let cap = unsafe { *len };
++            let buf = unsafe { std::slice::from_raw_parts_mut(data.cast::<u8>(), cap) };
++            match stream.read(buf) {
++                Ok(0) => {
++                    unsafe { *len = 0 };
++                    ERR_SSL_CLOSED_GRACEFUL
++                }
++                Ok(n) => {
++                    unsafe { *len = n };
++                    if n < cap {
++                        ERR_SSL_WOULD_BLOCK
++                    } else {
++                        ERR_SEC_SUCCESS
++                    }
++                }
++                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
++                    unsafe { *len = 0 };
++                    ERR_SSL_WOULD_BLOCK
++                }
++                Err(e) => {
++                    eprintln!("read_cb err: {e:?}");
++                    unsafe { *len = 0 };
++                    ERR_SSL_CLOSED_ABORT
++                }
++            }
++        }
++
++        unsafe extern "C" fn write_cb(
++            conn: *const c_void,
++            data: *const c_void,
++            len: *mut usize,
++        ) -> i32 {
++            let stream = unsafe { &mut *(conn as *mut TcpStream) };
++            let cap = unsafe { *len };
++            let buf = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), cap) };
++            match stream.write(buf) {
++                Ok(n) => {
++                    unsafe { *len = n };
++                    if n < cap {
++                        ERR_SSL_WOULD_BLOCK
++                    } else {
++                        ERR_SEC_SUCCESS
++                    }
++                }
++                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
++                    unsafe { *len = 0 };
++                    ERR_SSL_WOULD_BLOCK
++                }
++                Err(e) => {
++                    eprintln!("read_cb err: {e:?}");
++                    unsafe { *len = 0 };
++                    ERR_SSL_CLOSED_ABORT
++                }
++            }
++        }
++
++        let mut stream = stream;
++        unsafe {
++            let ctx = SSLCreateContext(std::ptr::null(), 1, 0);
++            assert_eq!(
++                SSLSetIOFuncs(ctx, read_cb as *const c_void, write_cb as *const c_void),
++                ERR_SEC_SUCCESS
++            );
++            assert_eq!(
++                SSLSetConnection(ctx, (&mut stream as *mut TcpStream).cast()),
++                ERR_SEC_SUCCESS
++            );
++            assert_eq!(
++                SSLSetPeerDomainName(ctx, host_name.as_ptr().cast(), host_name.len()),
++                ERR_SEC_SUCCESS
++            );
++            assert_eq!(
++                SSLSetSessionOption(ctx, SSL_OPT_BREAK_ON_SERVER_AUTH, 1),
++                ERR_SEC_SUCCESS
++            );
++
++            let mut saw_peer_auth = false;
++            for _ in 0..500 {
++                let st = SSLHandshake(ctx);
++                if st == ERR_SEC_SUCCESS {
++                    break;
++                } else if st == ERR_SSL_PEER_AUTH_COMPLETED {
++                    saw_peer_auth = true;
++                    let mut trust = std::ptr::null();
++                    assert_eq!(SSLCopyPeerTrust(ctx, &mut trust), ERR_SEC_SUCCESS);
++                    assert!(!trust.is_null());
++                    assert!(crate::trust::SecTrustGetCertificateCount(trust) >= 1);
++                    let mut result = 0u32;
++                    assert_eq!(
++                        crate::trust::SecTrustEvaluate(trust, &mut result),
++                        ERR_SEC_SUCCESS
++                    );
++                    assert_eq!(result, 4); // kSecTrustResultUnspecified (trusted)
++                    corefoundation::api::CFRelease(trust);
++                } else if st == ERR_SSL_WOULD_BLOCK {
++                    std::thread::sleep(std::time::Duration::from_millis(5));
++                } else {
++                    panic!("SSLHandshake failed with {st}");
++                }
++            }
++            assert!(saw_peer_auth);
++
++            let req = format!("HEAD / HTTP/1.1\r\nHost: {host_name}\r\nConnection: close\r\n\r\n");
++            let req = req.as_bytes();
++            let mut written = 0usize;
++            let st = SSLWrite(ctx, req.as_ptr().cast(), req.len(), &mut written);
++            assert!(st == ERR_SEC_SUCCESS || st == ERR_SSL_WOULD_BLOCK);
++            assert_eq!(written, req.len());
++
++            let mut resp = [0u8; 256];
++            let mut got = 0usize;
++            for _ in 0..500 {
++                let mut n = 0usize;
++                let st = SSLRead(
++                    ctx,
++                    resp[got..].as_mut_ptr().cast(),
++                    resp.len() - got,
++                    &mut n,
++                );
++                got += n;
++                if got >= 12 || st == ERR_SSL_CLOSED_GRACEFUL {
++                    break;
++                }
++                if st == ERR_SSL_WOULD_BLOCK {
++                    std::thread::sleep(std::time::Duration::from_millis(5));
++                } else if st != ERR_SEC_SUCCESS {
++                    panic!("SSLRead failed with {st}");
++                }
++            }
++            assert!(
++                resp[..got].starts_with(b"HTTP/1.1 "),
++                "unexpected HTTP response: {:?}",
++                String::from_utf8_lossy(&resp[..got])
++            );
++            assert_eq!(SSLClose(ctx), ERR_SEC_SUCCESS);
++            corefoundation::api::CFRelease(ctx);
++        }
++    }
++}
 diff --git a/crates/security/src/trust.rs b/crates/security/src/trust.rs
-index 498fb631..bbd4a324 100644
+index 498fb631..dcc6a976 100644
 --- a/crates/security/src/trust.rs
 +++ b/crates/security/src/trust.rs
 @@ -61,9 +61,16 @@ enum Payload {
@@ -707,7 +1430,25 @@ index 498fb631..bbd4a324 100644
      },
  }
  
-@@ -270,11 +277,14 @@ pub unsafe extern "C" fn SecTrustSettingsCopyTrustSettings(
+@@ -110,6 +117,17 @@ fn new(payload: Payload) -> CFTypeRef {
+     body as CFTypeRef
+ }
+ 
++/// Build an owned `SecTrustRef` from a DER certificate chain and optional peer
++/// hostname, for `SSLCopyPeerTrust`.
++pub(crate) fn new_trust(chain: Vec<Vec<u8>>, hostname: Option<String>) -> CFTypeRef {
++    new(Payload::Trust {
++        chain,
++        options: 0,
++        hostname,
++        last_result: 0,
++    })
++}
++
+ /// The payload of one of these handles, or `None` for anything else.
+ ///
+ /// # Safety
+@@ -270,11 +288,14 @@ pub unsafe extern "C" fn SecTrustSettingsCopyTrustSettings(
  /// `policy` is null or an object.
  pub unsafe extern "C" fn SecPolicyCopyProperties(policy: CFTypeRef) -> CFTypeRef {
      // SAFETY: as the caller states.
@@ -726,7 +1467,7 @@ index 498fb631..bbd4a324 100644
      corefoundation::collections::new_dictionary(
          &[(key, oid)],
          corefoundation::callbacks::Policy::from_key_callbacks(),
-@@ -343,16 +353,59 @@ pub unsafe extern "C" fn SecPolicyCreateBasicX509() -> CFTypeRef {
+@@ -343,16 +364,59 @@ pub unsafe extern "C" fn SecPolicyCreateBasicX509() -> CFTypeRef {
      new(Payload::BasicX509)
  }
  
@@ -794,7 +1535,7 @@ index 498fb631..bbd4a324 100644
  pub unsafe extern "C" fn SecTrustCreateWithCertificates(
      certificates: CFTypeRef,
      policies: CFTypeRef,
-@@ -370,21 +423,37 @@ pub unsafe extern "C" fn SecTrustCreateWithCertificates(
+@@ -370,21 +434,37 @@ pub unsafe extern "C" fn SecTrustCreateWithCertificates(
              _ => return PARAM,
          }
      }
@@ -838,7 +1579,7 @@ index 498fb631..bbd4a324 100644
      SUCCESS
  }
  
-@@ -465,10 +534,32 @@ fn evaluate(chain: &[Vec<u8>], options: u32) -> u32 {
+@@ -465,10 +545,32 @@ fn evaluate(chain: &[Vec<u8>], options: u32) -> u32 {
  /// `trust` is null or a live object, and `out` is null or writable.
  pub unsafe extern "C" fn SecTrustEvaluate(trust: CFTypeRef, out: *mut u32) -> OSStatus {
      // SAFETY: the caller's guarantee.
@@ -873,7 +1614,7 @@ index 498fb631..bbd4a324 100644
      if !out.is_null() {
          // SAFETY: writable, per the caller.
          unsafe { out.write(verdict) };
-@@ -476,6 +567,221 @@ pub unsafe extern "C" fn SecTrustEvaluate(trust: CFTypeRef, out: *mut u32) -> OS
+@@ -476,6 +578,221 @@ pub unsafe extern "C" fn SecTrustEvaluate(trust: CFTypeRef, out: *mut u32) -> OS
      SUCCESS
  }
  
@@ -1095,7 +1836,7 @@ index 498fb631..bbd4a324 100644
  /// `int SecRandomCopyBytes(SecRandomRef, size_t, void *)`. The generator
  /// argument is `kSecRandomDefault` - null - in every caller.
  ///
-@@ -500,10 +806,32 @@ pub unsafe extern "C" fn SecRandomCopyBytes(_rnd: CFTypeRef, count: usize, bytes
+@@ -500,10 +817,32 @@ pub unsafe extern "C" fn SecRandomCopyBytes(_rnd: CFTypeRef, count: usize, bytes
  exports::exports! {
      functions {
          "SecCertificateCreateWithData" => SecCertificateCreateWithData,

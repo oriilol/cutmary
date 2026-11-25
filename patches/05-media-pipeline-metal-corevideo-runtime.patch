@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index a239bafe..bc0a428f 100644
+index a239bafe..b8984ba8 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -8,6 +8,18 @@ version = "0.1.9"
@@ -37,8 +37,16 @@ index a239bafe..bc0a428f 100644
   "appkit",
   "applicationservices",
   "audiotoolbox",
+@@ -2870,6 +2884,7 @@ dependencies = [
+  "machish",
+  "objc",
+  "prefix",
++ "rustls",
+  "rustls-pki-types",
+  "rustls-webpki",
+  "webpki-roots",
 diff --git a/Cargo.toml b/Cargo.toml
-index 1871ae24..5f2e476f 100644
+index 1871ae24..5e4af25b 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -24,6 +24,7 @@ foundation = { path = "crates/foundation" }
@@ -49,6 +57,14 @@ index 1871ae24..5f2e476f 100644
  chrome = { path = "crates/chrome" }
  applicationservices = { path = "crates/applicationservices" }
  coreservices = { path = "crates/coreservices" }
+@@ -54,6 +55,7 @@ libm = "0.2"
+ backtrace = "0.3"
+ gimli = "0.34"
+ getrandom = "0.3"
++rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+ rustls-pki-types = "1"
+ webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["ring", "std"] }
+ webpki-roots = "1"
 diff --git a/crates/accelerate/Cargo.toml b/crates/accelerate/Cargo.toml
 new file mode 100644
 index 00000000..56876fa3
@@ -4061,168 +4077,6 @@ index fc4d6388..5ebc71fa 100644
      #[test]
      fn a_started_link_calls_back_on_its_own_thread() {
          FIRED.store(0, Ordering::SeqCst);
-diff --git a/crates/corevideo/src/pixel_buffer/attachments.rs b/crates/corevideo/src/pixel_buffer/attachments.rs
-index 4952c0d5..4ae8b2c6 100644
---- a/crates/corevideo/src/pixel_buffer/attachments.rs
-+++ b/crates/corevideo/src/pixel_buffer/attachments.rs
-@@ -99,6 +99,61 @@ pub unsafe extern "C" fn CVBufferSetAttachment(
-     with(buffer, |a| a.set(key, value, mode));
- }
- 
-+pub unsafe extern "C" fn CVBufferHasAttachment(buffer: CFTypeRef, key: CFTypeRef) -> u8 {
-+    refuse_foreign(c"CVBufferHasAttachment", buffer);
-+    with(buffer, |a| !key.is_null() && a.get(key).is_some()).unwrap_or(false) as u8
-+}
-+
-+#[repr(C)]
-+#[derive(Clone, Copy, Default, Debug, PartialEq)]
-+pub struct CGRect {
-+    pub x: f64,
-+    pub y: f64,
-+    pub width: f64,
-+    pub height: f64,
-+}
-+
-+pub unsafe extern "C" fn CVImageBufferGetCleanRect(buffer: CFTypeRef) -> CGRect {
-+    forward_foreign!(
-+        c"CVImageBufferGetCleanRect",
-+        buffer,
-+        fn(CFTypeRef) -> CGRect,
-+        (buffer)
-+    );
-+    let Some(state) = state(buffer) else {
-+        return CGRect::default();
-+    };
-+    let full = CGRect {
-+        width: state.width as f64,
-+        height: state.height as f64,
-+        ..Default::default()
-+    };
-+    with(buffer, |a| {
-+        let (aperture, _) = a.get(super::key("CVCleanAperture"))?;
-+        let dict = unsafe { corefoundation::collections::dictionary(aperture) }?;
-+        let number = |name| {
-+            let value = dict.get(super::key(name))?;
-+            unsafe { corefoundation::collections::number(value) }
-+                .map(|n| n.as_f64())
-+                .filter(|n| n.is_finite())
-+        };
-+        let width = number("Width")?;
-+        let height = number("Height")?;
-+        if width <= 0.0 || height <= 0.0 {
-+            return None;
-+        }
-+        // The aperture offset increases downwards; Quartz's origin is bottom left.
-+        Some(CGRect {
-+            x: (full.width - width) / 2.0 + number("HorizontalOffset").unwrap_or(0.0),
-+            y: (full.height - height) / 2.0 - number("VerticalOffset").unwrap_or(0.0),
-+            width,
-+            height,
-+        })
-+    })
-+    .flatten()
-+    .unwrap_or(full)
-+}
-+
- /// `CFTypeRef CVBufferGetAttachment(CVBufferRef, CFStringRef key,
- /// CVAttachmentMode *)`, under the get rule.
- pub unsafe extern "C" fn CVBufferGetAttachment(
-@@ -273,6 +328,7 @@ mod tests {
-             assert!(CVBufferGetAttachment(b, matrix, std::ptr::null_mut()).is_null());
-             assert!(CVBufferGetAttachments(b, SHOULD_PROPAGATE).is_null());
-             CVBufferSetAttachment(b, matrix, value, SHOULD_PROPAGATE);
-+            assert_eq!(CVBufferHasAttachment(b, matrix), 1);
-             let mut mode = 7;
-             assert_eq!(CVBufferGetAttachment(b, matrix, &mut mode), value);
-             assert_eq!(mode, SHOULD_PROPAGATE);
-@@ -292,7 +348,9 @@ mod tests {
-             let copied = CVBufferCopyAttachment(b, matrix, std::ptr::null_mut());
-             assert_eq!(copied, value);
-             corefoundation::api::CFRelease(copied);
-+            assert_eq!(CVBufferHasAttachment(b, matrix), 1);
-             CVBufferRemoveAttachment(b, matrix);
-+            assert_eq!(CVBufferHasAttachment(b, matrix), 0);
-             assert!(CVBufferGetAttachment(b, matrix, std::ptr::null_mut()).is_null());
-             CVPixelBufferRelease(b);
-         }
-diff --git a/crates/corevideo/src/pixel_buffer/color.rs b/crates/corevideo/src/pixel_buffer/color.rs
-new file mode 100644
-index 00000000..f4b355e4
---- /dev/null
-+++ b/crates/corevideo/src/pixel_buffer/color.rs
-@@ -0,0 +1,72 @@
-+//! H.273 / ISO/IEC 23091-2 code points representable by CoreVideo attachment values.
-+
-+use super::{CFTypeRef, key};
-+
-+pub extern "C" fn CVColorPrimariesGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
-+    key(match code {
-+        1 => "ITU_R_709_2",
-+        5 => "EBU_3213",
-+        6 | 7 => "SMPTE_C",
-+        9 => "ITU_R_2020",
-+        11 => "DCI_P3",
-+        12 => "P3_D65",
-+        _ => return std::ptr::null(),
-+    })
-+}
-+
-+pub extern "C" fn CVTransferFunctionGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
-+    key(match code {
-+        1 | 6 => "ITU_R_709_2",
-+        4 | 5 => "UseGamma",
-+        7 => "SMPTE_240M_1995",
-+        8 => "Linear",
-+        13 => "sRGB",
-+        14 | 15 => "ITU_R_2020",
-+        16 => "SMPTE_ST_2084_PQ",
-+        17 => "SMPTE_ST_428_1",
-+        18 => "ITU_R_2100_HLG",
-+        _ => return std::ptr::null(),
-+    })
-+}
-+
-+pub extern "C" fn CVYCbCrMatrixGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
-+    key(match code {
-+        1 => "ITU_R_709_2",
-+        5 | 6 => "ITU_R_601_4",
-+        7 => "SMPTE_240M_1995",
-+        9 => "ITU_R_2020",
-+        _ => return std::ptr::null(),
-+    })
-+}
-+
-+#[cfg(test)]
-+mod tests {
-+    use super::*;
-+
-+    #[test]
-+    fn code_points_return_borrowed_constants_in_their_own_domain() {
-+        for (code, expected) in [(1, "ITU_R_709_2"), (9, "ITU_R_2020"), (12, "P3_D65")] {
-+            assert_eq!(
-+                CVColorPrimariesGetStringForIntegerCodePoint(code),
-+                key(expected)
-+            );
-+        }
-+        assert_eq!(
-+            CVTransferFunctionGetStringForIntegerCodePoint(16),
-+            key("SMPTE_ST_2084_PQ")
-+        );
-+        assert_eq!(
-+            CVTransferFunctionGetStringForIntegerCodePoint(18),
-+            key("ITU_R_2100_HLG")
-+        );
-+        assert_eq!(
-+            CVYCbCrMatrixGetStringForIntegerCodePoint(6),
-+            key("ITU_R_601_4")
-+        );
-+        for code in [-1, 2, 255] {
-+            assert!(CVColorPrimariesGetStringForIntegerCodePoint(code).is_null());
-+            assert!(CVTransferFunctionGetStringForIntegerCodePoint(code).is_null());
-+            assert!(CVYCbCrMatrixGetStringForIntegerCodePoint(code).is_null());
-+        }
-+    }
-+}
 diff --git a/crates/corevideo/src/pixel_buffer.rs b/crates/corevideo/src/pixel_buffer.rs
 index a1e29683..d312601f 100644
 --- a/crates/corevideo/src/pixel_buffer.rs
@@ -4447,6 +4301,168 @@ index a1e29683..d312601f 100644
      #[test]
      fn bgra_stride_lock_and_cf_ownership() {
          let b = create(7, 5, BGRA);
+diff --git a/crates/corevideo/src/pixel_buffer/attachments.rs b/crates/corevideo/src/pixel_buffer/attachments.rs
+index 4952c0d5..4ae8b2c6 100644
+--- a/crates/corevideo/src/pixel_buffer/attachments.rs
++++ b/crates/corevideo/src/pixel_buffer/attachments.rs
+@@ -99,6 +99,61 @@ pub unsafe extern "C" fn CVBufferSetAttachment(
+     with(buffer, |a| a.set(key, value, mode));
+ }
+ 
++pub unsafe extern "C" fn CVBufferHasAttachment(buffer: CFTypeRef, key: CFTypeRef) -> u8 {
++    refuse_foreign(c"CVBufferHasAttachment", buffer);
++    with(buffer, |a| !key.is_null() && a.get(key).is_some()).unwrap_or(false) as u8
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Default, Debug, PartialEq)]
++pub struct CGRect {
++    pub x: f64,
++    pub y: f64,
++    pub width: f64,
++    pub height: f64,
++}
++
++pub unsafe extern "C" fn CVImageBufferGetCleanRect(buffer: CFTypeRef) -> CGRect {
++    forward_foreign!(
++        c"CVImageBufferGetCleanRect",
++        buffer,
++        fn(CFTypeRef) -> CGRect,
++        (buffer)
++    );
++    let Some(state) = state(buffer) else {
++        return CGRect::default();
++    };
++    let full = CGRect {
++        width: state.width as f64,
++        height: state.height as f64,
++        ..Default::default()
++    };
++    with(buffer, |a| {
++        let (aperture, _) = a.get(super::key("CVCleanAperture"))?;
++        let dict = unsafe { corefoundation::collections::dictionary(aperture) }?;
++        let number = |name| {
++            let value = dict.get(super::key(name))?;
++            unsafe { corefoundation::collections::number(value) }
++                .map(|n| n.as_f64())
++                .filter(|n| n.is_finite())
++        };
++        let width = number("Width")?;
++        let height = number("Height")?;
++        if width <= 0.0 || height <= 0.0 {
++            return None;
++        }
++        // The aperture offset increases downwards; Quartz's origin is bottom left.
++        Some(CGRect {
++            x: (full.width - width) / 2.0 + number("HorizontalOffset").unwrap_or(0.0),
++            y: (full.height - height) / 2.0 - number("VerticalOffset").unwrap_or(0.0),
++            width,
++            height,
++        })
++    })
++    .flatten()
++    .unwrap_or(full)
++}
++
+ /// `CFTypeRef CVBufferGetAttachment(CVBufferRef, CFStringRef key,
+ /// CVAttachmentMode *)`, under the get rule.
+ pub unsafe extern "C" fn CVBufferGetAttachment(
+@@ -273,6 +328,7 @@ mod tests {
+             assert!(CVBufferGetAttachment(b, matrix, std::ptr::null_mut()).is_null());
+             assert!(CVBufferGetAttachments(b, SHOULD_PROPAGATE).is_null());
+             CVBufferSetAttachment(b, matrix, value, SHOULD_PROPAGATE);
++            assert_eq!(CVBufferHasAttachment(b, matrix), 1);
+             let mut mode = 7;
+             assert_eq!(CVBufferGetAttachment(b, matrix, &mut mode), value);
+             assert_eq!(mode, SHOULD_PROPAGATE);
+@@ -292,7 +348,9 @@ mod tests {
+             let copied = CVBufferCopyAttachment(b, matrix, std::ptr::null_mut());
+             assert_eq!(copied, value);
+             corefoundation::api::CFRelease(copied);
++            assert_eq!(CVBufferHasAttachment(b, matrix), 1);
+             CVBufferRemoveAttachment(b, matrix);
++            assert_eq!(CVBufferHasAttachment(b, matrix), 0);
+             assert!(CVBufferGetAttachment(b, matrix, std::ptr::null_mut()).is_null());
+             CVPixelBufferRelease(b);
+         }
+diff --git a/crates/corevideo/src/pixel_buffer/color.rs b/crates/corevideo/src/pixel_buffer/color.rs
+new file mode 100644
+index 00000000..f4b355e4
+--- /dev/null
++++ b/crates/corevideo/src/pixel_buffer/color.rs
+@@ -0,0 +1,72 @@
++//! H.273 / ISO/IEC 23091-2 code points representable by CoreVideo attachment values.
++
++use super::{CFTypeRef, key};
++
++pub extern "C" fn CVColorPrimariesGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
++    key(match code {
++        1 => "ITU_R_709_2",
++        5 => "EBU_3213",
++        6 | 7 => "SMPTE_C",
++        9 => "ITU_R_2020",
++        11 => "DCI_P3",
++        12 => "P3_D65",
++        _ => return std::ptr::null(),
++    })
++}
++
++pub extern "C" fn CVTransferFunctionGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
++    key(match code {
++        1 | 6 => "ITU_R_709_2",
++        4 | 5 => "UseGamma",
++        7 => "SMPTE_240M_1995",
++        8 => "Linear",
++        13 => "sRGB",
++        14 | 15 => "ITU_R_2020",
++        16 => "SMPTE_ST_2084_PQ",
++        17 => "SMPTE_ST_428_1",
++        18 => "ITU_R_2100_HLG",
++        _ => return std::ptr::null(),
++    })
++}
++
++pub extern "C" fn CVYCbCrMatrixGetStringForIntegerCodePoint(code: i32) -> CFTypeRef {
++    key(match code {
++        1 => "ITU_R_709_2",
++        5 | 6 => "ITU_R_601_4",
++        7 => "SMPTE_240M_1995",
++        9 => "ITU_R_2020",
++        _ => return std::ptr::null(),
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn code_points_return_borrowed_constants_in_their_own_domain() {
++        for (code, expected) in [(1, "ITU_R_709_2"), (9, "ITU_R_2020"), (12, "P3_D65")] {
++            assert_eq!(
++                CVColorPrimariesGetStringForIntegerCodePoint(code),
++                key(expected)
++            );
++        }
++        assert_eq!(
++            CVTransferFunctionGetStringForIntegerCodePoint(16),
++            key("SMPTE_ST_2084_PQ")
++        );
++        assert_eq!(
++            CVTransferFunctionGetStringForIntegerCodePoint(18),
++            key("ITU_R_2100_HLG")
++        );
++        assert_eq!(
++            CVYCbCrMatrixGetStringForIntegerCodePoint(6),
++            key("ITU_R_601_4")
++        );
++        for code in [-1, 2, 255] {
++            assert!(CVColorPrimariesGetStringForIntegerCodePoint(code).is_null());
++            assert!(CVTransferFunctionGetStringForIntegerCodePoint(code).is_null());
++            assert!(CVYCbCrMatrixGetStringForIntegerCodePoint(code).is_null());
++        }
++    }
++}
 diff --git a/crates/corevideo/src/pixel_buffer/surface.rs b/crates/corevideo/src/pixel_buffer/surface.rs
 new file mode 100644
 index 00000000..e5757e6e
@@ -5962,6 +5978,69 @@ index 67d1296e..1f54b43d 100644
          send_with_object(encoder, "setComputePipelineState:", pipeline);
          set_buffer_at(encoder, buffer, 0, 0);
          dispatch(encoder, 1);
+diff --git a/crates/metal_translate/src/air/metadata/mod.rs b/crates/metal_translate/src/air/metadata/mod.rs
+index 0d385de6..b7569d47 100644
+--- a/crates/metal_translate/src/air/metadata/mod.rs
++++ b/crates/metal_translate/src/air/metadata/mod.rs
+@@ -456,7 +456,11 @@ impl Metadata {
+                 None => interface.inputs.push(StageInput {
+                     argument,
+                     binding: input_binding(tag, rest, &mut next_input)?,
+-                    name: varying_link_name(&items).or_else(|| argument_name(&items)),
++                    name: if *tag == "air.vertex_input" {
++                        argument_name(&items)
++                    } else {
++                        varying_link_name(&items).or_else(|| argument_name(&items))
++                    },
+                     signed: *tag == "air.vertex_input" && signed_integer_argument(&items),
+                 }),
+             }
+diff --git a/crates/metal_translate/src/air/metadata/tests.rs b/crates/metal_translate/src/air/metadata/tests.rs
+index 16646429..92375979 100644
+--- a/crates/metal_translate/src/air/metadata/tests.rs
++++ b/crates/metal_translate/src/air/metadata/tests.rs
+@@ -323,3 +323,41 @@ fn numbers_generated_varyings_after_explicit_locations() {
+         }
+     );
+ }
++
++#[test]
++fn vertex_input_uses_arg_name_instead_of_generated_placeholder() {
++    let bitcode = bitcode_block(block(
++        8,
++        vec![
++            record(1, &[0]),
++            record(8, &[3, 0, 0, 0]),
++            block(11, vec![record(1, &[1]), record(4, &[0]), record(4, &[2])]),
++            block(
++                15,
++                vec![
++                    record(1, string("air.position")),                      // 0
++                    record(8, &[2, 0]),                                     // 1: output
++                    record(1, string("air.vertex_input")),                  // 2
++                    record(1, string("air.location_index")),                // 3
++                    record(1, string("generated(__air_placeholder__)")),    // 4
++                    record(1, string("air.arg_name")),                      // 5
++                    record(1, string("aPosition")),                         // 6
++                    record(8, &[1, 1, 2, 2, 2, 3, 1, 1, 1, 2, 2, 4, 2, 5, 2, 6]), // 7: input 0
++                    record(8, &[2, 1]),                                     // 8: output list
++                    record(8, &[2, 7]),                                     // 9: input list
++                    record(8, &[3, 0, 2, 8, 2, 9]),                         // 10: entry
++                    record(4, string("air.vertex")),
++                    record(10, &[10]),
++                ],
++            ),
++        ],
++    ));
++    let types = types();
++    let metadata = Metadata::decode(&bitcode, &types).unwrap();
++    let values = ValueTable::module_values(&bitcode, &types).unwrap();
++    let interface = metadata
++        .stage_interface(Stage::Vertex, &values, &types)
++        .unwrap();
++    assert_eq!(interface.inputs.len(), 1);
++    assert_eq!(interface.inputs[0].name.as_deref(), Some("aPosition"));
++}
 diff --git a/crates/metal_translate/src/cache/codec.rs b/crates/metal_translate/src/cache/codec.rs
 index 96197fea..e8f3aa02 100644
 --- a/crates/metal_translate/src/cache/codec.rs
@@ -6336,7 +6415,7 @@ index c2ef1e77..5959336f 100644
                  )?;
              }
 diff --git a/crates/metal_translate/src/spirv/mod.rs b/crates/metal_translate/src/spirv/mod.rs
-index dce52ea5..9c682820 100644
+index dce52ea5..e11a6bf3 100644
 --- a/crates/metal_translate/src/spirv/mod.rs
 +++ b/crates/metal_translate/src/spirv/mod.rs
 @@ -1,4 +1,6 @@
@@ -6384,14 +6463,16 @@ index dce52ea5..9c682820 100644
      target: &TargetProfile,
  ) -> Result<EntryArtifact, TranslateError> {
      if !matches!(entry.stage, Stage::Kernel | Stage::Fragment | Stage::Vertex) {
-@@ -494,6 +502,11 @@ fn emit_entry(
+@@ -493,7 +501,12 @@ fn emit_entry(
+     let words = module.assemble();
      rspirv::dr::load_words(&words)
          .map_err(|error| emission(format!("emitted SPIR-V could not be parsed: {error}")))?;
-     let (vertex_inputs, varyings) = interface_reflection(entry, function);
+-    let (vertex_inputs, varyings) = interface_reflection(entry, function);
 +    let reflect_function = original
 +        .functions
 +        .get(original_entry.function)
 +        .unwrap_or(function);
++    let (vertex_inputs, varyings) = interface_reflection(original_entry, reflect_function);
 +    let arguments = reflect::argument_reflection(original_entry, reflect_function);
      Ok(EntryArtifact {
          name: function.name.clone(),
