@@ -160,7 +160,7 @@ Antes de cada lanzamiento hay que borrar los `*.locked` de 0 bytes de
 
 **Segunda tanda (misma tarde)**
 
-Verificado en vivo: importar varias fotos seguidas, miniaturas en el panel de Medios y en la
+Verificado en vivo: menú contextual (clic derecho) transparente y en su sitio; importar varias fotos seguidas, miniaturas en el panel de Medios y en la
 línea de tiempo (4 clips), botón Export activo. El panel de Medios ya no se atasca en bucle.
 
 - MSL `isunordered`/`isordered`: los dos shaders de medios de CapCut fallaban al traducirse y
@@ -177,9 +177,8 @@ línea de tiempo (4 clips), botón Export activo. El panel de Medios ya no se at
 
 - El editor sigue yendo con retardo al cargar contenido: CPU (~7 %) y GPU (~1 %) casi ociosas,
   así que es espera, no cómputo; por localizar.
-- Menú contextual: en Wayland la ventana transparente a pantalla completa de Qt no se puede
-  colocar en (0,0) y sale gris/negra o como ventana aparte. En X11 (XWayland) sale en su sitio
-  pero con fondo gris, y el editor aborta al compartir un contexto GL entre hilos (GLX).
+- Menú contextual: **verificado en vivo** en Wayland (transparente, redondeado, en su sitio)
+  con `4f3bc52`; aún va con retardo al abrirse.
 - La pantalla de inicio no muestra miniaturas de proyectos ni el degradado del botón.
 - El reproductor no reproduce y el editor va muy lento (~1 fps).
 - Vídeo `.mp4`: faltan `CV{ColorPrimaries,TransferFunction,YCbCrMatrix}GetStringForIntegerCodePoint`
