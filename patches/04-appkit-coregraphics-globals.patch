@@ -1958,7 +1958,7 @@ index a4137b46..a052c984 100644
          "_kCGDisplayShowDuplicateLowResolutionModes",
          "kCGDisplayShowDuplicateLowResolutionModes",
 diff --git a/crates/appkit/src/opengl.rs b/crates/appkit/src/opengl.rs
-index a1151f4f..21035dd4 100644
+index a1151f4f..07da0ae0 100644
 --- a/crates/appkit/src/opengl.rs
 +++ b/crates/appkit/src/opengl.rs
 @@ -73,6 +73,11 @@ struct Cell {
@@ -1973,7 +1973,75 @@ index a1151f4f..21035dd4 100644
      /// Whether another thread is waiting for the holder to give it up.
      wanted: bool,
      /// Whether the two below have been read off the SDL context yet, which can
-@@ -897,6 +902,9 @@ thread_local! {
+@@ -707,29 +712,62 @@ unsafe extern "C" fn clear_drawable(receiver: Id, _sel: Sel) {
+     context.view = std::ptr::null_mut();
+ }
+ 
++/// Whether `window` is already presenting with Metal/Vulkan (or owns a
++/// `CAMetalLayer`). Rebuilding such a window as `SDL_WINDOW_OPENGL` would
++/// destroy its Vulkan swapchain and force every Metal frame onto slow CPU
++/// readback.
++fn window_uses_metal(window: Id) -> bool {
++    if window.is_null() {
++        return false;
++    }
++    // SAFETY: null or a window this crate made.
++    let sdl = unsafe { crate::window::sdl_window(window) };
++    if !sdl.is_null()
++        && (sdl3::video::vulkan::owns_window(sdl)
++            || crate::view::metal_scene(sdl).is_some_and(|scene| !scene.is_empty()))
++    {
++        return true;
++    }
++    crate::view::window_has_metal_layer(window)
++}
++
+ /// The window a context should draw into: its view's, or - before it has one -
+-/// whichever window the program has made.
++/// whichever non-Metal window the program has made.
+ ///
+ /// SDL needs a window to *create* a context against, and AppKit does not. The
+ /// window is not part of the context on either side, though: `SDL_GL_MakeCurrent`
+ /// takes it again on every call, so binding a context made against one window to
+ /// another later is what the API is for rather than a workaround.
+-/// The `NSWindow` a context draws into, which is the one its view is in and
+-/// otherwise the program's current window.
++///
++/// A viewless (offscreen) GL context must never hijack a window that draws with
++/// Metal/Vulkan: doing so would rebuild that window with `SDL_WINDOW_OPENGL`,
++/// tear down its Vulkan swapchain, and demote Metal presentation to CPU readback.
++/// Returning null sends such contexts to [`holding_window`] instead.
+ fn drawable_window(context: &Context) -> Id {
+     // SAFETY: the view is null or an object this runtime allocated.
+     let window = unsafe { crate::view::window_of(context.view) };
+     // SAFETY: null or a window this crate made.
+-    if !unsafe { crate::window::sdl_window(window) }.is_null() {
++    let sdl = unsafe { crate::window::sdl_window(window) };
++    if !sdl.is_null() {
++        // Even with a view, never tear down a window that already owns a live
++        // Vulkan swapchain (for example, an offscreen GL subview inside a
++        // Metal/Qt editor window); keep it on the hidden offscreen GL window.
++        if sdl3::video::vulkan::owns_window(sdl) {
++            return std::ptr::null_mut();
++        }
+         return window;
+     }
+-    match crate::window::key_window().is_null() {
++    let fallback = match crate::window::key_window().is_null() {
+         false => crate::window::key_window(),
+         true => crate::window::all()
+             .last()
+             .copied()
+             .unwrap_or(std::ptr::null_mut()),
++    };
++    if window_uses_metal(fallback) {
++        return std::ptr::null_mut();
+     }
++    fallback
+ }
+ 
+ fn drawable(context: &Context) -> sdl3::Window {
+@@ -897,6 +935,9 @@ thread_local! {
          const { std::cell::Cell::new((std::ptr::null_mut(), std::ptr::null_mut(), None)) };
      // Ownership must be released even when a guest's render thread exits.
      static BINDING: ThreadBinding = const { ThreadBinding(std::cell::Cell::new(std::ptr::null_mut())) };
@@ -1983,7 +2051,7 @@ index a1151f4f..21035dd4 100644
  }
  
  /// `ROSEMARY_GL_DEBUG`, read once: it is asked on every make-current.
-@@ -990,22 +998,66 @@ fn note_bound_locked(
+@@ -990,22 +1031,66 @@ fn note_bound_locked(
      release_retired_drawables(me, Some(window as usize));
  }
  
@@ -2058,7 +2126,7 @@ index a1151f4f..21035dd4 100644
  }
  
  #[cfg(test)]
-@@ -1127,7 +1179,10 @@ fn restore_current_drawable(receiver: Id) {
+@@ -1127,7 +1212,10 @@ fn restore_current_drawable(receiver: Id) {
          return;
      }
      drop(state);
@@ -2070,7 +2138,7 @@ index a1151f4f..21035dd4 100644
          restore_popup_swap_interval(receiver, native, window);
          chrome_blit::fit_viewport(drawable_window(context), window, native);
      } else {
-@@ -1138,11 +1193,14 @@ fn restore_current_drawable(receiver: Id) {
+@@ -1138,11 +1226,14 @@ fn restore_current_drawable(receiver: Id) {
      }
  }
  
@@ -2087,7 +2155,7 @@ index a1151f4f..21035dd4 100644
          bound.retain(|(thread, _, _)| *thread != me);
          release_retired_drawables(me, None);
      }
-@@ -1168,7 +1226,7 @@ fn claim_window(receiver: Id, window: sdl3::Window) {
+@@ -1168,7 +1259,7 @@ fn claim_window(receiver: Id, window: sdl3::Window) {
      };
      let cell = shared_of(context_of(context));
      let mut state = cell.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -2096,7 +2164,7 @@ index a1151f4f..21035dd4 100644
          return;
      }
      state.set_wanted(true);
-@@ -1177,6 +1235,7 @@ fn claim_window(receiver: Id, window: sdl3::Window) {
+@@ -1177,6 +1268,7 @@ fn claim_window(receiver: Id, window: sdl3::Window) {
          .wait_timeout_while(state, HANDOFF, |state| state.owner == Some(thread))
          .unwrap_or_else(|e| e.into_inner());
      if wait.timed_out() {
@@ -2104,7 +2172,7 @@ index a1151f4f..21035dd4 100644
          state.set_wanted(false);
      }
  }
-@@ -1190,6 +1249,7 @@ fn let_go(receiver: Id) {
+@@ -1190,6 +1282,7 @@ fn let_go(receiver: Id) {
      let mut state = cell.state.lock().unwrap_or_else(|e| e.into_inner());
      if state.owner == Some(std::thread::current().id()) {
          state.owner = None;
@@ -2112,7 +2180,7 @@ index a1151f4f..21035dd4 100644
          state.set_wanted(false);
          cell.released.notify_all();
      }
-@@ -1286,6 +1346,7 @@ pub fn release_for_other_threads() {
+@@ -1286,6 +1379,7 @@ pub fn release_for_other_threads() {
      unbind_here();
      BINDING.with(|binding| binding.0.set(std::ptr::null_mut()));
      state.owner = None;
@@ -2120,7 +2188,7 @@ index a1151f4f..21035dd4 100644
      state.set_wanted(false);
      CURRENT.set(std::ptr::null_mut());
      cell.released.notify_all();
-@@ -1349,19 +1410,26 @@ unsafe extern "C" fn make_current_context(receiver: Id, _sel: Sel) {
+@@ -1349,19 +1443,26 @@ unsafe extern "C" fn make_current_context(receiver: Id, _sel: Sel) {
      // makes on the thread it sets its renderer up on are only *some* of them
      // shared, so the context itself is worth waiting for and a sibling is the
      // fallback rather than the answer.
@@ -2160,7 +2228,7 @@ index a1151f4f..21035dd4 100644
              }
          }
      }
-@@ -1382,16 +1450,30 @@ unsafe extern "C" fn make_current_context(receiver: Id, _sel: Sel) {
+@@ -1382,16 +1483,30 @@ unsafe extern "C" fn make_current_context(receiver: Id, _sel: Sel) {
  
      // Still bound from before this thread's last clear - see
      // `clear_current_context` - so there is nothing to ask the driver for.
@@ -2198,7 +2266,7 @@ index a1151f4f..21035dd4 100644
          // Read off the context now that it is current, which is the only place
          // either answer can be had: the version is what a sibling has to be
          // asked for, and whether SDL's handle is the EGL one is what says a
-@@ -1403,9 +1485,11 @@ unsafe extern "C" fn make_current_context(receiver: Id, _sel: Sel) {
+@@ -1403,9 +1518,11 @@ unsafe extern "C" fn make_current_context(receiver: Id, _sel: Sel) {
              install_debug_output();
          }
      }
@@ -2212,7 +2280,7 @@ index a1151f4f..21035dd4 100644
              if !sdl3::video::gl_set_swap_interval(interval) {
                  objc::fail!(
                      "-[NSOpenGLContext makeCurrentContext]: SDL could not set swap interval \
-@@ -2059,7 +2143,78 @@ unsafe extern "C" fn flush_buffer(receiver: Id, _sel: Sel) {
+@@ -2059,7 +2176,78 @@ unsafe extern "C" fn flush_buffer(receiver: Id, _sel: Sel) {
          if sdl3::video::gl_current_window() == window {
              chrome_blit::mask_outside_logical_frame(drawable_window(context_of(receiver)), window);
          }
@@ -2291,7 +2359,7 @@ index a1151f4f..21035dd4 100644
      }
  }
  
-@@ -2420,6 +2575,41 @@ mod chrome_blit {
+@@ -2420,6 +2608,41 @@ mod chrome_blit {
          (x, y, w, (clip.y + clip.h - top).clamp(0, h))
      }
  
@@ -2333,7 +2401,7 @@ index a1151f4f..21035dd4 100644
      /// Initialize GL's default viewport for AppKit's drawable, and adjust it
      /// when AppKit's logical content changes without rebinding the context.
      /// If the guest explicitly replaces that viewport, leave its GL state alone.
-@@ -2448,6 +2638,9 @@ mod chrome_blit {
+@@ -2448,6 +2671,9 @@ mod chrome_blit {
              crate::window::content_inset(object),
          );
          let whole = target == (0, 0, pixels.0, pixels.1);
@@ -2343,7 +2411,7 @@ index a1151f4f..21035dd4 100644
          let mut fitted = FITTED.lock().unwrap_or_else(|e| e.into_inner());
          // A viewport belongs to the context and survives SDL window rebinding.
          let item = fitted
-@@ -2608,7 +2801,11 @@ mod chrome_blit {
+@@ -2608,7 +2834,11 @@ mod chrome_blit {
          };
          // SAFETY: a current context, and entry points of its GL.
          unsafe {
@@ -2801,10 +2869,45 @@ index 978f00ea..1c2f11fd 100644
      // dictionary's retain is the only one that matters. Mixing an owned value
      // in with autoreleased ones is how a leak or a double release gets written.
 diff --git a/crates/appkit/src/view.rs b/crates/appkit/src/view.rs
-index 221c3265..124745ae 100644
+index 221c3265..d7f73aac 100644
 --- a/crates/appkit/src/view.rs
 +++ b/crates/appkit/src/view.rs
-@@ -2614,6 +2614,9 @@ pub unsafe fn superview_of(view: Id) -> Id {
+@@ -470,6 +470,34 @@ pub(crate) fn surface_poll_visits_for_test() -> usize {
+     METAL_SURFACE_POLL_VISITS.load(std::sync::atomic::Ordering::Relaxed)
+ }
+ 
++/// Whether any view in `window`'s hierarchy carries a `CAMetalLayer`.
++pub(crate) fn window_has_metal_layer(window: Id) -> bool {
++    if window.is_null() {
++        return false;
++    }
++    fn visit(view: Id, depth: usize) -> bool {
++        if depth >= 64 || view.is_null() || !is_view(view) {
++            return false;
++        }
++        let layer = view_of(view).layer;
++        if !layer.is_null() && crate::layer::is_metal(layer) {
++            return true;
++        }
++        let children = view_of(view).subviews;
++        if let Some(children) =
++            unsafe { corefoundation::collections::array(children as *const c_void) }
++        {
++            for &child in &children.values {
++                if visit(child as Id, depth + 1) {
++                    return true;
++                }
++            }
++        }
++        false
++    }
++    visit(crate::window::content_view_of(window), 0)
++}
++
+ fn capture_surface_poll_owners(window: sdl3::Window) {
+     let mut owners = Vec::new();
+     if crate::coreanimation::has_surface_publications() {
+@@ -2614,6 +2642,9 @@ pub unsafe fn superview_of(view: Id) -> Id {
  /// not set that flag leaves the guest drawing a point-sized viewport into a
  /// pixel-sized surface.
  fn scale(receiver: Id) -> f64 {
