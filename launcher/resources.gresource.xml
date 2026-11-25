@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/org/cutmary/Cutmary">
+    <file alias="icons/128x128/apps/org.cutmary.Cutmary.png">assets/icons/hicolor/128x128/apps/org.cutmary.Cutmary.png</file>
+    <file alias="icons/256x256/apps/org.cutmary.Cutmary.png">assets/icons/hicolor/256x256/apps/org.cutmary.Cutmary.png</file>
+    <file alias="icons/512x512/apps/org.cutmary.Cutmary.png">assets/icons/hicolor/512x512/apps/org.cutmary.Cutmary.png</file>
+    <file preprocess="xml-stripblanks" alias="icons/scalable/actions/cutmary-home-symbolic.svg">assets/icons/symbolic/cutmary-home-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="icons/scalable/actions/cutmary-folder-open-symbolic.svg">assets/icons/symbolic/cutmary-folder-open-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="icons/scalable/actions/cutmary-check-symbolic.svg">assets/icons/symbolic/cutmary-check-symbolic.svg</file>
+    <file alias="style.css">assets/style.css</file>
+  </gresource>
+</gresources>
