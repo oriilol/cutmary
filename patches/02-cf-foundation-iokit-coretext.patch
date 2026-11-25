@@ -337,7 +337,7 @@ index 5613a609..9c0c4a0a 100644
          "CFArrayAppendArray" => api::CFArrayAppendArray,
          "CFRunLoopRemoveSource" => api::CFRunLoopRemoveSource,
 diff --git a/crates/corefoundation/src/string.rs b/crates/corefoundation/src/string.rs
-index 22c1a9cf..38366b40 100644
+index 22c1a9cf..11d9e489 100644
 --- a/crates/corefoundation/src/string.rs
 +++ b/crates/corefoundation/src/string.rs
 @@ -1,5 +1,6 @@
@@ -348,7 +348,7 @@ index 22c1a9cf..38366b40 100644
  
  use objc::class::Class;
  
-@@ -175,6 +176,41 @@ pub fn immortal(text: &str) -> CFTypeRef {
+@@ -175,6 +176,40 @@ pub fn immortal(text: &str) -> CFTypeRef {
      std::ptr::from_mut(object) as CFTypeRef
  }
  
@@ -362,12 +362,14 @@ index 22c1a9cf..38366b40 100644
 +/// `+[NSString stringWithUTF8String:]` and only survive on macOS because short
 +/// ASCII strings are tagged pointers.
 +///
-+/// The table is capped so callers generating arbitrary short strings cannot
-+/// grow it without bound; once full, callers fall back to a normal heap
-+/// `__NSCFString`.
++/// No artificial entry cap is imposed here because falling back to a normal
++/// heap `__NSCFString` after hitting a cap would re-introduce the double-free
++/// in long-running sessions; memory usage is bounded by the number of distinct
++/// short ASCII strings created through exact `NSString` class constructors.
++/// Medium-term, native tagged-pointer support across `objc`/`corefoundation`
++/// can supersede this table entirely.
 +pub fn intern_short_ascii(bytes: &[u8]) -> Option<CFTypeRef> {
 +    const MAX_LEN: usize = 9;
-+    const MAX_ENTRIES: usize = 4096;
 +    if bytes.len() > MAX_LEN || !bytes.is_ascii() {
 +        return None;
 +    }
@@ -376,9 +378,6 @@ index 22c1a9cf..38366b40 100644
 +    let mut table = INTERNED.lock().unwrap_or_else(|e| e.into_inner());
 +    if let Some(&ptr) = table.get(bytes) {
 +        return Some(ptr as CFTypeRef);
-+    }
-+    if table.len() >= MAX_ENTRIES {
-+        return None;
 +    }
 +    let text = std::str::from_utf8(bytes).ok()?;
 +    let ptr = immortal(text);
@@ -1038,14 +1037,48 @@ index c40a60fa..3580826d 100644
          "initWithBytesNoCopy:length:" => data_init_no_copy, c"@32@0:8^v16Q24";
          "initWithBytesNoCopy:length:freeWhenDone:" => data_init_no_copy_free, c"@36@0:8^v16Q24B32";
 diff --git a/crates/foundation/src/string.rs b/crates/foundation/src/string.rs
-index 2764ea14..2442a1c5 100644
+index 2764ea14..6a7145f4 100644
 --- a/crates/foundation/src/string.rs
 +++ b/crates/foundation/src/string.rs
-@@ -306,6 +306,11 @@ unsafe extern "C" fn copy(receiver: Id, _sel: Sel) -> Id {
- unsafe extern "C" fn string_with_utf8(_class: Id, _sel: Sel, cstr: *const c_char) -> Id {
+@@ -303,9 +303,44 @@ unsafe extern "C" fn copy(receiver: Id, _sel: Sel) -> Id {
+     objc::arc::retain(receiver)
+ }
+ 
+-unsafe extern "C" fn string_with_utf8(_class: Id, _sel: Sel, cstr: *const c_char) -> Id {
++fn is_exact_immutable_nsstring_class(class: Id) -> bool {
++    if class.is_null() {
++        return false;
++    }
++    // SAFETY: `class` is the `Class` receiver of an `NSString` class method.
++    unsafe { objc::class::from_ptr(class.cast()) }.is_some_and(|c| c.name_str() == "NSString")
++}
++
++unsafe fn mutable_copy_and_release(immutable: CFTypeRef) -> Id {
++    if immutable.is_null() {
++        return std::ptr::null_mut();
++    }
++    // SAFETY: `immutable` is a live `CFString` just created by the caller.
++    let mutable = unsafe {
++        corefoundation::string::as_string(immutable)
++            .map(corefoundation::string::new_mutable_copy)
++            .unwrap_or(std::ptr::null())
++    };
++    unsafe { api::CFRelease(immutable) };
++    if mutable.is_null() {
++        return std::ptr::null_mut();
++    }
++    unsafe { api::CFAutorelease(mutable) as Id }
++}
++
++unsafe extern "C" fn string_with_utf8(class: Id, _sel: Sel, cstr: *const c_char) -> Id {
      // SAFETY: a NUL-terminated string or null.
      unsafe {
-+        if let Some(bytes) = corefoundation::string::cstr_bytes(cstr)
++        if is_mutable_receiver(class) {
++            let s = api::CFStringCreateWithCString(std::ptr::null(), cstr, encoding::UTF8);
++            return mutable_copy_and_release(s);
++        }
++        if is_exact_immutable_nsstring_class(class)
++            && let Some(bytes) = corefoundation::string::cstr_bytes(cstr)
 +            && let Some(interned) = corefoundation::string::intern_short_ascii(bytes)
 +        {
 +            return interned as Id;
@@ -1053,21 +1086,33 @@ index 2764ea14..2442a1c5 100644
          let s = api::CFStringCreateWithCString(std::ptr::null(), cstr, encoding::UTF8);
          api::CFAutorelease(s) as Id
      }
-@@ -388,8 +393,21 @@ unsafe extern "C" fn string_with_cstring_encoding(
+@@ -383,13 +418,32 @@ unsafe extern "C" fn init_with_characters(
+ }
+ 
+ unsafe extern "C" fn string_with_cstring_encoding(
+-    _class: Id,
++    class: Id,
+     _sel: Sel,
      cstr: *const c_char,
      ns: usize,
  ) -> Id {
 +    let cf = cf_encoding(ns);
      unsafe {
 -        let s = api::CFStringCreateWithCString(std::ptr::null(), cstr, cf_encoding(ns));
-+        if matches!(
-+            cf,
-+            encoding::UTF8
-+                | encoding::ASCII
-+                | encoding::ISO_LATIN_1
-+                | encoding::MAC_ROMAN
-+                | encoding::WINDOWS_LATIN1
-+        ) && let Some(bytes) = corefoundation::string::cstr_bytes(cstr)
++        if is_mutable_receiver(class) {
++            let s = api::CFStringCreateWithCString(std::ptr::null(), cstr, cf);
++            return mutable_copy_and_release(s);
++        }
++        if is_exact_immutable_nsstring_class(class)
++            && matches!(
++                cf,
++                encoding::UTF8
++                    | encoding::ASCII
++                    | encoding::ISO_LATIN_1
++                    | encoding::MAC_ROMAN
++                    | encoding::WINDOWS_LATIN1
++            )
++            && let Some(bytes) = corefoundation::string::cstr_bytes(cstr)
 +            && let Some(interned) = corefoundation::string::intern_short_ascii(bytes)
 +        {
 +            return interned as Id;
@@ -1076,7 +1121,7 @@ index 2764ea14..2442a1c5 100644
          api::CFAutorelease(s) as Id
      }
  }
-@@ -961,6 +979,73 @@ unsafe extern "C" fn range_of_character(receiver: Id, sel: Sel, set: Id) -> NSRa
+@@ -961,6 +1015,73 @@ unsafe extern "C" fn range_of_character(receiver: Id, sel: Sel, set: Id) -> NSRa
      unsafe { range_of_character_options(receiver, sel, set, 0) }
  }
  
@@ -1150,7 +1195,7 @@ index 2764ea14..2442a1c5 100644
  /// Replace `range` of a mutable string's UTF-16 units with `insertion`.
  /// Past the end is Apple's range exception, which fails here by name.
  unsafe fn splice(receiver: Id, selector: &str, range: NSRange, insertion: &[u16]) {
-@@ -1323,13 +1408,51 @@ unsafe extern "C" fn get_characters(receiver: Id, sel: Sel, buffer: *mut u16) {
+@@ -1323,13 +1444,51 @@ unsafe extern "C" fn get_characters(receiver: Id, sel: Sel, buffer: *mut u16) {
  
  unsafe extern "C" fn lowercase(receiver: Id, _sel: Sel) -> Id {
      // SAFETY: an `NSString`.
@@ -1159,10 +1204,10 @@ index 2764ea14..2442a1c5 100644
 -    let s = corefoundation::string::from_bytes(&whole, false);
 +    let text = String::from_utf8_lossy(&unsafe { bytes(receiver) }).to_lowercase();
 +    let s = corefoundation::string::from_bytes(text.as_bytes(), false);
-     // SAFETY: a fresh object.
-     unsafe { api::CFAutorelease(s) as Id }
- }
- 
++    // SAFETY: a fresh object.
++    unsafe { api::CFAutorelease(s) as Id }
++}
++
 +unsafe extern "C" fn lowercase_with_locale(receiver: Id, sel: Sel, _locale: Id) -> Id {
 +    unsafe { lowercase(receiver, sel) }
 +}
@@ -1194,10 +1239,10 @@ index 2764ea14..2442a1c5 100644
 +        }
 +    }
 +    let s = corefoundation::string::from_bytes(out.as_bytes(), false);
-+    // SAFETY: a fresh object.
-+    unsafe { api::CFAutorelease(s) as Id }
-+}
-+
+     // SAFETY: a fresh object.
+     unsafe { api::CFAutorelease(s) as Id }
+ }
+ 
 +unsafe extern "C" fn capitalized_with_locale(receiver: Id, sel: Sel, _locale: Id) -> Id {
 +    unsafe { capitalized(receiver, sel) }
 +}
@@ -1205,7 +1250,7 @@ index 2764ea14..2442a1c5 100644
  /// The receiver in a Unicode normalization form, autoreleased.
  fn normalized(receiver: Id, form: api::NormalizationForm) -> Id {
      // SAFETY: an `NSString`.
-@@ -1887,6 +2010,10 @@ pub(crate) fn install() {
+@@ -1887,6 +2046,10 @@ pub(crate) fn install() {
          "rangeOfCharacterFromSet:options:" => range_of_character_options, c"{_NSRange=QQ}32@0:8@16Q24";
          "rangeOfCharacterFromSet:options:range:" => range_of_character_in_range,
              c"{_NSRange=QQ}48@0:8@16Q24{_NSRange=QQ}32";
@@ -1216,7 +1261,7 @@ index 2764ea14..2442a1c5 100644
          "rangeOfString:options:" => range_of_string_options, c"{_NSRange=QQ}32@0:8@16Q24";
          "containsString:" => contains_string, c"B24@0:8@16";
          "hasPrefix:" => has_prefix, c"B24@0:8@16";
-@@ -1897,7 +2024,14 @@ pub(crate) fn install() {
+@@ -1897,7 +2060,14 @@ pub(crate) fn install() {
          "componentsSeparatedByString:" => components_separated_by_string, c"@24@0:8@16";
          "componentsSeparatedByCharactersInSet:" => components_separated_by_characters, c"@24@0:8@16";
          "lowercaseString" => lowercase, c"@16@0:8";
@@ -1500,6 +1545,68 @@ index 2f5a9784..928440f4 100644
          "knownTimeZoneNames" => known_time_zone_names, c"@16@0:8";
          "timeZoneWithName:" => time_zone_with_name, c"@24@0:8@16";
          "timeZoneWithAbbreviation:" => time_zone_with_abbreviation, c"@24@0:8@16";
+diff --git a/crates/foundation/tests/string_init.rs b/crates/foundation/tests/string_init.rs
+index 28cc224c..b403c888 100644
+--- a/crates/foundation/tests/string_init.rs
++++ b/crates/foundation/tests/string_init.rs
+@@ -79,3 +79,57 @@ fn init_with_characters_returns_an_owned_string() {
+     });
+     assert_eq!(owned, 1);
+ }
++
++fn call_string_with_utf8(class_name: &std::ffi::CStr, text: &std::ffi::CStr) -> Id {
++    let class = objc::class::lookup(class_name).expect("class registered");
++    let sel = objc::sel::get("stringWithUTF8String:");
++    let imp = class.metaclass().method(sel).unwrap().implementation();
++    unsafe {
++        let f: unsafe extern "C" fn(Id, Sel, *const std::ffi::c_char) -> Id =
++            std::mem::transmute_copy(&imp);
++        f(objc::class::ptr(class).cast(), sel, text.as_ptr())
++    }
++}
++
++#[test]
++fn string_with_utf8_interns_short_ascii_only_for_exact_nsstring() {
++    foundation::bootstrap();
++    let pool = objc::arc::pool_push();
++
++    let s1 = call_string_with_utf8(c"NSString", c"main0");
++    let s2 = call_string_with_utf8(c"NSString", c"main0");
++    assert_eq!(s1, s2);
++    // Over-releasing an interned short ASCII NSString must be safe (no-op).
++    objc::arc::release(s1);
++    objc::arc::release(s1);
++    assert_eq!(unsafe { foundation::string::bytes(s1) }, b"main0");
++
++    // +[NSMutableString stringWithUTF8String:] must return a fresh mutable object.
++    let m1 = call_string_with_utf8(c"NSMutableString", c"main0");
++    let m2 = call_string_with_utf8(c"NSMutableString", c"main0");
++    assert_ne!(m1, s1);
++    assert_ne!(m1, m2);
++    let suffix = foundation::string::from_str("_edit");
++    let (append_sel, append_imp) = implementation(m1, "appendString:");
++    unsafe {
++        let f: unsafe extern "C" fn(Id, Sel, Id) = std::mem::transmute(append_imp);
++        f(m1, append_sel, suffix);
++        assert_eq!(foundation::string::bytes(m1), b"main0_edit");
++        assert_eq!(foundation::string::bytes(m2), b"main0");
++        assert_eq!(foundation::string::bytes(s1), b"main0");
++    }
++    objc::arc::release(suffix);
++
++    // Custom NSString subclass must not receive the interned constant string.
++    let ns_string = objc::class::lookup(c"NSString").unwrap();
++    if objc::class::lookup(c"TestCustomNSStringSub").is_none() {
++        let sub = objc::class::allocate_pair(Some(ns_string), c"TestCustomNSStringSub", 0)
++            .expect("subclass allocated");
++        objc::class::register_pair(sub);
++    }
++    let sub_str = call_string_with_utf8(c"TestCustomNSStringSub", c"main0");
++    assert_ne!(sub_str, s1);
++    assert_eq!(unsafe { foundation::string::bytes(sub_str) }, b"main0");
++
++    objc::arc::pool_pop(pool);
++}
 diff --git a/crates/iokit/src/power.rs b/crates/iokit/src/power.rs
 index 8029edf8..08b77bef 100644
 --- a/crates/iokit/src/power.rs
