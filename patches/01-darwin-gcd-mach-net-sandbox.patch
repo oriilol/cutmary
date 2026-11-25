@@ -1,5 +1,5 @@
 diff --git a/crates/darwin/src/asl.rs b/crates/darwin/src/asl.rs
-index c90972a..e680a21 100644
+index c90972a2..e680a214 100644
 --- a/crates/darwin/src/asl.rs
 +++ b/crates/darwin/src/asl.rs
 @@ -43,9 +43,43 @@ crate::va_list! {
@@ -47,7 +47,7 @@ index c90972a..e680a21 100644
      }
  }
 diff --git a/crates/darwin/src/atomics.rs b/crates/darwin/src/atomics.rs
-index 9c7386b..863198b 100644
+index 9c7386bf..863198bf 100644
 --- a/crates/darwin/src/atomics.rs
 +++ b/crates/darwin/src/atomics.rs
 @@ -59,6 +59,46 @@ pub unsafe extern "C" fn OSAtomicAdd64Barrier(amount: i64, value: *mut c_void) -
@@ -113,7 +113,7 @@ index 9c7386b..863198b 100644
          "OSAtomicCompareAndSwap32Barrier" => OSAtomicCompareAndSwap32Barrier,
          "OSAtomicCompareAndSwap64" => OSAtomicCompareAndSwap64,
 diff --git a/crates/darwin/src/bsd/posix.rs b/crates/darwin/src/bsd/posix.rs
-index e23f11d..b866e97 100644
+index e23f11d4..b866e974 100644
 --- a/crates/darwin/src/bsd/posix.rs
 +++ b/crates/darwin/src/bsd/posix.rs
 @@ -377,6 +377,73 @@ pub extern "C" fn mac_syscall(_policy: *const c_char, _call: c_int, _arg: *mut c
@@ -209,7 +209,7 @@ index e23f11d..b866e97 100644
          "__keymgr_dwarf2_register_sections" => keymgr_dwarf2_register_sections,
          "__atomic_load" => atomic_load,
 diff --git a/crates/darwin/src/dispatch/block.rs b/crates/darwin/src/dispatch/block.rs
-index 966a22c..1bbae6e 100644
+index 966a22cc..1bbae6e1 100644
 --- a/crates/darwin/src/dispatch/block.rs
 +++ b/crates/darwin/src/dispatch/block.rs
 @@ -64,6 +64,18 @@ pub unsafe fn invoke(block: u64) {
@@ -232,7 +232,7 @@ index 966a22c..1bbae6e 100644
  mod tests {
      use super::*;
 diff --git a/crates/darwin/src/dispatch/mod.rs b/crates/darwin/src/dispatch/mod.rs
-index da6e949..04ebb32 100644
+index da6e9496..04ebb32e 100644
 --- a/crates/darwin/src/dispatch/mod.rs
 +++ b/crates/darwin/src/dispatch/mod.rs
 @@ -87,12 +87,23 @@ exports::exports! {
@@ -277,7 +277,7 @@ index da6e949..04ebb32 100644
  }
  
 diff --git a/crates/darwin/src/dispatch/queue.rs b/crates/darwin/src/dispatch/queue.rs
-index 34fbd14..f324609 100644
+index 34fbd146..f324609b 100644
 --- a/crates/darwin/src/dispatch/queue.rs
 +++ b/crates/darwin/src/dispatch/queue.rs
 @@ -1,6 +1,6 @@
@@ -439,7 +439,7 @@ index 34fbd14..f324609 100644
  
  unsafe extern "C" fn run_targeted(context: *mut c_void) {
 diff --git a/crates/darwin/src/dispatch/source.rs b/crates/darwin/src/dispatch/source.rs
-index 08e77ef..5bcf0e8 100644
+index 08e77ef0..5bcf0e8a 100644
 --- a/crates/darwin/src/dispatch/source.rs
 +++ b/crates/darwin/src/dispatch/source.rs
 @@ -42,9 +42,11 @@ enum Type {
@@ -495,7 +495,7 @@ index 08e77ef..5bcf0e8 100644
          self.schedule(&mut state);
      }
 diff --git a/crates/darwin/src/dispatch/sync.rs b/crates/darwin/src/dispatch/sync.rs
-index a117644..0733993 100644
+index a117644e..07339932 100644
 --- a/crates/darwin/src/dispatch/sync.rs
 +++ b/crates/darwin/src/dispatch/sync.rs
 @@ -247,6 +247,16 @@ pub unsafe extern "C" fn apply_f(iterations: usize, _queue: u64, context: u64, w
@@ -516,7 +516,7 @@ index a117644..0733993 100644
  ///
  /// The block is copied, as `dispatch_async` copies one, and run through the
 diff --git a/crates/darwin/src/kqueue.rs b/crates/darwin/src/kqueue.rs
-index d641e34..633dce4 100644
+index d641e342..633dce47 100644
 --- a/crates/darwin/src/kqueue.rs
 +++ b/crates/darwin/src/kqueue.rs
 @@ -2069,13 +2069,98 @@ fn signals_pending<B: ReadinessBackend>(state: &Queue<B>) -> bool {
@@ -621,7 +621,7 @@ index d641e34..633dce4 100644
  }
  
 diff --git a/crates/darwin/src/mach/mod.rs b/crates/darwin/src/mach/mod.rs
-index 38dc8bc..a111771 100644
+index 38dc8bc9..a111771c 100644
 --- a/crates/darwin/src/mach/mod.rs
 +++ b/crates/darwin/src/mach/mod.rs
 @@ -149,6 +149,8 @@ exports::exports! {
@@ -697,9 +697,36 @@ index 38dc8bc..a111771 100644
  mod tests {
      use super::*;
 diff --git a/crates/darwin/src/mach/msg.rs b/crates/darwin/src/mach/msg.rs
-index 353bd7c..9feaab6 100644
+index 353bd7cd..86f76aea 100644
 --- a/crates/darwin/src/mach/msg.rs
 +++ b/crates/darwin/src/mach/msg.rs
+@@ -349,7 +349,7 @@ pub fn deliver_no_senders(destination: wire::Address, count: u32) {
+         &payload,
+     );
+     // A destination that is gone has nothing left to tell.
+-    let _ = wire::send(destination, &bytes, &[]);
++    let _ = wire::send_with_timeout(destination, &bytes, &[], Some(0));
+ }
+ 
+ /// Put the descriptors a right travels with beside `fds`, and say where they are.
+@@ -412,7 +412,7 @@ fn word(bytes: &[u8], at: usize) -> u32 {
+ /// # Safety
+ ///
+ /// `msg` addresses a `mach_msg_header_t` and `send_size` readable bytes.
+-unsafe fn send(msg: *const u8, send_size: u32) -> i32 {
++unsafe fn send(msg: *const u8, send_size: u32, timeout_ms: Option<i32>) -> i32 {
+     let size = send_size as usize;
+     if !(HEADER..=wire::MAX_MESSAGE).contains(&size) {
+         return MACH_SEND_TOO_LARGE;
+@@ -489,7 +489,7 @@ unsafe fn send(msg: *const u8, send_size: u32) -> i32 {
+ 
+     let wire_bytes = encode(bits, id, &reply, &descriptors, &bytes[payload_at..]);
+ 
+-    match wire::send(destination, &wire_bytes, &fds) {
++    match wire::send_with_timeout(destination, &wire_bytes, &fds, timeout_ms) {
+         Ok(()) => {
+             for held in pending {
+                 held.commit();
 @@ -693,6 +693,25 @@ unsafe fn write_header(msg: *mut u8, bits: u32, size: u32, remote: Name, local:
      }
  }
@@ -726,8 +753,42 @@ index 353bd7c..9feaab6 100644
  /// `mach_msg_return_t mach_msg(mach_msg_header_t *msg, mach_msg_option_t option,
  /// mach_msg_size_t send_size, mach_msg_size_t rcv_size, mach_port_name_t
  /// rcv_name, mach_msg_timeout_t timeout, mach_port_name_t notify)`
+@@ -718,8 +737,12 @@ pub unsafe extern "C" fn mach_msg(
+     }
+     let msg = msg.cast::<u8>();
+     if option & SEND_MSG != 0 {
++        let send_timeout = match option & SEND_TIMEOUT != 0 {
++            true => Some(timeout.min(i32::MAX as u32) as i32),
++            false => None,
++        };
+         // SAFETY: the caller's message, of the size it passed.
+-        let sent = unsafe { send(msg, send_size) };
++        let sent = unsafe { send(msg, send_size, send_timeout) };
+         if sent != MACH_MSG_SUCCESS {
+             return match option & SEND_TIMEOUT != 0 && sent == MACH_SEND_NO_BUFFER {
+                 true => MACH_SEND_TIMED_OUT,
+@@ -765,10 +788,17 @@ pub unsafe extern "C" fn mach_msg_overwrite(
+         return unsafe { mach_msg(msg, option, send_size, rcv_size, rcv_name, timeout, notify) };
+     }
+     if option & SEND_MSG != 0 {
++        let send_timeout = match option & SEND_TIMEOUT != 0 {
++            true => Some(timeout.min(i32::MAX as u32) as i32),
++            false => None,
++        };
+         // SAFETY: the caller's message, of the size it passed.
+-        let sent = unsafe { send(msg.cast(), send_size) };
++        let sent = unsafe { send(msg.cast(), send_size, send_timeout) };
+         if sent != MACH_MSG_SUCCESS {
+-            return sent;
++            return match option & SEND_TIMEOUT != 0 && sent == MACH_SEND_NO_BUFFER {
++                true => MACH_SEND_TIMED_OUT,
++                false => sent,
++            };
+         }
+     }
+     if option & RCV_MSG != 0 {
 diff --git a/crates/darwin/src/mach/space.rs b/crates/darwin/src/mach/space.rs
-index 97bf519..8d6c200 100644
+index 97bf5196..8d6c2009 100644
 --- a/crates/darwin/src/mach/space.rs
 +++ b/crates/darwin/src/mach/space.rs
 @@ -510,6 +510,69 @@ pub unsafe extern "C" fn mach_port_allocate(task: Name, right: u32, out: *mut Na
@@ -801,7 +862,7 @@ index 97bf519..8d6c200 100644
  pub extern "C" fn mach_port_deallocate(task: Name, name: Name) -> i32 {
      if task != TASK_SELF {
 diff --git a/crates/darwin/src/mach/task.rs b/crates/darwin/src/mach/task.rs
-index 8c9745c..66fff89 100644
+index 8c9745c6..66fff895 100644
 --- a/crates/darwin/src/mach/task.rs
 +++ b/crates/darwin/src/mach/task.rs
 @@ -146,6 +146,29 @@ unsafe fn answer_registrations(
@@ -835,7 +896,7 @@ index 8c9745c..66fff89 100644
          // SAFETY: `i` is below `capacity`, which the caller declared each array
          // holds; a null array is skipped.
 diff --git a/crates/darwin/src/mach/tasks.rs b/crates/darwin/src/mach/tasks.rs
-index 8b30b91..7814024 100644
+index 8b30b91b..78140241 100644
 --- a/crates/darwin/src/mach/tasks.rs
 +++ b/crates/darwin/src/mach/tasks.rs
 @@ -437,6 +437,20 @@ pub extern "C" fn task_policy_get(
@@ -859,8 +920,68 @@ index 8b30b91..7814024 100644
  /// `kern_return_t task_suspend(task_t)`
  ///
  /// The task's threads park where they are, and it answers for its memory
+diff --git a/crates/darwin/src/mach/wire.rs b/crates/darwin/src/mach/wire.rs
+index 2c9cf27d..2923cef4 100644
+--- a/crates/darwin/src/mach/wire.rs
++++ b/crates/darwin/src/mach/wire.rs
+@@ -583,6 +583,19 @@ fn receive_control_len() -> usize {
+ /// own copy once the send has succeeded, and one that failed still holds the
+ /// right it was asked to move.
+ pub fn send(destination: Address, bytes: &[u8], fds: &[c_int]) -> std::io::Result<()> {
++    send_with_timeout(destination, bytes, fds, None)
++}
++
++/// Send a datagram to `destination`, honouring `MACH_SEND_TIMEOUT` when
++/// `timeout_ms` is `Some(ms)` via `MSG_DONTWAIT` instead of blocking forever
++/// in `unix_wait_for_peer` when the peer's Unix dgram queue (`max_dgram_qlen`)
++/// is full.
++pub fn send_with_timeout(
++    destination: Address,
++    bytes: &[u8],
++    fds: &[c_int],
++    timeout_ms: Option<i32>,
++) -> std::io::Result<()> {
+     /// One sending socket for the whole process.
+     ///
+     /// Unbound: a reply travels to a port named inside the message, never back
+@@ -630,17 +643,33 @@ pub fn send(destination: Address, bytes: &[u8], fds: &[c_int]) -> std::io::Resul
+         }
+     }
+ 
++    let flags = match timeout_ms {
++        Some(_) => libc::MSG_DONTWAIT,
++        None => 0,
++    };
++    let deadline = timeout_ms.and_then(|ms| (ms > 0).then(|| Deadline::after(ms)));
++
+     loop {
+         // SAFETY: `msg` describes `bytes` and the control block above, both
+         // still live.
+-        let sent = unsafe { libc::sendmsg(sender, &msg, 0) };
++        let sent = unsafe { libc::sendmsg(sender, &msg, flags) };
+         if sent >= 0 {
+             return Ok(());
+         }
+         let error = std::io::Error::last_os_error();
+-        if error.raw_os_error() == Some(libc::EINTR) {
++        let raw = error.raw_os_error();
++        if raw == Some(libc::EINTR) {
+             continue;
+         }
++        if error.kind() == std::io::ErrorKind::WouldBlock {
++            if let Some(ref dl) = deadline {
++                let rem = dl.remaining_ms();
++                if rem > 0 {
++                    std::thread::sleep(std::time::Duration::from_millis((rem as u64).min(2)));
++                    continue;
++                }
++            }
++        }
+         return Err(error);
+     }
+ }
 diff --git a/crates/darwin/src/net/resolve.rs b/crates/darwin/src/net/resolve.rs
-index 2afb73c..b6847ee 100644
+index 2afb73cc..b6847ee3 100644
 --- a/crates/darwin/src/net/resolve.rs
 +++ b/crates/darwin/src/net/resolve.rs
 @@ -481,6 +481,153 @@ unsafe extern "C" fn gethostbyaddr(addr: *const c_void, len: u32, af: i32) -> *m
@@ -1040,7 +1161,7 @@ index 2afb73c..b6847ee 100644
      constants {
          "h_errno" => H_ERRNO.as_ptr() as usize as u64,
 diff --git a/crates/darwin/src/oslog.rs b/crates/darwin/src/oslog.rs
-index 187134e..5ee70aa 100644
+index 187134ec..5ee70aa7 100644
 --- a/crates/darwin/src/oslog.rs
 +++ b/crates/darwin/src/oslog.rs
 @@ -391,6 +391,14 @@ unsafe extern "C" fn os_activity_scope_enter(_activity: *mut c_void, state: *mut
