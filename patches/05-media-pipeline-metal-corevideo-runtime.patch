@@ -7225,10 +7225,18 @@ index 5126a37b..692fe0b9 100644
      ResourceBinding, StageVariable, TargetProfile, TranslatedLibrary, WORKGROUP_SIZE_SPEC_IDS,
      emit_spirv,
 diff --git a/crates/metal_translate/src/msl/lower/library.rs b/crates/metal_translate/src/msl/lower/library.rs
-index c5b4fc69..6cff3a98 100644
+index c5b4fc69..2df0b27c 100644
 --- a/crates/metal_translate/src/msl/lower/library.rs
 +++ b/crates/metal_translate/src/msl/lower/library.rs
-@@ -523,6 +523,27 @@ impl Lowerer<'_, '_> {
+@@ -151,6 +151,7 @@ impl Lowerer<'_, '_> {
+         let unary_float = |name: &str| -> Option<FloatUnaryOp> {
+             Some(match name {
+                 "sqrt" => FloatUnaryOp::Sqrt,
++                "fabs" => FloatUnaryOp::Absolute,
+                 "rsqrt" => FloatUnaryOp::InverseSqrt,
+                 "exp" => FloatUnaryOp::Exp,
+                 "exp2" => FloatUnaryOp::Exp2,
+@@ -523,6 +524,27 @@ impl Lowerer<'_, '_> {
                      ty: Ty::Scalar(Scalar::Bool),
                  })
              }
@@ -7716,10 +7724,10 @@ index 00000000..4af46a99
 +    assert_eq!(*size, 112);
 +}
 diff --git a/crates/metal_translate/tests/translate.rs b/crates/metal_translate/tests/translate.rs
-index 251f932e..9bfc1160 100644
+index 251f932e..296900b1 100644
 --- a/crates/metal_translate/tests/translate.rs
 +++ b/crates/metal_translate/tests/translate.rs
-@@ -687,6 +687,56 @@ fn rejects_a_target_without_required_capabilities() {
+@@ -687,6 +687,80 @@ fn rejects_a_target_without_required_capabilities() {
      assert_eq!(error.diagnostics[0].phase, Phase::SpirvEmission);
  }
  
@@ -7746,6 +7754,30 @@ index 251f932e..9bfc1160 100644
 +    assert!(!ops.contains(&Op::Unordered) && !ops.contains(&Op::Ordered));
 +    assert_eq!(ops.iter().filter(|op| **op == Op::IsNan).count(), 6);
 +    assert_eq!(ops.iter().filter(|op| **op == Op::LogicalNot).count(), 1);
++}
++
++/// MSL's `fabs` is `abs` restricted to floating point; CapCut's render
++/// pipelines use it on scalars and vectors.
++#[test]
++fn source_msl_lowers_fabs() {
++    let source = r#"
++#include <metal_stdlib>
++using namespace metal;
++kernel void k(device float4* out [[buffer(0)]], constant float4& a [[buffer(1)]]) {
++    out[0] = fabs(a) + float4(fabs(a.x));
++}
++"#;
++    let library = translate_msl(source, &TargetProfile::vulkan_1_3()).unwrap();
++    let module = rspirv::dr::load_words(&library.entries[0].words).unwrap();
++    let abs = module
++        .functions
++        .iter()
++        .flat_map(|f| &f.blocks)
++        .flat_map(|b| &b.instructions)
++        .filter(|i| i.class.opcode == Op::ExtInst)
++        .filter(|i| matches!(i.operands.get(1), Some(rspirv::dr::Operand::LiteralExtInstInteger(4))))
++        .count();
++    assert_eq!(abs, 2, "two GLSL.std.450 FAbs");
 +}
 +
 +/// MSL 5.2.1: an argument given no location takes the first free index of

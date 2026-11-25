@@ -240,3 +240,12 @@ TTNet (`libsscronet`) están ociosos, no bloqueados: la petición muere dentro d
 DNS. Descartado: `resolv.conf` (montado), `SCNetworkReachability` (responde reachable con ruta),
 proxy (`CFNetworkCopySystemProxySettings` vacío). Los logs `alog` de CapCut están cifrados.
 
+**`fabs` en MSL fuente (resuelto)**
+
+AGFX fallaba 22 veces al crear pipelines (`AirSyntax: unsupported function fabs with 1 argument`).
+`fabs` se traduce ahora como `FloatUnaryOp::Absolute` (GLSL.std.450 FAbs); test `source_msl_lowers_fabs`.
+Tras el cambio: 0 fallos de pipeline. El reproductor **sigue en negro**, y al redimensionar la
+ventana la capa del reproductor se dibuja fuera de su caja (blanco sobre timeline y Details)
+aunque la escena reporta marcos correctos (`780x439@653,79`, `954x439@566,79`): hay tres capas
+Metal del reproductor apiladas en el mismo sitio. Siguiente: volcar el contenido de cada drawable.
+
