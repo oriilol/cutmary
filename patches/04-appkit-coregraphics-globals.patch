@@ -849,6 +849,101 @@ index 2f1f6db1..3ab4e599 100644
          "colorWithWhite:alpha:" => color_with_white, c"@32@0:8d16d24";
      });
      methods!(class, {
+diff --git a/crates/appkit/src/coreanimation.rs b/crates/appkit/src/coreanimation.rs
+index 54e4cb04..021d34c3 100644
+--- a/crates/appkit/src/coreanimation.rs
++++ b/crates/appkit/src/coreanimation.rs
+@@ -118,6 +118,10 @@ struct Node {
+     superlayer: usize,
+     masks_to_bounds: bool,
+     hidden: bool,
++    geometry_flipped: bool,
++    opaque: bool,
++    needs_display_on_bounds_change: bool,
++    autoresizing_mask: u32,
+     opacity: f64,
+     /// `-cornerRadius`, in points.
+     corner_radius: f64,
+@@ -153,6 +157,10 @@ impl Default for Node {
+             superlayer: 0,
+             masks_to_bounds: false,
+             hidden: false,
++            geometry_flipped: false,
++            opaque: false,
++            needs_display_on_bounds_change: false,
++            autoresizing_mask: 0,
+             opacity: 1.0,
+             corner_radius: 0.0,
+             metadata_revision: 0,
+@@ -861,6 +869,48 @@ unsafe extern "C" fn set_hidden(receiver: Id, _sel: Sel, value: u8) {
+     changed_metadata(receiver);
+ }
+ 
++unsafe extern "C" fn is_geometry_flipped(receiver: Id, _sel: Sel) -> u8 {
++    read_node(receiver, |node| {
++        u8::from(node.is_some_and(|node| node.geometry_flipped))
++    })
++}
++
++unsafe extern "C" fn set_geometry_flipped(receiver: Id, _sel: Sel, value: u8) {
++    with_node(receiver, |node| node.geometry_flipped = value != 0);
++    changed_metadata(receiver);
++}
++
++unsafe extern "C" fn is_opaque(receiver: Id, _sel: Sel) -> u8 {
++    read_node(receiver, |node| {
++        u8::from(node.is_some_and(|node| node.opaque))
++    })
++}
++
++unsafe extern "C" fn set_opaque(receiver: Id, _sel: Sel, value: u8) {
++    with_node(receiver, |node| node.opaque = value != 0);
++    changed_metadata(receiver);
++}
++
++unsafe extern "C" fn needs_display_on_bounds_change(receiver: Id, _sel: Sel) -> u8 {
++    read_node(receiver, |node| {
++        u8::from(node.is_some_and(|node| node.needs_display_on_bounds_change))
++    })
++}
++
++unsafe extern "C" fn set_needs_display_on_bounds_change(receiver: Id, _sel: Sel, value: u8) {
++    with_node(receiver, |node| {
++        node.needs_display_on_bounds_change = value != 0
++    });
++}
++
++unsafe extern "C" fn autoresizing_mask(receiver: Id, _sel: Sel) -> u32 {
++    read_node(receiver, |node| node.map_or(0, |node| node.autoresizing_mask))
++}
++
++unsafe extern "C" fn set_autoresizing_mask(receiver: Id, _sel: Sel, mask: u32) {
++    with_node(receiver, |node| node.autoresizing_mask = mask);
++}
++
+ unsafe extern "C" fn opacity(receiver: Id, _sel: Sel) -> f32 {
+     read_node(receiver, |node| node.map_or(1.0, |node| node.opacity)) as f32
+ }
+@@ -3476,7 +3526,19 @@ pub(crate) fn install() {
+         "cornerRadius" => corner_radius, c"d16@0:8";
+         "setCornerRadius:" => set_corner_radius, c"v24@0:8d16";
+         "isHidden" => is_hidden, c"c16@0:8";
++        "hidden" => is_hidden, c"c16@0:8";
+         "setHidden:" => set_hidden, c"v20@0:8c16";
++        "isGeometryFlipped" => is_geometry_flipped, c"c16@0:8";
++        "geometryFlipped" => is_geometry_flipped, c"c16@0:8";
++        "contentsAreFlipped" => is_geometry_flipped, c"c16@0:8";
++        "setGeometryFlipped:" => set_geometry_flipped, c"v20@0:8c16";
++        "isOpaque" => is_opaque, c"c16@0:8";
++        "opaque" => is_opaque, c"c16@0:8";
++        "setOpaque:" => set_opaque, c"v20@0:8c16";
++        "needsDisplayOnBoundsChange" => needs_display_on_bounds_change, c"c16@0:8";
++        "setNeedsDisplayOnBoundsChange:" => set_needs_display_on_bounds_change, c"v20@0:8c16";
++        "autoresizingMask" => autoresizing_mask, c"I16@0:8";
++        "setAutoresizingMask:" => set_autoresizing_mask, c"v20@0:8I16";
+         "opacity" => opacity, c"f16@0:8";
+         "contents" => contents, c"@16@0:8";
+         "setContents:" => set_contents, c"v24@0:8@16";
 diff --git a/crates/appkit/src/graphics.rs b/crates/appkit/src/graphics.rs
 index 77c23d3c..223535f9 100644
 --- a/crates/appkit/src/graphics.rs
@@ -1294,6 +1389,43 @@ index a4137b46..084b3c5e 100644
      (
          "_kCGDisplayShowDuplicateLowResolutionModes",
          "kCGDisplayShowDuplicateLowResolutionModes",
+diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
+index 484056dd..cc323944 100644
+--- a/crates/appkit/src/window.rs
++++ b/crates/appkit/src/window.rs
+@@ -3756,6 +3756,19 @@ unsafe extern "C" fn parent_window(receiver: Id, _sel: Sel) -> Id {
+ 
+ unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _flag: u8) {}
+ 
++/// `-[NSWindow keyViewSelectionDirection]`: `NSDirectSelection` (0) when not
++/// advancing through a key-view loop via Tab / Shift-Tab.
++unsafe extern "C" fn key_view_selection_direction(_receiver: Id, _sel: Sel) -> usize {
++    0
++}
++
++// STUB: key-view loop navigation helpers on NSWindow (not yet tracked).
++unsafe extern "C" fn ignored_arg(_receiver: Id, _sel: Sel, _arg: Id) {}
++unsafe extern "C" fn ignored_void(_receiver: Id, _sel: Sel) {}
++unsafe extern "C" fn no_flag(_receiver: Id, _sel: Sel) -> u8 {
++    0
++}
++
+ unsafe extern "C" fn ignored_object(_receiver: Id, _sel: Sel, _object: Id) {}
+ 
+ unsafe extern "C" fn set_titlebar_transparent(receiver: Id, _sel: Sel, flag: u8) {
+@@ -4134,6 +4147,12 @@ pub(crate) fn install() {
+         "firstResponder" => first_responder, c"@16@0:8";
+         "makeFirstResponder:" => make_first_responder, c"c24@0:8@16";
+         "initialFirstResponder" => initial_first_responder, c"@16@0:8";
++        "keyViewSelectionDirection" => key_view_selection_direction, c"Q16@0:8";
++        "selectKeyViewFollowingView:" => ignored_arg, c"v24@0:8@16";
++        "selectKeyViewPrecedingView:" => ignored_arg, c"v24@0:8@16";
++        "recalculateKeyViewLoop" => ignored_void, c"v16@0:8";
++        "autorecalculatesKeyViewLoop" => no_flag, c"c16@0:8";
++        "setAutorecalculatesKeyViewLoop:" => ignored_flag, c"v20@0:8c16";
+         "nextResponder" => next_responder, c"@16@0:8";
+         "setNextResponder:" => set_next_responder, c"v24@0:8@16";
+         "setInitialFirstResponder:" => set_initial_first_responder, c"v24@0:8@16";
 diff --git a/crates/appkit/src/workspace.rs b/crates/appkit/src/workspace.rs
 index f5fe44f7..38554e1b 100644
 --- a/crates/appkit/src/workspace.rs
