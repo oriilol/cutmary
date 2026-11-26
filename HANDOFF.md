@@ -287,3 +287,22 @@ modelos en `Cache/effect/model`. Falta comprobar a mano Efectos/Animaciones/Expo
 Nota: `kqueue::sources::tests::a_negative_interval_fires_once_at_once` es inestable al ejecutar solo
 los tests de `kqueue` (también sin estos cambios); la suite completa de `darwin` pasa (923/923).
 
+**⚠️ AVISO: dos cambios probados y REVERTIDOS (tumbaron KDE, 26-nov ~19:37)**
+
+1. Quitar los stubs no-op de `CFNotificationCenter*` en `corefoundation` (para que ganara la
+   implementación real de `foundation`): las notificaciones *distribuidas* empiezan a enviarse como
+   mensajes Mach a los otros procesos del prefijo (helpers de CEF), que no los leen. Se acumulan y
+   llenan el búfer del socket emisor único de `darwin::mach::wire` → todos los `mach_msg_send`
+   bloquean (hilo principal en `sock_alloc_send_pskb`) y CapCut deja de responder.
+2. "Arreglar" eso rotando el socket emisor cuando se llena: la cola deja de estar acotada y los
+   descriptores que viajan con SCM_RIGHTS se acumulan hasta agotar el límite **por usuario** de
+   descriptores en tránsito (`ETOOMANYREFS`). Eso rompe a *todos* los procesos del usuario:
+   plasmashell/kwin murieron ("The Wayland connection experienced a fatal error: Demasiadas
+   referencias") y hubo que reiniciar.
+
+Conclusión: el bloqueo del emisor es lo que contiene el problema. Antes de activar las notificaciones
+distribuidas reales hay que hacer que los procesos que las reciben drenen su puerto (o no enviarlas a
+quien no escucha). Nunca hacer los envíos Mach no acotados.
+
+Lo que sí funciona (con `282d878`): el usuario confirma que **los Efectos cargan**.
+
