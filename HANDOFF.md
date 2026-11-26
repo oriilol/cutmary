@@ -329,3 +329,28 @@ Lo que sí funciona (con `282d878`): el usuario confirma que **los Efectos carga
 Estado verificado por el usuario: Efectos cargan y se pueden aplicar sin crash; el reproductor ya dibuja
 (el texto aparece) pero **los glifos salen como cajas blancas**; **Exportar no hace nada** (sin crash).
 
+**Reproductor (texto + fotos) y redimensionado de ventana: RESUELTOS y verificados en vivo (26-nov, noche)**
+
+1. **Glifos de texto como cajas blancas (`patches/05`)**:
+   - `MTLDepthStencilDescriptor` devolvía copias desconectadas en `-frontFaceStencil` y `-backFaceStencil`, por lo que las mutaciones en sitio de AGFX sobre el descriptor de stencil se perdían y el stencil quedaba desactivado. Ahora se devuelven vistas vivas enlazadas al descriptor (y el getter de estado devuelve copia aislada). Tests `mutating_face_stencil_property_in_place_updates_descriptor_and_enables_stencil` y `reads_back_a_face_copy_and_isolates_source_mutations`.
+   - También en `crates/metal`: texturas con swizzle (`A8Unorm` y `setSwizzle:`) que además llevan `STORAGE` ahora mantienen una vista de almacenamiento sin swizzle separada de la vista muestreada (`a8_unorm_texture_with_storage_usage_samples_as_alpha_and_supports_storage_write`, `swizzled_storage_texture_and_texture_view_preserve_sampling_swizzle`), y `R16G16B16A16_SFLOAT` se decodifica de forma segura en readback (`rgba16_float_readback_decodes_to_rgb24_and_counts_lit_pixels`).
+   - Verificado en vivo por el usuario: texto SDF con borde/brillo y animaciones de texto se ven nítidos.
+2. **Ventana descontrolada al redimensionar (`patches/04`)**:
+   - `QNSView` sobrescribe `-layerContentsRedrawPolicy` devolviendo `2` (`NSViewLayerContentsRedrawDuringViewResize`), que Rosemary ignoraba (`ignored_integer`), dejando la `CALayer` contenedora sin redibujarse al cambiar el tamaño y sobresaliendo en blanco sobre la línea de tiempo y Details. Implementados `layerContentsRedrawPolicy`/`setLayerContentsRedrawPolicy:` sincronizando `CALayer.needsDisplayOnBoundsChange`, corregido el sombreado de `CALayer::setOpaque:`/`isOpaque`/`needsDisplayOnBoundsChange` en dispatch ObjC, y aplicado `child_clip` a `MetalSceneLayer.clip`.
+   - Tests: `layer_contents_redraw_policy_during_view_resize_marks_backing_layer_for_display_on_resize`, `clips_to_bounds_round_trips_and_syncs_to_layer`, `metal_layer_opaque_and_bounds_display_flags_round_trip_through_objc_dispatch`, `metal_scene_places_an_oversized_drawable_by_gravity`.
+   - Verificado en vivo por el usuario: el redimensionado funciona correctamente.
+3. **Fotos en negro en el reproductor (`patches/04` y `patches/05`)**:
+   - **Decodificación (`CoreImage` + `CoreVideo`)**: implementados `CIImage`, `CIContext`, `CIVector`, `CIFilter` y `CIColor` en `crates/appkit/src/coreimage.rs` (expuestos bajo el framework `CoreImage`) y los formatos empaquetados `RGBA`, `ARGB` y `RGhA` (`64RGBAHalf`) en `crates/corevideo/src/pixel_buffer.rs`. Tests `coreimage::tests` (3/3) y `packed_rgba_argb_and_rgba_half_buffers_allocate_and_expose_stride` (35/35 en `corevideo::pixel_buffer`).
+   - **Reflexión AIR de `.metallib` (`crates/metal_translate`)**: causa raíz final por la que las fotos seguían saliendo negras aun decodificadas y subidas a `MTLTexture`. Los shaders precompilados de `VEMetalBinary_Mac.bundle` (`MVP_COMMON_vert.metallib`, `TEXTURE_MVP_RGBA_frag.metallib`, `Y_CB_CR_420_TO_RGBA_*`) no llevan nombres de parámetros en el IR LLVM (`arg0`, `arg1`...) sino en metadatos `air.arg_name` y `air.arg_type_name`, y envuelven `float4x4`/`float3x3` en `%"struct.metal::matrix"` e `int` sin signo. `spirv/reflect.rs` devolvía `arg0`/`arg1`, `MTLDataTypeStruct` y `UInt`, así que CapCut no encontraba `uMVPMatrix`, `uSamplerTexture`, `uPremultiplyAlpha` ni `uRgflip` y dibujaba con la textura dummy `1×1` negra y matriz cero. Corregido propagando `resource.name` y `air.arg_type_name` en `metal_translate` (`air_resource_metadata_names_and_buffer_types_override_unnamed_llvm_parameters`, 71/71 en `metal_translate`).
+   - Verificado en vivo por el usuario: las fotos ya se renderizan en el reproductor detrás del texto.
+4. **Crashes corregidos durante las pruebas (`patches/02`, `04`, `05`)**:
+   - `NSFileHandle`: añadidos los selectores macOS 10.15 con `NSError**` (`seekToOffset:error:`, `seekToEndReturningOffset:error:`, `getOffset:error:`, `readDataUpToLength:error:`, `readDataToEndOfFileAndReturnError:`, `writeData:error:`, `truncateAtOffset:error:`, `synchronizeAndReturnError:`, `closeAndReturnError:`), evitando el crash al borrar un efecto. Test `error_returning_seek_read_write_and_truncate_methods_succeed_and_report_closed_handles` (5/5).
+   - `NSLogv`: exportado en `frameworks.rs`, `shims/nslog.rs`, `shims/mod.rs` y `abi/table.rs` (evita SIGSEGV en 0x0 desde `libVECreator.dylib` al loguear con `va_list`). Test `nslogv_is_exported_and_renders_va_list_formats`.
+
+**Pendientes reportados en vivo tras esta tanda**:
+- Los botones superiores **Export** y **Pro** no registran clic.
+- Al arrastrar elementos en la línea de tiempo queda un rectángulo gris flotante persistente sobre el escritorio.
+- El menú de clic derecho vuelve a mostrar un fondo gris opaco a pantalla completa en lugar de transparente.
+- Crash (`SIGSEGV`) al abrir/reproducir elementos de la **Library** de CapCut (fotos/vídeos online).
+
+

@@ -1209,6 +1209,261 @@ index c40a60fa..27e8495f 100644
          "copy" => data_copy, c"@16@0:8";
          "copyWithZone:" => data_copy_with_zone, c"@24@0:8^v16";
          "mutableCopy" => data_copy, c"@16@0:8";
+diff --git a/crates/foundation/src/filehandle.rs b/crates/foundation/src/filehandle.rs
+index 21db4abf..be996ed7 100644
+--- a/crates/foundation/src/filehandle.rs
++++ b/crates/foundation/src/filehandle.rs
+@@ -317,6 +317,188 @@ unsafe extern "C" fn close_file(receiver: Id, _sel: Sel) {
+     unsafe { close(receiver) };
+ }
+ 
++unsafe fn store_handle_error(slot: *mut Id, code: i64, message: &str) {
++    if !slot.is_null() {
++        unsafe { *slot = crate::error::make("NSCocoaErrorDomain", code, message) };
++    }
++}
++
++unsafe fn clear_error(slot: *mut Id) {
++    if !slot.is_null() {
++        unsafe { *slot = std::ptr::null_mut() };
++    }
++}
++
++unsafe extern "C" fn seek_to_offset_error(
++    receiver: Id,
++    _sel: Sel,
++    offset: u64,
++    error: *mut Id,
++) -> u8 {
++    unsafe { clear_error(error) };
++    let Some(fd) = (unsafe { descriptor(receiver) }) else {
++        unsafe { store_handle_error(error, 256, "the handle is closed") };
++        return 0;
++    };
++    match (&*file(fd)).seek(SeekFrom::Start(offset)) {
++        Ok(_) => 1,
++        Err(err) => {
++            unsafe { store_handle_error(error, 256, &err.to_string()) };
++            0
++        }
++    }
++}
++
++unsafe extern "C" fn seek_to_end_returning_offset_error(
++    receiver: Id,
++    _sel: Sel,
++    out_offset: *mut u64,
++    error: *mut Id,
++) -> u8 {
++    unsafe { clear_error(error) };
++    let Some(fd) = (unsafe { descriptor(receiver) }) else {
++        unsafe { store_handle_error(error, 256, "the handle is closed") };
++        return 0;
++    };
++    match (&*file(fd)).seek(SeekFrom::End(0)) {
++        Ok(pos) => {
++            if !out_offset.is_null() {
++                unsafe { *out_offset = pos };
++            }
++            1
++        }
++        Err(err) => {
++            unsafe { store_handle_error(error, 256, &err.to_string()) };
++            0
++        }
++    }
++}
++
++unsafe extern "C" fn get_offset_error(
++    receiver: Id,
++    _sel: Sel,
++    out_offset: *mut u64,
++    error: *mut Id,
++) -> u8 {
++    unsafe { clear_error(error) };
++    let Some(fd) = (unsafe { descriptor(receiver) }) else {
++        unsafe { store_handle_error(error, 256, "the handle is closed") };
++        return 0;
++    };
++    match (&*file(fd)).seek(SeekFrom::Current(0)) {
++        Ok(pos) => {
++            if !out_offset.is_null() {
++                unsafe { *out_offset = pos };
++            }
++            1
++        }
++        Err(err) => {
++            unsafe { store_handle_error(error, 256, &err.to_string()) };
++            0
++        }
++    }
++}
++
++unsafe extern "C" fn read_up_to_length_error(
++    receiver: Id,
++    _sel: Sel,
++    length: usize,
++    error: *mut Id,
++) -> Id {
++    unsafe { clear_error(error) };
++    let Some(fd) = (unsafe { descriptor(receiver) }) else {
++        unsafe { store_handle_error(error, 256, "the handle is closed") };
++        return std::ptr::null_mut();
++    };
++    let mut bytes = Vec::new();
++    match (&*file(fd)).take(length as u64).read_to_end(&mut bytes) {
++        Ok(_) => autoreleased_data(bytes),
++        Err(err) => {
++            unsafe { store_handle_error(error, 256, &err.to_string()) };
++            std::ptr::null_mut()
++        }
++    }
++}
++
++unsafe extern "C" fn read_to_end_error(receiver: Id, _sel: Sel, error: *mut Id) -> Id {
++    unsafe { clear_error(error) };
++    let Some(fd) = (unsafe { descriptor(receiver) }) else {
++        unsafe { store_handle_error(error, 256, "the handle is closed") };
++        return std::ptr::null_mut();
++    };
++    let mut bytes = Vec::new();
++    match (&*file(fd)).read_to_end(&mut bytes) {
++        Ok(_) => autoreleased_data(bytes),
++        Err(err) => {
++            unsafe { store_handle_error(error, 256, &err.to_string()) };
++            std::ptr::null_mut()
++        }
++    }
++}
++
++unsafe extern "C" fn write_data_error(receiver: Id, _sel: Sel, data: Id, error: *mut Id) -> u8 {
++    unsafe { clear_error(error) };
++    let Some(fd) = (unsafe { descriptor(receiver) }) else {
++        unsafe { store_handle_error(error, 512, "the handle is closed") };
++        return 0;
++    };
++    let Some(bytes) = (unsafe { corefoundation::collections::data(data as CFTypeRef) }) else {
++        return 1;
++    };
++    match (&*file(fd)).write_all(bytes) {
++        Ok(_) => 1,
++        Err(err) => {
++            unsafe { store_handle_error(error, 512, &err.to_string()) };
++            0
++        }
++    }
++}
++
++unsafe extern "C" fn truncate_at_error(
++    receiver: Id,
++    _sel: Sel,
++    offset: u64,
++    error: *mut Id,
++) -> u8 {
++    unsafe { clear_error(error) };
++    let Some(fd) = (unsafe { descriptor(receiver) }) else {
++        unsafe { store_handle_error(error, 512, "the handle is closed") };
++        return 0;
++    };
++    if let Err(err) = file(fd).set_len(offset) {
++        unsafe { store_handle_error(error, 512, &err.to_string()) };
++        return 0;
++    }
++    match (&*file(fd)).seek(SeekFrom::Start(offset)) {
++        Ok(_) => 1,
++        Err(err) => {
++            unsafe { store_handle_error(error, 512, &err.to_string()) };
++            0
++        }
++    }
++}
++
++unsafe extern "C" fn synchronize_error(receiver: Id, _sel: Sel, error: *mut Id) -> u8 {
++    unsafe { clear_error(error) };
++    let Some(fd) = (unsafe { descriptor(receiver) }) else {
++        unsafe { store_handle_error(error, 512, "the handle is closed") };
++        return 0;
++    };
++    match file(fd).sync_all() {
++        Ok(_) => 1,
++        Err(err) => {
++            unsafe { store_handle_error(error, 512, &err.to_string()) };
++            0
++        }
++    }
++}
++
++unsafe extern "C" fn close_error(receiver: Id, _sel: Sel, error: *mut Id) -> u8 {
++    unsafe { clear_error(error) };
++    unsafe { close(receiver) };
++    1
++}
++
+ //
+ 
+ /// The two ends of a pipe, each a retained file handle.
+@@ -433,6 +615,15 @@ pub(crate) fn install() {
+         "truncateFileAtOffset:" => truncate_at, c"v24@0:8Q16";
+         "synchronizeFile" => synchronize, c"v16@0:8";
+         "closeFile" => close_file, c"v16@0:8";
++        "seekToOffset:error:" => seek_to_offset_error, c"c32@0:8Q16^@24";
++        "seekToEndReturningOffset:error:" => seek_to_end_returning_offset_error, c"c32@0:8^Q16^@24";
++        "getOffset:error:" => get_offset_error, c"c32@0:8^Q16^@24";
++        "readDataUpToLength:error:" => read_up_to_length_error, c"@32@0:8Q16^@24";
++        "readDataToEndOfFileAndReturnError:" => read_to_end_error, c"@24@0:8^@16";
++        "writeData:error:" => write_data_error, c"c32@0:8@16^@24";
++        "truncateAtOffset:error:" => truncate_at_error, c"c32@0:8Q16^@24";
++        "synchronizeAndReturnError:" => synchronize_error, c"c24@0:8^@16";
++        "closeAndReturnError:" => close_error, c"c24@0:8^@16";
+     });
+ 
+     let pipes = pipe_class();
+@@ -584,4 +775,45 @@ mod tests {
+         assert!(handle.is_null());
+         objc::arc::release(path);
+     }
++
++    #[test]
++    fn error_returning_seek_read_write_and_truncate_methods_succeed_and_report_closed_handles() {
++        crate::bootstrap();
++        let pool = objc::arc::pool_push();
++        let dir = std::env::temp_dir().join(format!(
++            "rosemary-fh-test-{}",
++            std::process::id()
++        ));
++        let _ = std::fs::create_dir_all(&dir);
++        let file_path = dir.join("sample.bin");
++        std::fs::write(&file_path, b"abcdef").unwrap();
++        let raw_file = std::fs::OpenOptions::new()
++            .read(true)
++            .write(true)
++            .open(&file_path)
++            .unwrap();
++        use std::os::fd::IntoRawFd;
++        let handle = autoreleased_handle(raw_file.into_raw_fd(), true);
++        let mut err: Id = std::ptr::null_mut();
++        let mut pos: u64 = 0;
++        unsafe {
++            assert_eq!(seek_to_offset_error(handle, objc::sel::get("seekToOffset:error:"), 2, &mut err), 1);
++            assert!(err.is_null());
++            assert_eq!(get_offset_error(handle, objc::sel::get("getOffset:error:"), &mut pos, &mut err), 1);
++            assert_eq!(pos, 2);
++            let data = read_up_to_length_error(handle, objc::sel::get("readDataUpToLength:error:"), 3, &mut err);
++            assert_eq!(
++                corefoundation::collections::data(data as CFTypeRef).unwrap(),
++                b"cde"
++            );
++            assert_eq!(seek_to_end_returning_offset_error(handle, objc::sel::get("seekToEndReturningOffset:error:"), &mut pos, &mut err), 1);
++            assert_eq!(pos, 6);
++            assert_eq!(truncate_at_error(handle, objc::sel::get("truncateAtOffset:error:"), 4, &mut err), 1);
++            assert_eq!(close_error(handle, objc::sel::get("closeAndReturnError:"), &mut err), 1);
++            assert_eq!(seek_to_offset_error(handle, objc::sel::get("seekToOffset:error:"), 0, &mut err), 0);
++            assert!(!err.is_null());
++        }
++        objc::arc::pool_pop(pool);
++        let _ = std::fs::remove_dir_all(&dir);
++    }
+ }
 diff --git a/crates/foundation/src/lib.rs b/crates/foundation/src/lib.rs
 index a189df89..bc88dab2 100644
 --- a/crates/foundation/src/lib.rs

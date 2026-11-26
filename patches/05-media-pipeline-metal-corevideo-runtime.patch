@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index a239bafe..c7a2c483 100644
+index a239bafe..088f2388 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -8,6 +8,18 @@ version = "0.1.9"
@@ -21,7 +21,20 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "addr2line"
  version = "0.25.1"
-@@ -274,12 +286,24 @@ dependencies = [
+@@ -162,10 +174,12 @@ dependencies = [
+  "chrome",
+  "corefoundation",
+  "coretext",
++ "corevideo",
+  "darwin",
+  "exports",
+  "foundation",
+  "gamecontroller",
++ "half",
+  "iosurface",
+  "libc",
+  "objc",
+@@ -274,12 +288,24 @@ dependencies = [
   "windows-link",
  ]
  
@@ -46,7 +59,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "bit-set"
  version = "0.8.0"
-@@ -335,6 +359,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -335,6 +361,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
  dependencies = [
   "hybrid-array",
@@ -54,7 +67,7 @@ index a239bafe..c7a2c483 100644
  ]
  
  [[package]]
-@@ -548,6 +573,12 @@ version = "1.1.1"
+@@ -548,6 +575,12 @@ version = "1.1.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
  
@@ -67,7 +80,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "colorchoice"
  version = "1.0.5"
-@@ -698,6 +729,7 @@ dependencies = [
+@@ -698,6 +731,7 @@ dependencies = [
   "corefoundation",
   "darwin",
   "exports",
@@ -75,7 +88,7 @@ index a239bafe..c7a2c483 100644
   "libc",
   "objc",
   "sdl3",
-@@ -948,6 +980,21 @@ version = "0.2.4"
+@@ -948,6 +982,21 @@ version = "0.2.4"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
  
@@ -97,7 +110,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "crypto-common"
  version = "0.1.7"
-@@ -964,7 +1011,28 @@ version = "0.2.2"
+@@ -964,7 +1013,28 @@ version = "0.2.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
  dependencies = [
@@ -126,7 +139,7 @@ index a239bafe..c7a2c483 100644
  ]
  
  [[package]]
-@@ -1012,6 +1080,17 @@ dependencies = [
+@@ -1012,6 +1082,17 @@ dependencies = [
   "static_init",
  ]
  
@@ -144,7 +157,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "deranged"
  version = "0.5.8"
-@@ -1046,6 +1125,8 @@ dependencies = [
+@@ -1046,6 +1127,8 @@ dependencies = [
   "block-buffer 0.12.1",
   "const-oid",
   "crypto-common 0.2.2",
@@ -153,7 +166,7 @@ index a239bafe..c7a2c483 100644
  ]
  
  [[package]]
-@@ -1378,10 +1459,22 @@ checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
+@@ -1378,10 +1461,22 @@ checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
  dependencies = [
   "cfg-if",
   "libc",
@@ -177,7 +190,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "gimli"
  version = "0.32.3"
-@@ -1663,6 +1756,15 @@ version = "0.5.3"
+@@ -1663,6 +1758,15 @@ version = "0.5.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
  
@@ -193,7 +206,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "http"
  version = "1.5.0"
-@@ -2375,6 +2477,15 @@ dependencies = [
+@@ -2375,6 +2479,15 @@ dependencies = [
   "rustc_version",
  ]
  
@@ -209,7 +222,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "percent-encoding"
  version = "2.3.2"
-@@ -2387,6 +2498,26 @@ version = "0.2.17"
+@@ -2387,6 +2500,26 @@ version = "0.2.17"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
  
@@ -236,7 +249,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "pkg-config"
  version = "0.3.34"
-@@ -2523,6 +2654,12 @@ version = "5.3.0"
+@@ -2523,6 +2656,12 @@ version = "5.3.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
  
@@ -249,7 +262,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "radium"
  version = "0.7.0"
-@@ -2536,7 +2673,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -2536,7 +2675,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
  dependencies = [
   "rand_chacha",
@@ -258,7 +271,7 @@ index a239bafe..c7a2c483 100644
  ]
  
  [[package]]
-@@ -2546,7 +2683,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -2546,7 +2685,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
  dependencies = [
   "ppv-lite86",
@@ -267,7 +280,7 @@ index a239bafe..c7a2c483 100644
  ]
  
  [[package]]
-@@ -2558,6 +2695,12 @@ dependencies = [
+@@ -2558,6 +2697,12 @@ dependencies = [
   "getrandom 0.3.4",
  ]
  
@@ -280,7 +293,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "rayon"
  version = "1.12.0"
-@@ -2666,6 +2809,7 @@ dependencies = [
+@@ -2666,6 +2811,7 @@ dependencies = [
  name = "rosemary"
  version = "0.5.0"
  dependencies = [
@@ -288,7 +301,7 @@ index a239bafe..c7a2c483 100644
   "appkit",
   "applicationservices",
   "audiotoolbox",
-@@ -2709,6 +2853,27 @@ dependencies = [
+@@ -2709,6 +2855,27 @@ dependencies = [
   "webkit",
  ]
  
@@ -316,7 +329,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "rspirv"
  version = "0.13.0+sdk-1.4.341.0"
-@@ -2870,6 +3035,8 @@ dependencies = [
+@@ -2870,6 +3037,8 @@ dependencies = [
   "machish",
   "objc",
   "prefix",
@@ -325,7 +338,7 @@ index a239bafe..c7a2c483 100644
   "rustls-pki-types",
   "rustls-webpki",
   "webpki-roots",
-@@ -2919,6 +3086,16 @@ dependencies = [
+@@ -2919,6 +3088,16 @@ dependencies = [
   "serde_core",
  ]
  
@@ -342,7 +355,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "server"
  version = "0.5.0"
-@@ -2966,6 +3143,16 @@ version = "2.0.1"
+@@ -2966,6 +3145,16 @@ version = "2.0.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
  
@@ -359,7 +372,7 @@ index a239bafe..c7a2c483 100644
  [[package]]
  name = "simd-adler32"
  version = "0.3.10"
-@@ -3037,6 +3224,16 @@ dependencies = [
+@@ -3037,6 +3226,16 @@ dependencies = [
   "bitflags 2.13.1",
  ]
  
@@ -4657,19 +4670,34 @@ index fc4d6388..970f247c 100644
      fn a_started_link_calls_back_on_its_own_thread() {
          FIRED.store(0, Ordering::SeqCst);
 diff --git a/crates/corevideo/src/pixel_buffer.rs b/crates/corevideo/src/pixel_buffer.rs
-index a1e29683..20dc94a0 100644
+index a1e29683..0c57c18f 100644
 --- a/crates/corevideo/src/pixel_buffer.rs
 +++ b/crates/corevideo/src/pixel_buffer.rs
-@@ -28,7 +28,7 @@ const NV12_VIDEO: u32 = u32::from_be_bytes(*b"420v");
+@@ -24,11 +24,22 @@ const INVALID_SIZE: i32 = -6681;
+ const INVALID_ATTRIBUTES: i32 = -6682;
+ 
+ const BGRA: u32 = u32::from_be_bytes(*b"BGRA");
++const RGBA: u32 = u32::from_be_bytes(*b"RGBA");
++const ARGB: u32 = 0x20;
++const RGBA_HALF: u32 = u32::from_be_bytes(*b"RGhA");
+ const NV12_VIDEO: u32 = u32::from_be_bytes(*b"420v");
  const NV12_FULL: u32 = u32::from_be_bytes(*b"420f");
  const I420_VIDEO: u32 = u32::from_be_bytes(*b"y420");
  const I420_FULL: u32 = u32::from_be_bytes(*b"f420");
 -#[cfg(test)]
++
++pub(super) fn packed_bytes_per_pixel(format: u32) -> Option<usize> {
++    match format {
++        BGRA | RGBA | ARGB => Some(4),
++        RGBA_HALF => Some(8),
++        _ => None,
++    }
++}
 +/// `kCVPixelBufferLock_ReadOnly`.
  const READ_ONLY: u64 = 1;
  const DEFAULT_ALIGNMENT: usize = 64;
  const MAX_STORAGE: usize = 256 * 1024 * 1024;
-@@ -136,6 +136,7 @@ impl Drop for Release {
+@@ -136,6 +147,7 @@ impl Drop for Release {
  enum Memory {
      // Never resized: C clients retain pointers to its pixels until final release.
      Owned(Storage),
@@ -4677,7 +4705,7 @@ index a1e29683..20dc94a0 100644
      /// The creator's, handed back through its callback, if any.
      Lent {
          base: *mut u8,
-@@ -148,6 +149,7 @@ impl Memory {
+@@ -148,6 +160,7 @@ impl Memory {
          match self {
              Memory::Owned(storage) => storage.ptr.as_ptr(),
              Memory::Lent { base, .. } => *base,
@@ -4685,7 +4713,7 @@ index a1e29683..20dc94a0 100644
          }
      }
  }
-@@ -161,6 +163,8 @@ struct State {
+@@ -161,6 +174,8 @@ struct State {
      memory: Memory,
      data_size: usize,
      locks: AtomicUsize,
@@ -4694,7 +4722,7 @@ index a1e29683..20dc94a0 100644
      attachments: std::sync::Mutex<attachments::Attachments>,
  }
  
-@@ -251,10 +255,16 @@ macro_rules! forward_foreign {
+@@ -251,10 +266,16 @@ macro_rules! forward_foreign {
  }
  
  mod attachments;
@@ -4711,7 +4739,57 @@ index a1e29683..20dc94a0 100644
  
  fn aligned(value: usize, alignment: usize) -> Option<usize> {
      let remainder = value % alignment;
-@@ -515,6 +525,8 @@ pub unsafe extern "C" fn CVPixelBufferCreate(
+@@ -372,10 +393,10 @@ fn layout(
+     if width == 0 || height == 0 {
+         return Err(INVALID_SIZE);
+     }
+-    if !matches!(
+-        format,
+-        BGRA | NV12_VIDEO | NV12_FULL | I420_VIDEO | I420_FULL
+-    ) {
++    let packed_bpp = packed_bytes_per_pixel(format);
++    if packed_bpp.is_none()
++        && !matches!(format, NV12_VIDEO | NV12_FULL | I420_VIDEO | I420_FULL)
++    {
+         return Err(INVALID_PIXEL_FORMAT);
+     }
+     let row_alignment = lcm(
+@@ -386,7 +407,7 @@ fn layout(
+     // Preserve the CPU-friendly 64-byte minimum at *each plane*, not only
+     // at the overall base. A non-power-of-two attribute is an additional
+     // multiple, so round offsets to the checked LCM of both requirements.
+-    let plane_alignment = if format == BGRA {
++    let plane_alignment = if packed_bpp.is_some() {
+         DEFAULT_ALIGNMENT
+     } else {
+         lcm(
+@@ -397,14 +418,17 @@ fn layout(
+     };
+     let chroma_width = width.div_ceil(2);
+     let chroma_height = height.div_ceil(2);
+-    let dimensions: Vec<(usize, usize, usize)> = match format {
+-        BGRA => vec![(width, height, 4)],
+-        NV12_VIDEO | NV12_FULL => vec![(width, height, 1), (chroma_width, chroma_height, 2)],
+-        _ => vec![
+-            (width, height, 1),
+-            (chroma_width, chroma_height, 1),
+-            (chroma_width, chroma_height, 1),
+-        ],
++    let dimensions: Vec<(usize, usize, usize)> = if let Some(bpp) = packed_bpp {
++        vec![(width, height, bpp)]
++    } else {
++        match format {
++            NV12_VIDEO | NV12_FULL => vec![(width, height, 1), (chroma_width, chroma_height, 2)],
++            _ => vec![
++                (width, height, 1),
++                (chroma_width, chroma_height, 1),
++                (chroma_width, chroma_height, 1),
++            ],
++        }
+     };
+     let planar = dimensions.len() > 1;
+     let header_len = if planar { dimensions.len() * 8 } else { 0 };
+@@ -515,6 +539,8 @@ pub unsafe extern "C" fn CVPixelBufferCreate(
                  memory: Memory::Owned(data),
                  data_size: size,
                  locks: AtomicUsize::new(0),
@@ -4720,7 +4798,24 @@ index a1e29683..20dc94a0 100644
                  attachments: Default::default(),
              },
              out,
-@@ -625,6 +637,8 @@ pub unsafe extern "C" fn CVPixelBufferCreateWithBytes(
+@@ -590,13 +616,13 @@ pub unsafe extern "C" fn CVPixelBufferCreateWithBytes(
+         return INVALID_SIZE;
+     }
+     // The planar formats have their own entry point.
+-    if format != BGRA {
++    let Some(bpp) = packed_bytes_per_pixel(format) else {
+         return INVALID_PIXEL_FORMAT;
+-    }
++    };
+     let Some(data_size) = bytes_per_row.checked_mul(height) else {
+         return INVALID_SIZE;
+     };
+-    if base.is_null() || width.checked_mul(4).is_none_or(|row| bytes_per_row < row) {
++    if base.is_null() || width.checked_mul(bpp).is_none_or(|row| bytes_per_row < row) {
+         return INVALID_ARGUMENT;
+     }
+     let plane = Plane {
+@@ -625,6 +651,8 @@ pub unsafe extern "C" fn CVPixelBufferCreateWithBytes(
                  },
                  data_size,
                  locks: AtomicUsize::new(0),
@@ -4729,7 +4824,7 @@ index a1e29683..20dc94a0 100644
                  attachments: Default::default(),
              },
              out,
-@@ -726,6 +740,8 @@ pub unsafe extern "C" fn CVPixelBufferCreateWithPlanarBytes(
+@@ -726,6 +754,8 @@ pub unsafe extern "C" fn CVPixelBufferCreateWithPlanarBytes(
                  },
                  data_size,
                  locks: AtomicUsize::new(0),
@@ -4738,7 +4833,7 @@ index a1e29683..20dc94a0 100644
                  attachments: Default::default(),
              },
              out,
-@@ -987,6 +1003,9 @@ pub unsafe extern "C" fn CVPixelBufferLockBaseAddress(buffer: CFTypeRef, flags:
+@@ -987,6 +1017,9 @@ pub unsafe extern "C" fn CVPixelBufferLockBaseAddress(buffer: CFTypeRef, flags:
      let Some(state) = state(buffer) else {
          return INVALID_ARGUMENT;
      };
@@ -4748,7 +4843,7 @@ index a1e29683..20dc94a0 100644
      // An overflowing count is refused rather than wrapped back to unlocked.
      match state
          .locks
-@@ -1007,15 +1026,32 @@ pub unsafe extern "C" fn CVPixelBufferUnlockBaseAddress(buffer: CFTypeRef, flags
+@@ -1007,15 +1040,32 @@ pub unsafe extern "C" fn CVPixelBufferUnlockBaseAddress(buffer: CFTypeRef, flags
      let Some(state) = state(buffer) else {
          return INVALID_ARGUMENT;
      };
@@ -4782,7 +4877,7 @@ index a1e29683..20dc94a0 100644
  /// A CPU-allocated CVPixelBuffer has no IOSurface backing.
  ///
  /// FIXME (ACCURACY): a buffer created with kCVPixelBufferIOSurfacePropertiesKey
-@@ -1028,7 +1064,10 @@ pub unsafe extern "C" fn CVPixelBufferGetIOSurface(buffer: CFTypeRef) -> CFTypeR
+@@ -1028,7 +1078,10 @@ pub unsafe extern "C" fn CVPixelBufferGetIOSurface(buffer: CFTypeRef) -> CFTypeR
          fn(CFTypeRef) -> CFTypeRef,
          (buffer)
      );
@@ -4794,7 +4889,7 @@ index a1e29683..20dc94a0 100644
  }
  
  /// A copy of this runtime's `buffer` made by the host CoreVideo, for a host
-@@ -1129,6 +1168,133 @@ mod tests {
+@@ -1129,6 +1182,133 @@ mod tests {
          out
      }
  
@@ -4928,6 +5023,53 @@ index a1e29683..20dc94a0 100644
      #[test]
      fn bgra_stride_lock_and_cf_ownership() {
          let b = create(7, 5, BGRA);
+@@ -2567,4 +2747,46 @@ mod tests {
+             CVPixelBufferRelease(ours);
+         }
+     }
++
++    #[test]
++    fn packed_rgba_argb_and_rgba_half_buffers_allocate_and_expose_stride() {
++        for (format, bpp) in [(RGBA, 4usize), (ARGB, 4usize), (RGBA_HALF, 8usize)] {
++            let pb = create(9, 4, format);
++            unsafe {
++                assert_eq!(CVPixelBufferGetWidth(pb), 9);
++                assert_eq!(CVPixelBufferGetHeight(pb), 4);
++                assert_eq!(CVPixelBufferGetPixelFormatType(pb), format);
++                assert_eq!(CVPixelBufferIsPlanar(pb), 0);
++                assert!(CVPixelBufferGetBytesPerRow(pb) >= 9 * bpp);
++                assert_eq!(CVPixelBufferLockBaseAddress(pb, 0), SUCCESS);
++                let base = CVPixelBufferGetBaseAddress(pb).cast::<u8>();
++                assert!(!base.is_null());
++                *base = 0xAB;
++                assert_eq!(CVPixelBufferUnlockBaseAddress(pb, 0), SUCCESS);
++                CVPixelBufferRelease(pb);
++            }
++        }
++        let mut raw = vec![0u8; 9 * 8 * 4];
++        let mut pb = std::ptr::null();
++        unsafe {
++            assert_eq!(
++                CVPixelBufferCreateWithBytes(
++                    std::ptr::null(),
++                    9,
++                    4,
++                    RGBA_HALF,
++                    raw.as_mut_ptr().cast(),
++                    9 * 8,
++                    None,
++                    std::ptr::null_mut(),
++                    std::ptr::null(),
++                    &mut pb,
++                ),
++                SUCCESS
++            );
++            assert_eq!(CVPixelBufferGetPixelFormatType(pb), RGBA_HALF);
++            assert_eq!(CVPixelBufferGetBytesPerRow(pb), 72);
++            CVPixelBufferRelease(pb);
++        }
++    }
+ }
 diff --git a/crates/corevideo/src/pixel_buffer/attachments.rs b/crates/corevideo/src/pixel_buffer/attachments.rs
 index 4952c0d5..4ae8b2c6 100644
 --- a/crates/corevideo/src/pixel_buffer/attachments.rs
@@ -5092,10 +5234,10 @@ index 00000000..f4b355e4
 +}
 diff --git a/crates/corevideo/src/pixel_buffer/surface.rs b/crates/corevideo/src/pixel_buffer/surface.rs
 new file mode 100644
-index 00000000..4b4a1085
+index 00000000..b616e2f8
 --- /dev/null
 +++ b/crates/corevideo/src/pixel_buffer/surface.rs
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,152 @@
 +//! Pixel buffers sharing the storage and CPU access protocol of an IOSurface.
 +
 +use super::*;
@@ -5189,16 +5331,14 @@ index 00000000..4b4a1085
 +    };
 +    // IOSurfaceCreate currently rejects planar descriptors. Only expose layouts
 +    // for which the pixel format and the surface's element geometry agree.
-+    const ARGB: u32 = 32;
-+    const RGBA: u32 = u32::from_be_bytes(*b"RGBA");
-+    if !matches!(format, BGRA | ARGB | RGBA) {
++    let Some(bpp) = super::packed_bytes_per_pixel(format) else {
 +        return INVALID_PIXEL_FORMAT;
-+    }
++    };
 +    if unsafe {
-+        iosurface::IOSurfaceGetBytesPerElement(surface) != 4
++        iosurface::IOSurfaceGetBytesPerElement(surface) != bpp
 +            || iosurface::IOSurfaceGetElementWidth(surface) != 1
 +            || iosurface::IOSurfaceGetElementHeight(surface) != 1
-+    } || width.checked_mul(4).is_none_or(|n| n > row_bytes)
++    } || width.checked_mul(bpp).is_none_or(|n| n > row_bytes)
 +    {
 +        return INVALID_ATTRIBUTES;
 +    }
@@ -6167,9 +6307,18 @@ index 00000000..1ea156c1
 +    }
 +}
 diff --git a/crates/metal/src/device.rs b/crates/metal/src/device.rs
-index f38422e9..aadf3f41 100644
+index f38422e9..182aea7d 100644
 --- a/crates/metal/src/device.rs
 +++ b/crates/metal/src/device.rs
+@@ -103,7 +103,7 @@ pub(super) unsafe extern "C" fn new_depth_stencil_state(
+         return std::ptr::null_mut();
+     }
+     // SAFETY: `MTLDepthStencilDescriptor` is this crate's class.
+-    let state = *unsafe { object::body::<resource::DepthStencilState>(descriptor) };
++    let state = unsafe { object::body::<resource::DepthStencilDescriptor>(descriptor) }.state;
+     resource::new_depth_stencil_state(state)
+ }
+ 
 @@ -147,6 +147,37 @@ pub(super) unsafe extern "C" fn new_compute_pipeline(
      }
  }
@@ -6217,6 +6366,19 @@ index f38422e9..aadf3f41 100644
      if function.is_null() || !object::is_kind(function, c"RosemaryMTLFunction") {
          return None;
      }
+diff --git a/crates/metal/src/encoder/bind.rs b/crates/metal/src/encoder/bind.rs
+index 47a928dc..327b5421 100644
+--- a/crates/metal/src/encoder/bind.rs
++++ b/crates/metal/src/encoder/bind.rs
+@@ -461,6 +461,8 @@ impl Encoder {
+                             (0, 0, 0)
+                         } else if is_texel_buffer {
+                             (texture.texel_view.as_raw(), 0, 0)
++                        } else if kind == vk::DescriptorType::STORAGE_IMAGE {
++                            (texture.image.storage_view().as_raw(), 0, 0)
+                         } else {
+                             (texture.image.view.as_raw(), 0, 0)
+                         }
 diff --git a/crates/metal/src/encoder/mod.rs b/crates/metal/src/encoder/mod.rs
 index a00126ec..fb480c4f 100644
 --- a/crates/metal/src/encoder/mod.rs
@@ -6246,6 +6408,295 @@ index a00126ec..fb480c4f 100644
          "endEncoding" => end_encoding, c"v16@0:8";
          "dealloc" => encoder_dealloc, c"v16@0:8";
          "setComputePipelineState:" => set_compute_pipeline, c"v24@0:8@16";
+diff --git a/crates/metal/src/gpu/memory.rs b/crates/metal/src/gpu/memory.rs
+index 5cda91ef..b5bf2398 100644
+--- a/crates/metal/src/gpu/memory.rs
++++ b/crates/metal/src/gpu/memory.rs
+@@ -574,11 +574,17 @@ impl Gpu {
+             true => Some(self.zero_source()?),
+             false => None,
+         };
+-        let view = self.create_view(*image, description, usage)?;
++        let (view, storage_view) = self.create_views(*image, description, usage)?;
+         let view = Guard::new(view, |view| {
+             // SAFETY: a view of this device's which nothing has used.
+             unsafe { self.device.destroy_image_view(view, None) };
+         });
++        let storage_view = Guard::new(storage_view, |view| {
++            if view != vk::ImageView::null() {
++                // SAFETY: a view of this device's which nothing has used.
++                unsafe { self.device.destroy_image_view(view, None) };
++            }
++        });
+         // Every texture stays in `GENERAL` from creation: see `render_pass`.
+         // Nothing below may fail once the transition is recorded, because the
+         // batch then names the image.
+@@ -618,6 +624,7 @@ impl Gpu {
+             Ok(())
+         })?;
+         let view = view.take();
++        let storage_view = storage_view.take();
+         let (memory, heap) = memory.map_or((None, None), Guard::take);
+         Ok(GpuImage {
+             image: image.take(),
+@@ -625,6 +632,7 @@ impl Gpu {
+             heap,
+             placement,
+             view,
++            storage_view,
+             format: description.format,
+             aspect: aspect_of(description.format),
+             width: description.width.max(1),
+@@ -639,28 +647,103 @@ impl Gpu {
+         })
+     }
+ 
+-    fn create_view(
++    fn create_views(
+         &self,
+         image: vk::Image,
+         description: &ImageDescription,
+         usage: vk::ImageUsageFlags,
+-    ) -> Result<vk::ImageView, String> {
+-        let view_type = description.view_type;
+-        let info = vk::ImageViewCreateInfo::default()
++    ) -> Result<(vk::ImageView, vk::ImageView), String> {
++        let range = vk::ImageSubresourceRange {
++            aspect_mask: single_aspect(aspect_of(description.format)),
++            base_mip_level: 0,
++            level_count: description.levels.max(1),
++            base_array_layer: 0,
++            layer_count: description.layers.max(1),
++        };
++        self.create_image_views(
++            image,
++            description.view_type,
++            description.format,
++            range,
++            description.components,
++            usage,
++            false,
++        )
++    }
++
++    /// Create the sampled view (`view`) and, when a swizzled texture also has
++    /// `STORAGE` usage, a separate identity-swizzled `storage_view`.
++    ///
++    /// Vulkan forbids non-identity component swizzles on storage and attachment
++    /// image views (VUID-VkImageViewCreateInfo-usage-02275 / 02276). Giving a
++    /// swizzled view `VkImageViewUsageCreateInfo { usage: SAMPLED }` lets
++    /// `A8Unorm` glyph atlases and custom-swizzled textures keep their sampling
++    /// swizzle even when the guest requests `ShaderRead | ShaderWrite |
++    /// RenderTarget`, while `STORAGE_IMAGE` bindings use `storage_view`.
++    #[allow(clippy::too_many_arguments)]
++    fn create_image_views(
++        &self,
++        image: vk::Image,
++        view_type: vk::ImageViewType,
++        format: vk::Format,
++        range: vk::ImageSubresourceRange,
++        components: vk::ComponentMapping,
++        usage: vk::ImageUsageFlags,
++        always_pass_usage: bool,
++    ) -> Result<(vk::ImageView, vk::ImageView), String> {
++        let mut effective_usage = usage;
++        if is_srgb(format) {
++            effective_usage &= !vk::ImageUsageFlags::STORAGE;
++        }
++        if is_swizzled(components) && effective_usage.contains(vk::ImageUsageFlags::SAMPLED) {
++            let mut sampled_usage =
++                vk::ImageViewUsageCreateInfo::default().usage(vk::ImageUsageFlags::SAMPLED);
++            let sampled_info = vk::ImageViewCreateInfo::default()
++                .image(image)
++                .view_type(view_type)
++                .format(format)
++                .components(components)
++                .subresource_range(range)
++                .push_next(&mut sampled_usage);
++            // SAFETY: the image belongs to this device and outlives the view.
++            let view = unsafe { self.device.create_image_view(&sampled_info, None) }
++                .map_err(|error| format!("vkCreateImageView failed with {error:?}"))?;
++            let view_guard = Guard::new(view, |view| {
++                // SAFETY: a view of this device's which nothing has used.
++                unsafe { self.device.destroy_image_view(view, None) };
++            });
++            let storage_view = if effective_usage.contains(vk::ImageUsageFlags::STORAGE) {
++                let mut storage_usage =
++                    vk::ImageViewUsageCreateInfo::default().usage(vk::ImageUsageFlags::STORAGE);
++                let storage_info = vk::ImageViewCreateInfo::default()
++                    .image(image)
++                    .view_type(view_type)
++                    .format(format)
++                    .components(vk::ComponentMapping::default())
++                    .subresource_range(range)
++                    .push_next(&mut storage_usage);
++                // SAFETY: the image belongs to this device and outlives the view.
++                unsafe { self.device.create_image_view(&storage_info, None) }
++                    .map_err(|error| format!("vkCreateImageView failed with {error:?}"))?
++            } else {
++                vk::ImageView::null()
++            };
++            return Ok((view_guard.take(), storage_view));
++        }
++        let mut view_usage = vk::ImageViewUsageCreateInfo::default().usage(effective_usage);
++        let mut info = vk::ImageViewCreateInfo::default()
+             .image(image)
+             .view_type(view_type)
+-            .format(description.format)
+-            .components(view_components(description.components, usage))
+-            .subresource_range(vk::ImageSubresourceRange {
+-                aspect_mask: single_aspect(aspect_of(description.format)),
+-                base_mip_level: 0,
+-                level_count: description.levels.max(1),
+-                base_array_layer: 0,
+-                layer_count: description.layers.max(1),
+-            });
++            .format(format)
++            .components(vk::ComponentMapping::default())
++            .subresource_range(range);
++        if (always_pass_usage || effective_usage != usage) && !effective_usage.is_empty() {
++            info = info.push_next(&mut view_usage);
++        }
+         // SAFETY: the image belongs to this device and outlives the view.
+-        unsafe { self.device.create_image_view(&info, None) }
+-            .map_err(|error| format!("vkCreateImageView failed with {error:?}"))
++        let view = unsafe { self.device.create_image_view(&info, None) }
++            .map_err(|error| format!("vkCreateImageView failed with {error:?}"))?;
++        Ok((view, vk::ImageView::null()))
+     }
+ 
+     /// A texture view: `source`'s image seen through another format, view
+@@ -684,30 +767,29 @@ impl Gpu {
+         if is_srgb(format) {
+             usage &= !vk::ImageUsageFlags::STORAGE;
+         }
+-        let mut view_usage = vk::ImageViewUsageCreateInfo::default().usage(usage);
+-        let info = vk::ImageViewCreateInfo::default()
+-            .image(source.image)
+-            .view_type(view_type)
+-            .format(format)
+-            .components(view_components(components, usage))
+-            .subresource_range(vk::ImageSubresourceRange {
+-                aspect_mask: view_aspect,
+-                base_mip_level: levels.start,
+-                level_count: levels.len().max(1) as u32,
+-                base_array_layer: layers.start,
+-                layer_count: layers.len().max(1) as u32,
+-            })
+-            .push_next(&mut view_usage);
+-        // SAFETY: the image belongs to this device and outlives the view,
+-        // because the view texture retains the texture that owns it.
+-        let view = unsafe { self.device.create_image_view(&info, None) }
+-            .map_err(|error| format!("vkCreateImageView failed with {error:?}"))?;
++        let range = vk::ImageSubresourceRange {
++            aspect_mask: view_aspect,
++            base_mip_level: levels.start,
++            level_count: levels.len().max(1) as u32,
++            base_array_layer: layers.start,
++            layer_count: layers.len().max(1) as u32,
++        };
++        let (view, storage_view) = self.create_image_views(
++            source.image,
++            view_type,
++            format,
++            range,
++            components,
++            usage,
++            true,
++        )?;
+         Ok(GpuImage {
+             image: source.image,
+             memory: None,
+             heap: None,
+             placement: None,
+             view,
++            storage_view,
+             format,
+             aspect,
+             width: source.width,
+@@ -780,6 +862,9 @@ impl Gpu {
+         // SAFETY: the caller guarantees the image is idle.
+         unsafe {
+             self.device.destroy_image_view(image.view, None);
++            if image.storage_view != vk::ImageView::null() {
++                self.device.destroy_image_view(image.storage_view, None);
++            }
+             self.device.destroy_image(image.image, None);
+             if let Some(memory) = image.memory {
+                 self.device.free_memory(memory, None);
+@@ -1217,21 +1302,16 @@ fn reference2(reference: &vk::AttachmentReference) -> vk::AttachmentReference2<'
+         .layout(reference.layout)
+ }
+ 
+-/// A storage or attachment view must not swizzle, so an image used that way
+-/// keeps the identity and a shader writing it sees the stored channel.
+-fn view_components(
+-    components: vk::ComponentMapping,
+-    usage: vk::ImageUsageFlags,
+-) -> vk::ComponentMapping {
+-    let identity = vk::ComponentMapping::default();
+-    let swizzled = [components.r, components.g, components.b, components.a]
+-        .iter()
+-        .any(|swizzle| *swizzle != vk::ComponentSwizzle::IDENTITY);
+-    if swizzled && usage.contains(vk::ImageUsageFlags::STORAGE) {
+-        super::trace_once("an alpha-only texture is also a storage image, so it is not swizzled");
+-        return identity;
+-    }
+-    components
++/// Whether `components` remaps any channel away from its natural slot.
++/// Both `IDENTITY` and the explicit `(R, G, B, A)` spelling (which
++/// `compose_swizzle` returns for an identity Metal swizzle) count as
++/// unswizzled.
++fn is_swizzled(components: vk::ComponentMapping) -> bool {
++    use vk::ComponentSwizzle as S;
++    !matches!(components.r, S::IDENTITY | S::R)
++        || !matches!(components.g, S::IDENTITY | S::G)
++        || !matches!(components.b, S::IDENTITY | S::B)
++        || !matches!(components.a, S::IDENTITY | S::A)
+ }
+ 
+ /// The aspect of a texture's own view, which is what a shader reads: depth
+diff --git a/crates/metal/src/gpu/mod.rs b/crates/metal/src/gpu/mod.rs
+index 73bd0367..8a806f86 100644
+--- a/crates/metal/src/gpu/mod.rs
++++ b/crates/metal/src/gpu/mod.rs
+@@ -1094,6 +1094,10 @@ pub struct GpuImage {
+     /// The placement heap memory it is bound into, instead of `memory`.
+     pub placement: Option<Arc<Placement>>,
+     pub view: vk::ImageView,
++    /// Dedicated identity-swizzled view for `STORAGE_IMAGE` bindings when
++    /// `view` carries a non-identity component swizzle (which Vulkan forbids on
++    /// storage image views). Null when `view` itself is identity-swizzled.
++    pub storage_view: vk::ImageView,
+     pub format: vk::Format,
+     pub aspect: vk::ImageAspectFlags,
+     pub width: u32,
+@@ -1151,6 +1155,17 @@ pub struct CheckedRegion {
+ }
+ 
+ impl GpuImage {
++    /// The view a shader binds for `STORAGE_IMAGE` access: the dedicated
++    /// identity-swizzled view when `view` carries a component swizzle, and
++    /// `view` itself otherwise.
++    pub fn storage_view(&self) -> vk::ImageView {
++        if self.storage_view != vk::ImageView::null() {
++            self.storage_view
++        } else {
++            self.view
++        }
++    }
++
+     /// The extent of one mip level, which is the base extent halved `level`
+     /// times and never below one texel.
+     pub fn level_extent(&self, level: u32) -> [u32; 3] {
+@@ -1239,6 +1254,7 @@ impl GpuImage {
+             heap: None,
+             placement: None,
+             view: vk::ImageView::null(),
++            storage_view: vk::ImageView::null(),
+             format: vk::Format::UNDEFINED,
+             aspect: vk::ImageAspectFlags::COLOR,
+             width: 0,
 diff --git a/crates/metal/src/lib.rs b/crates/metal/src/lib.rs
 index e3039156..a7336c14 100644
 --- a/crates/metal/src/lib.rs
@@ -6268,7 +6719,7 @@ index e3039156..a7336c14 100644
              "newFence" => new_fence, c"@16@0:8";
              "newEvent" => new_event, c"@16@0:8";
 diff --git a/crates/metal/src/native.rs b/crates/metal/src/native.rs
-index 5fcab840..41bcfb9e 100644
+index 5fcab840..de65220b 100644
 --- a/crates/metal/src/native.rs
 +++ b/crates/metal/src/native.rs
 @@ -1206,6 +1206,7 @@ mod tests {
@@ -6327,7 +6778,19 @@ index 5fcab840..41bcfb9e 100644
              },
          );
          let texture = unsafe { texture::new_texture(device, std::ptr::null(), desc) };
-@@ -2804,6 +2811,7 @@ mod tests {
+@@ -2491,7 +2498,10 @@ mod tests {
+             },
+             stencil_enabled: true,
+         };
+-        let descriptor = object::make(c"MTLDepthStencilDescriptor", state);
++        let descriptor = object::make(
++            c"MTLDepthStencilDescriptor",
++            resource::DepthStencilDescriptor::from(state),
++        );
+         assert!(!descriptor.is_null());
+         let guest = unsafe {
+             send_id_arg(
+@@ -2804,6 +2814,7 @@ mod tests {
                  array_length: 1,
                  storage_mode: 0,
                  usage: 1,
@@ -6335,7 +6798,7 @@ index 5fcab840..41bcfb9e 100644
              },
          );
          let texture = unsafe { texture::new_texture(device, std::ptr::null(), tex_desc) };
-@@ -3056,6 +3064,7 @@ mod tests {
+@@ -3056,6 +3067,7 @@ mod tests {
                      array_length: 1,
                      storage_mode: storage,
                      usage: 4,
@@ -6343,7 +6806,19 @@ index 5fcab840..41bcfb9e 100644
                  },
              );
              let tex = unsafe { texture::new_texture(device, std::ptr::null(), desc) };
-@@ -3296,6 +3305,7 @@ mod tests {
+@@ -3096,7 +3108,10 @@ mod tests {
+             depth_write: true,
+             ..resource::DepthStencilState::default()
+         };
+-        let depth_descriptor = object::make(c"MTLDepthStencilDescriptor", state);
++        let depth_descriptor = object::make(
++            c"MTLDepthStencilDescriptor",
++            resource::DepthStencilDescriptor::from(state),
++        );
+         let depth_state = unsafe {
+             send_id_arg(
+                 device,
+@@ -3296,6 +3311,7 @@ mod tests {
                  array_length: 1,
                  storage_mode: 0,
                  usage: 4,
@@ -6351,7 +6826,7 @@ index 5fcab840..41bcfb9e 100644
              },
          );
          let target = unsafe { texture::new_texture(device, std::ptr::null(), tex_desc) };
-@@ -3453,6 +3463,7 @@ mod tests {
+@@ -3453,6 +3469,7 @@ mod tests {
                      array_length: 1,
                      storage_mode: 0,
                      usage: MTL_TEXTURE_USAGE_RENDER_TARGET,
@@ -6359,7 +6834,7 @@ index 5fcab840..41bcfb9e 100644
                  },
              );
              let target = unsafe { texture::new_texture(device, std::ptr::null(), descriptor) };
-@@ -3719,6 +3730,7 @@ mod tests {
+@@ -3719,6 +3736,7 @@ mod tests {
                  array_length: 1,
                  storage_mode: 0,
                  usage: MTL_TEXTURE_USAGE_SHADER_READ,
@@ -6367,7 +6842,7 @@ index 5fcab840..41bcfb9e 100644
              },
          );
          let image = unsafe { texture::new_texture(target.device, std::ptr::null(), descriptor) };
-@@ -3921,6 +3933,7 @@ mod tests {
+@@ -3921,6 +3939,7 @@ mod tests {
                  array_length: 1,
                  storage_mode: 0,
                  usage: MTL_TEXTURE_USAGE_SHADER_READ,
@@ -6375,6 +6850,19 @@ index 5fcab840..41bcfb9e 100644
              },
          );
          let image = unsafe { texture::new_texture(device, std::ptr::null(), descriptor) };
+diff --git a/crates/metal/src/native/depth.rs b/crates/metal/src/native/depth.rs
+index 541d8fec..ac31fe30 100644
+--- a/crates/metal/src/native/depth.rs
++++ b/crates/metal/src/native/depth.rs
+@@ -62,7 +62,7 @@ pub(super) unsafe extern "C" fn new_state(receiver: Id, _sel: Sel, descriptor: I
+         gpu::trace("native Metal requires a guest MTLDepthStencilDescriptor".to_string());
+         return std::ptr::null_mut();
+     }
+-    let state = *unsafe { object::body::<resource::DepthStencilState>(descriptor) };
++    let state = unsafe { object::body::<resource::DepthStencilDescriptor>(descriptor) }.state;
+     if state.depth_compare > MTL_COMPARE_FUNCTION_ALWAYS {
+         gpu::trace("native Metal rejected invalid depth compare function".to_string());
+         return std::ptr::null_mut();
 diff --git a/crates/metal/src/pipeline/compute_descriptor.rs b/crates/metal/src/pipeline/compute_descriptor.rs
 index d5298462..d5cd5a78 100644
 --- a/crates/metal/src/pipeline/compute_descriptor.rs
@@ -6434,10 +6922,41 @@ index dd652b28..44464a55 100644
      let color = object::register::<ColorElement>(c"RosemaryMTLColorAttachmentDescriptor");
      // Of `MTLCompileOptions` only the preprocessor macros change what a
 diff --git a/crates/metal/src/present.rs b/crates/metal/src/present.rs
-index e4884938..e9039927 100644
+index e4884938..371cf890 100644
 --- a/crates/metal/src/present.rs
 +++ b/crates/metal/src/present.rs
-@@ -1340,7 +1340,7 @@ fn present_inner(drawable: Id) {
+@@ -1215,8 +1215,9 @@ fn submit_owned_readback(
+     image: vk::Image,
+     width: u32,
+     height: u32,
++    format: vk::Format,
+ ) -> Result<std::sync::Arc<std::sync::Mutex<ReadbackOwner>>, String> {
+-    let bytes = u64::from(width) * u64::from(height) * 4;
++    let bytes = u64::from(width) * u64::from(height) * u64::from(gpu::texel_size(format)).max(1);
+ 
+     let staging = match gpu.create_buffer(bytes) {
+         Ok(buffer) => buffer,
+@@ -1323,9 +1324,17 @@ fn present_inner(drawable: Id) {
+ 
+     let width = texture.image.width;
+     let height = texture.image.height;
+-    let bytes = u64::from(width) * u64::from(height) * 4;
++    let format = texture.image.format;
++    let bytes = u64::from(width) * u64::from(height) * u64::from(gpu::texel_size(format)).max(1);
+     let result = crate::stats::timed(crate::stats::Counter::ReadbackMicros, || {
+-        submit_owned_readback(gpu, described.texture, texture.image.image, width, height)
++        submit_owned_readback(
++            gpu,
++            described.texture,
++            texture.image.image,
++            width,
++            height,
++            format,
++        )
+     });
+     match result {
+         Err(reason) => gpu::trace(format!("presentation readback failed: {reason}")),
+@@ -1340,7 +1349,7 @@ fn present_inner(drawable: Id) {
              };
              gpu::milestone("presented frame");
              crate::stats::frame();
@@ -6446,38 +6965,198 @@ index e4884938..e9039927 100644
              if let Some(window) = window
                  && let Some(properties) = sdl3::video::presentation_window(window)
              {
-@@ -1393,7 +1393,7 @@ fn drawable_frame(layer: Id, image: &gpu::GpuImage) -> Option<appkit::view::Fram
+@@ -1393,7 +1402,73 @@ fn drawable_frame(layer: Id, image: &gpu::GpuImage) -> Option<appkit::view::Fram
  /// or remote session has no other way to see it. `ROSEMARY_FRAME_INTERVAL`
  /// says how many frames to skip between files; the default keeps a run's
  /// output to a few files a second rather than one per frame.
 -fn dump_frame(pixels: &[u8], width: u32, height: u32, format: vk::Format) {
++/// Convert an IEEE 754 binary16 lane into an 8-bit normalized channel,
++/// clamping out-of-range and NaN values into `[0, 255]`.
++fn f16_to_u8(bits: u16) -> u8 {
++    let sign = (bits >> 15) != 0;
++    let exp = (bits >> 10) & 0x1f;
++    let frac = bits & 0x3ff;
++    if sign || (exp == 0x1f && frac != 0) {
++        return 0;
++    }
++    if exp == 0x1f {
++        return 255;
++    }
++    let value = if exp == 0 {
++        f32::from(frac) * (1.0 / 16_777_216.0)
++    } else {
++        let f32_bits = (u32::from(exp) + 112) << 23 | (u32::from(frac) << 13);
++        f32::from_bits(f32_bits)
++    };
++    (value.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
++}
++
++/// Convert raw readback texels into RGB24 bytes for PPM output, counting
++/// non-black pixels and pixels with non-zero alpha.
++fn decode_ppm_rgb(pixels: &[u8], format: vk::Format) -> (Vec<u8>, usize, usize) {
++    if format == vk::Format::R16G16B16A16_SFLOAT {
++        let texels = pixels.as_chunks::<8>().0;
++        let mut rgb = Vec::with_capacity(texels.len() * 3);
++        let mut lit = 0usize;
++        let mut alpha_lit = 0usize;
++        for texel in texels {
++            let r = f16_to_u8(u16::from_le_bytes([texel[0], texel[1]]));
++            let g = f16_to_u8(u16::from_le_bytes([texel[2], texel[3]]));
++            let b = f16_to_u8(u16::from_le_bytes([texel[4], texel[5]]));
++            let a = f16_to_u8(u16::from_le_bytes([texel[6], texel[7]]));
++            rgb.extend_from_slice(&[r, g, b]);
++            if [r, g, b] != [0, 0, 0] {
++                lit += 1;
++            }
++            if a != 0 {
++                alpha_lit += 1;
++            }
++        }
++        return (rgb, lit, alpha_lit);
++    }
++    let swap_red_and_blue =
++        !(format == vk::Format::R8G8B8A8_UNORM || format == vk::Format::R8G8B8A8_SRGB);
++    let texels = pixels.as_chunks::<4>().0;
++    let mut rgb = Vec::with_capacity(texels.len() * 3);
++    let mut lit = 0usize;
++    let mut alpha_lit = 0usize;
++    for texel in texels {
++        let pixel = match swap_red_and_blue {
++            true => [texel[2], texel[1], texel[0]],
++            false => [texel[0], texel[1], texel[2]],
++        };
++        rgb.extend_from_slice(&pixel);
++        if pixel != [0, 0, 0] {
++            lit += 1;
++        }
++        if texel[3] != 0 {
++            alpha_lit += 1;
++        }
++    }
++    (rgb, lit, alpha_lit)
++}
++
 +fn dump_frame(pixels: &[u8], width: u32, height: u32, format: vk::Format, layer: usize) {
      use std::sync::atomic::{AtomicU64, Ordering};
  
      let Some(directory) = std::env::var_os("ROSEMARY_FRAME_OUT") else {
-@@ -1423,7 +1423,21 @@ fn dump_frame(pixels: &[u8], width: u32, height: u32, format: vk::Format) {
-             false => out.extend_from_slice(&[texel[0], texel[1], texel[2]]),
-         }
+@@ -1413,17 +1488,19 @@ fn dump_frame(pixels: &[u8], width: u32, height: u32, format: vk::Format) {
+     if std::fs::create_dir_all(&directory).is_err() {
+         return;
      }
+-    let swap_red_and_blue =
+-        !(format == vk::Format::R8G8B8A8_UNORM || format == vk::Format::R8G8B8A8_SRGB);
++    let (rgb, lit, alpha_lit) = decode_ppm_rgb(pixels, format);
+     let mut out = format!("P6\n{width} {height}\n255\n").into_bytes();
+-    out.reserve(width as usize * height as usize * 3);
+-    for texel in pixels.as_chunks::<4>().0 {
+-        match swap_red_and_blue {
+-            true => out.extend_from_slice(&[texel[2], texel[1], texel[0]]),
+-            false => out.extend_from_slice(&[texel[0], texel[1], texel[2]]),
+-        }
+-    }
 -    let _ = std::fs::write(directory.join(format!("frame-{frame:06}.ppm")), out);
++    out.extend_from_slice(&rgb);
 +    // Which layer drew nothing tells a guest's black output apart from a
 +    // compositing fault, without opening the files.
-+    let lit = pixels
-+        .as_chunks::<4>()
-+        .0
-+        .iter()
-+        .filter(|texel| texel[..3] != [0, 0, 0])
-+        .count();
 +    let texels = (width as usize * height as usize).max(1);
 +    eprintln!(
-+        "rosemary: Metal: frame {frame} layer {layer:#x} {width}x{height} {format:?}: {:.1}% not black",
-+        lit as f64 * 100.0 / texels as f64
++        "rosemary: Metal: frame {frame} layer {layer:#x} {width}x{height} {format:?}: {:.1}% not black ({:.1}% alpha>0)",
++        lit as f64 * 100.0 / texels as f64,
++        alpha_lit as f64 * 100.0 / texels as f64,
 +    );
 +    let name = format!("frame-{frame:06}-layer-{layer:x}-{width}x{height}.ppm");
 +    let _ = std::fs::write(directory.join(name), out);
  }
  
  /// Source interval surviving both physical SDL bounds and the smaller logical
+@@ -1534,9 +1611,11 @@ fn blit_to_window(
+             return blanked;
+         };
+         let count = columns - first_column;
++        let is_f16 = format == vk::Format::R16G16B16A16_SFLOAT;
++        let stride = if is_f16 { 8 } else { 4 };
+         for row in first_row..rows {
+-            let source = (row * width as usize + first_column) * 4;
+-            let Some(from) = pixels.get(source..source + count * 4) else {
++            let source = (row * width as usize + first_column) * stride;
++            let Some(from) = pixels.get(source..source + count * stride) else {
+                 continue;
+             };
+             let target = (top + row as i64) as usize * surface.pitch as usize
+@@ -1544,6 +1623,27 @@ fn blit_to_window(
+             // SAFETY: SDL reported `pitch` bytes for each of `height` rows, and
+             // `visible` kept every write below inside the surface's row.
+             let to = unsafe { surface.pixels.add(target) };
++            if is_f16 {
++                for (column, texel) in from.as_chunks::<8>().0.iter().enumerate() {
++                    let r = f16_to_u8(u16::from_le_bytes([texel[0], texel[1]]));
++                    let g = f16_to_u8(u16::from_le_bytes([texel[2], texel[3]]));
++                    let b = f16_to_u8(u16::from_le_bytes([texel[4], texel[5]]));
++                    let a = if opaque {
++                        0xff
++                    } else {
++                        f16_to_u8(u16::from_le_bytes([texel[6], texel[7]]))
++                    };
++                    // SAFETY: `column` is below `count`, inside this row.
++                    unsafe {
++                        let out = to.add(column * 4);
++                        out.write(b);
++                        out.add(1).write(g);
++                        out.add(2).write(r);
++                        out.add(3).write(a);
++                    }
++                }
++                continue;
++            }
+             if !swap_red_and_blue {
+                 // SAFETY: `count * 4` bytes, from a slice of that length into
+                 // the visible part of the row.
+@@ -3702,7 +3802,14 @@ fn failed_readback_fence_wait_retains_texture_and_buffer_past_drawable_release()
+     let texture = crate::resource::drawable_texture(gpu, image, 80);
+     assert!(!texture.is_null());
+     gpu.inject_immediate_wait_failure_for_test();
+-    let error = submit_owned_readback(gpu, texture, image_handle, 16, 16)
++    let error = submit_owned_readback(
++        gpu,
++        texture,
++        image_handle,
++        16,
++        16,
++        vk::Format::B8G8R8A8_UNORM,
++    )
+         .err()
+         .expect("injected post-submit failed wait");
+     assert!(error.contains("injected immediate fence wait error"));
+@@ -3735,3 +3842,28 @@ fn failed_readback_fence_wait_retains_texture_and_buffer_past_drawable_release()
+     );
+     assert_eq!(gpu.immediate_quarantine_count_for_test(), 0);
+ }
++
++#[test]
++fn rgba16_float_readback_decodes_to_rgb24_and_counts_lit_pixels() {
++    // IEEE 754 binary16 bit patterns: 0.0, 0.5, 1.0, 2.0 (clamped), -0.5 (clamped), NaN.
++    const H_ZERO: u16 = 0x0000;
++    const H_HALF: u16 = 0x3800;
++    const H_ONE: u16 = 0x3c00;
++    const H_TWO: u16 = 0x4000;
++    const H_NEG_HALF: u16 = 0xb800;
++    const H_NAN: u16 = 0x7e00;
++    let mut raw = Vec::new();
++    for texel in [
++        [H_ZERO, H_ZERO, H_ZERO, H_ZERO],    // black, transparent
++        [H_ONE, H_HALF, H_ZERO, H_ONE],      // orange, opaque
++        [H_TWO, H_NEG_HALF, H_NAN, H_HALF],  // clamped red, half alpha
++    ] {
++        for lane in texel {
++            raw.extend_from_slice(&lane.to_le_bytes());
++        }
++    }
++    let (rgb, lit, alpha_lit) = decode_ppm_rgb(&raw, vk::Format::R16G16B16A16_SFLOAT);
++    assert_eq!(rgb, [0, 0, 0, 255, 128, 0, 255, 0, 0]);
++    assert_eq!(lit, 2);
++    assert_eq!(alpha_lit, 2);
++}
 diff --git a/crates/metal/src/reflection.rs b/crates/metal/src/reflection.rs
 new file mode 100644
 index 00000000..ccf6460a
@@ -6860,6 +7539,384 @@ index 00000000..ccf6460a
 +        "dealloc" => reflection_dealloc, c"v16@0:8";
 +    });
 +}
+diff --git a/crates/metal/src/resource/depth_stencil.rs b/crates/metal/src/resource/depth_stencil.rs
+index ba3555c7..f8d454e2 100644
+--- a/crates/metal/src/resource/depth_stencil.rs
++++ b/crates/metal/src/resource/depth_stencil.rs
+@@ -1,6 +1,6 @@
+ use super::*;
+ 
+-/// A `MTLDepthStencilDescriptor` and the state a pipeline reads from it.
++/// A `MTLDepthStencilDescriptor` and the immutable state compiled from it.
+ #[derive(Clone, Copy, Debug)]
+ pub(crate) struct DepthStencilState {
+     pub depth_compare: u64,
+@@ -10,7 +10,36 @@ pub(crate) struct DepthStencilState {
+     pub stencil_enabled: bool,
+ }
+ 
+-#[derive(Clone, Copy, Debug)]
++/// The body of `MTLDepthStencilDescriptor`: mutable state plus lazily-vended
++/// `MTLStencilDescriptor` proxies so callers can mutate `desc.frontFaceStencil`
++/// and `desc.backFaceStencil` in place.
++pub(crate) struct DepthStencilDescriptor {
++    pub state: DepthStencilState,
++    front_active: bool,
++    back_active: bool,
++    front_object: Id,
++    back_object: Id,
++}
++
++impl Default for DepthStencilDescriptor {
++    fn default() -> Self {
++        Self::from(DepthStencilState::default())
++    }
++}
++
++impl From<DepthStencilState> for DepthStencilDescriptor {
++    fn from(state: DepthStencilState) -> Self {
++        Self {
++            front_active: state.stencil_enabled,
++            back_active: state.stencil_enabled,
++            state,
++            front_object: std::ptr::null_mut(),
++            back_object: std::ptr::null_mut(),
++        }
++    }
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+ pub(crate) struct StencilState {
+     pub compare: u64,
+     pub fail: u64,
+@@ -20,76 +49,191 @@ pub(crate) struct StencilState {
+     pub write_mask: u32,
+ }
+ 
++/// The body of `MTLStencilDescriptor`: either standalone (`owner` is null) or
++/// bound to one face of a live `MTLDepthStencilDescriptor`.
++#[derive(Clone, Copy)]
++pub(crate) struct StencilElement {
++    owner: Id,
++    back: bool,
++    local: StencilState,
++}
++
++impl StencilElement {
++    fn standalone() -> Self {
++        Self {
++            owner: std::ptr::null_mut(),
++            back: false,
++            local: StencilState::default(),
++        }
++    }
++}
++
++fn stencil_of<'a>(receiver: Id) -> &'a mut StencilState {
++    // SAFETY: a stencil descriptor of this crate's.
++    let element = unsafe { object::body::<StencilElement>(receiver) };
++    if element.owner.is_null() {
++        return &mut element.local;
++    }
++    // SAFETY: `owner` is a live `MTLDepthStencilDescriptor` which orphans its
++    // vended face descriptors in `dealloc` before freeing its body.
++    let descriptor = unsafe { object::body::<DepthStencilDescriptor>(element.owner) };
++    if element.back {
++        &mut descriptor.state.back
++    } else {
++        &mut descriptor.state.front
++    }
++}
++
+ pub(super) unsafe extern "C" fn depth_descriptor_init(receiver: Id, _sel: Sel) -> Id {
+-    // SAFETY: a freshly allocated depth/stencil descriptor.
+-    *unsafe { object::body::<DepthStencilState>(receiver) } = DepthStencilState::default();
++    // SAFETY: a freshly allocated or reused depth/stencil descriptor.
++    let descriptor = unsafe { object::body::<DepthStencilDescriptor>(receiver) };
++    let (front_object, back_object) = (descriptor.front_object, descriptor.back_object);
++    *descriptor = DepthStencilDescriptor {
++        front_object,
++        back_object,
++        ..DepthStencilDescriptor::default()
++    };
+     receiver
+ }
+ 
++pub(super) unsafe extern "C" fn depth_descriptor_dealloc(receiver: Id, _sel: Sel) {
++    // SAFETY: a depth/stencil descriptor of this crate's.
++    let descriptor = unsafe { object::body::<DepthStencilDescriptor>(receiver) };
++    let front_state = descriptor.state.front;
++    let back_state = descriptor.state.back;
++    let front = std::mem::replace(&mut descriptor.front_object, std::ptr::null_mut());
++    let back = std::mem::replace(&mut descriptor.back_object, std::ptr::null_mut());
++    for (object, saved) in [(front, front_state), (back, back_state)] {
++        if !object.is_null() {
++            // SAFETY: an `MTLStencilDescriptor` this descriptor made.
++            let element = unsafe { object::body::<StencilElement>(object) };
++            element.local = saved;
++            element.owner = std::ptr::null_mut();
++            objc::arc::release(object);
++        }
++    }
++    objc::arc::finalize(receiver);
++}
++
+ pub(super) unsafe extern "C" fn set_depth_compare(receiver: Id, _sel: Sel, value: u64) {
+     // SAFETY: a depth/stencil descriptor of this crate's.
+-    unsafe { object::body::<DepthStencilState>(receiver) }.depth_compare = value;
++    unsafe { object::body::<DepthStencilDescriptor>(receiver) }
++        .state
++        .depth_compare = value;
+ }
+ 
+ pub(super) unsafe extern "C" fn depth_compare(receiver: Id, _sel: Sel) -> u64 {
+     // SAFETY: a depth/stencil descriptor of this crate's.
+-    unsafe { object::body::<DepthStencilState>(receiver) }.depth_compare
++    unsafe { object::body::<DepthStencilDescriptor>(receiver) }
++        .state
++        .depth_compare
+ }
+ 
+ pub(super) unsafe extern "C" fn set_depth_write(receiver: Id, _sel: Sel, value: u64) {
+-    unsafe { object::body::<DepthStencilState>(receiver) }.depth_write = value & 0xff != 0;
++    // SAFETY: a depth/stencil descriptor of this crate's.
++    unsafe { object::body::<DepthStencilDescriptor>(receiver) }
++        .state
++        .depth_write = value & 0xff != 0;
+ }
+ 
+ pub(super) unsafe extern "C" fn depth_write(receiver: Id, _sel: Sel) -> bool {
+     // SAFETY: a depth/stencil descriptor of this crate's.
+-    unsafe { object::body::<DepthStencilState>(receiver) }.depth_write
++    unsafe { object::body::<DepthStencilDescriptor>(receiver) }
++        .state
++        .depth_write
+ }
+ 
+ /// `-setFrontFaceStencil:` and `-setBackFaceStencil:` copy the descriptor's
+-/// current values: Metal's stencil descriptor is a value type.
++/// current values (preserving `@property (copy)` isolation); passing `nil`
++/// resets the face to Metal's defaults (`null_resettable`).
+ pub(super) unsafe extern "C" fn set_face_stencil(receiver: Id, sel: Sel, face: Id) {
++    // SAFETY: a depth/stencil descriptor of this crate's.
++    let descriptor = unsafe { object::body::<DepthStencilDescriptor>(receiver) };
++    // SAFETY: a selector the runtime owns.
++    let back = unsafe { std::ffi::CStr::from_ptr(sel) }.to_bytes() == b"setBackFaceStencil:";
+     if face.is_null() {
++        if back {
++            descriptor.state.back = StencilState::default();
++            descriptor.back_active = false;
++        } else {
++            descriptor.state.front = StencilState::default();
++            descriptor.front_active = false;
++        }
++        descriptor.state.stencil_enabled = descriptor.front_active || descriptor.back_active;
+         return;
+     }
+-    // SAFETY: a stencil descriptor of this crate's.
+-    let state = *unsafe { object::body::<StencilState>(face) };
+-    // SAFETY: a depth/stencil descriptor of this crate's.
+-    let descriptor = unsafe { object::body::<DepthStencilState>(receiver) };
+-    descriptor.stencil_enabled = true;
+-    // SAFETY: a selector the runtime owns.
+-    match unsafe { std::ffi::CStr::from_ptr(sel) }.to_bytes() {
+-        b"setFrontFaceStencil:" => descriptor.front = state,
+-        _ => descriptor.back = state,
++    let copied = *stencil_of(face);
++    if back {
++        descriptor.state.back = copied;
++        descriptor.back_active = true;
++    } else {
++        descriptor.state.front = copied;
++        descriptor.front_active = true;
+     }
++    descriptor.state.stencil_enabled = true;
+ }
+ 
+-/// The face properties are values, not references into the depth descriptor.
+-/// Return an autoreleased copy just as Metal does, so a caller can read and
+-/// modify it before assigning it back with the corresponding setter.
++/// `-frontFaceStencil` and `-backFaceStencil` lazily vend a live
++/// `MTLStencilDescriptor` backed by this descriptor, matching Apple's
++/// `null_resettable` property so `desc.frontFaceStencil.xxx = ...` mutates the
++/// descriptor in place.
+ pub(super) unsafe extern "C" fn face_stencil(receiver: Id, sel: Sel) -> Id {
+-    // SAFETY: a depth/stencil descriptor of this crate's.
+-    let descriptor = unsafe { object::body::<DepthStencilState>(receiver) };
+-    if !descriptor.stencil_enabled {
+-        return std::ptr::null_mut();
+-    }
+     // SAFETY: a selector the runtime owns.
+-    let state = match unsafe { std::ffi::CStr::from_ptr(sel) }.to_bytes() {
+-        b"frontFaceStencil" => descriptor.front,
+-        b"backFaceStencil" => descriptor.back,
+-        _ => unreachable!("only registered stencil getters reach this method"),
++    let back = unsafe { std::ffi::CStr::from_ptr(sel) }.to_bytes() == b"backFaceStencil";
++    // SAFETY: a depth/stencil descriptor of this crate's.
++    let descriptor = unsafe { object::body::<DepthStencilDescriptor>(receiver) };
++    let existing = if back {
++        descriptor.back_object
++    } else {
++        descriptor.front_object
+     };
+-    objc::arc::autorelease(object::make(c"MTLStencilDescriptor", state))
++    if !existing.is_null() {
++        return existing;
++    }
++    let element = object::make(
++        c"MTLStencilDescriptor",
++        StencilElement {
++            owner: receiver,
++            back,
++            local: StencilState::default(),
++        },
++    );
++    // SAFETY: a depth/stencil descriptor of this crate's.
++    let descriptor = unsafe { object::body::<DepthStencilDescriptor>(receiver) };
++    if back {
++        descriptor.back_object = element;
++    } else {
++        descriptor.front_object = element;
++    }
++    element
+ }
+ 
+ pub(super) unsafe extern "C" fn stencil_descriptor_init(receiver: Id, _sel: Sel) -> Id {
+     // SAFETY: a freshly allocated stencil descriptor.
+-    *unsafe { object::body::<StencilState>(receiver) } = StencilState::default();
++    *unsafe { object::body::<StencilElement>(receiver) } = StencilElement::standalone();
+     receiver
+ }
+ 
+ pub(super) unsafe extern "C" fn set_stencil_value(receiver: Id, sel: Sel, value: u64) {
+     // SAFETY: a stencil descriptor of this crate's.
+-    let state = unsafe { object::body::<StencilState>(receiver) };
++    let element = unsafe { object::body::<StencilElement>(receiver) };
++    let owner = element.owner;
++    let back = element.back;
++    let state = if owner.is_null() {
++        &mut element.local
++    } else {
++        // SAFETY: `owner` is a live `MTLDepthStencilDescriptor`.
++        let descriptor = unsafe { object::body::<DepthStencilDescriptor>(owner) };
++        if back {
++            descriptor.back_active = true;
++            descriptor.state.stencil_enabled = true;
++            &mut descriptor.state.back
++        } else {
++            descriptor.front_active = true;
++            descriptor.state.stencil_enabled = true;
++            &mut descriptor.state.front
++        }
++    };
+     // SAFETY: a selector the runtime owns.
+     match unsafe { std::ffi::CStr::from_ptr(sel) }.to_bytes() {
+         b"setStencilCompareFunction:" => state.compare = value,
+@@ -102,6 +246,20 @@ pub(super) unsafe extern "C" fn set_stencil_value(receiver: Id, sel: Sel, value:
+     }
+ }
+ 
++pub(super) unsafe extern "C" fn stencil_value(receiver: Id, sel: Sel) -> u64 {
++    let state = stencil_of(receiver);
++    // SAFETY: a selector the runtime owns.
++    match unsafe { std::ffi::CStr::from_ptr(sel) }.to_bytes() {
++        b"stencilCompareFunction" => state.compare,
++        b"stencilFailureOperation" => state.fail,
++        b"depthFailureOperation" => state.depth_fail,
++        b"depthStencilPassOperation" => state.pass,
++        b"readMask" => u64::from(state.read_mask),
++        b"writeMask" => u64::from(state.write_mask),
++        _ => unreachable!("only registered stencil getters reach this method"),
++    }
++}
++
+ pub(crate) fn new_depth_stencil_state(state: DepthStencilState) -> Id {
+     object::make(c"RosemaryMTLDepthStencilState", state)
+ }
+@@ -111,25 +269,71 @@ mod tests {
+     use super::*;
+ 
+     #[test]
+-    fn reads_back_a_face_copy() {
++    fn reads_back_a_face_copy_and_isolates_source_mutations() {
+         crate::bootstrap();
+-        let descriptor = object::make(c"MTLDepthStencilDescriptor", DepthStencilState::default());
+-        let stencil = object::make(c"MTLStencilDescriptor", StencilState::default());
++        let descriptor = object::make(
++            c"MTLDepthStencilDescriptor",
++            DepthStencilDescriptor::default(),
++        );
++        let stencil = object::make(c"MTLStencilDescriptor", StencilElement::standalone());
+         // SAFETY: these are methods on the two freshly made Metal descriptors.
+         unsafe {
+             set_stencil_value(stencil, objc::sel::get("setReadMask:"), 0x0f);
+             set_face_stencil(descriptor, objc::sel::get("setBackFaceStencil:"), stencil);
++            // Mutating the source stencil later must not change the descriptor.
++            set_stencil_value(stencil, objc::sel::get("setReadMask:"), 0xaa);
++
++            let back = face_stencil(descriptor, objc::sel::get("backFaceStencil"));
++            assert!(!back.is_null());
++            assert_eq!(stencil_value(back, objc::sel::get("readMask")), 0x0f);
++            objc::arc::release(stencil);
++            objc::arc::release(descriptor);
+         }
++    }
+ 
+-        let pool = objc::arc::pool_push();
+-        // SAFETY: this is the corresponding registered getter.
+-        let copy = unsafe { face_stencil(descriptor, objc::sel::get("backFaceStencil")) };
+-        assert!(!copy.is_null());
+-        // SAFETY: the getter made this a stencil descriptor with the copied state.
+-        assert_eq!(
+-            unsafe { object::body::<StencilState>(copy) }.read_mask,
+-            0x0f
++    #[test]
++    fn mutating_face_stencil_property_in_place_updates_descriptor_and_enables_stencil() {
++        crate::bootstrap();
++        let descriptor = object::make(
++            c"MTLDepthStencilDescriptor",
++            DepthStencilDescriptor::default(),
+         );
+-        objc::arc::pool_pop(pool);
++        // SAFETY: methods on freshly allocated Metal descriptors.
++        unsafe {
++            let front = face_stencil(descriptor, objc::sel::get("frontFaceStencil"));
++            assert!(!front.is_null());
++            // Access alone leaves stencil disabled; mutating enables it and writes through.
++            assert!(
++                !object::body::<DepthStencilDescriptor>(descriptor)
++                    .state
++                    .stencil_enabled
++            );
++            set_stencil_value(front, objc::sel::get("setStencilCompareFunction:"), 5);
++            set_stencil_value(front, objc::sel::get("setDepthStencilPassOperation:"), 5);
++            set_stencil_value(front, objc::sel::get("setWriteMask:"), 0x7f);
++
++            let state = object::body::<DepthStencilDescriptor>(descriptor).state;
++            assert!(state.stencil_enabled);
++            assert_eq!(state.front.compare, 5);
++            assert_eq!(state.front.pass, 5);
++            assert_eq!(state.front.write_mask, 0x7f);
++
++            // Setting to nil resets the face to defaults and disables stencil when both faces are cleared.
++            set_face_stencil(
++                descriptor,
++                objc::sel::get("setFrontFaceStencil:"),
++                std::ptr::null_mut(),
++            );
++            let reset = object::body::<DepthStencilDescriptor>(descriptor).state;
++            assert!(!reset.stencil_enabled);
++            assert_eq!(reset.front, StencilState::default());
++
++            // Retained face proxy survives descriptor deallocation with its saved values.
++            set_stencil_value(front, objc::sel::get("setReadMask:"), 0x3c);
++            let held = objc::arc::retain(front);
++            objc::arc::release(descriptor);
++            assert_eq!(stencil_value(held, objc::sel::get("readMask")), 0x3c);
++            objc::arc::release(held);
++        }
+     }
+ }
 diff --git a/crates/metal/src/resource/heap.rs b/crates/metal/src/resource/heap.rs
 index 102d6611..4506d6b2 100644
 --- a/crates/metal/src/resource/heap.rs
@@ -6873,10 +7930,29 @@ index 102d6611..4506d6b2 100644
      }
  
 diff --git a/crates/metal/src/resource/mod.rs b/crates/metal/src/resource/mod.rs
-index 3ef87001..826a4791 100644
+index 3ef87001..735c4e9b 100644
 --- a/crates/metal/src/resource/mod.rs
 +++ b/crates/metal/src/resource/mod.rs
-@@ -120,6 +120,8 @@ pub(crate) fn install() {
+@@ -23,14 +23,16 @@ use vertex::*;
+ pub(crate) use buffer::leaking;
+ 
+ pub(crate) use buffer::new_buffer;
+-pub(crate) use depth_stencil::{DepthStencilState, StencilState, new_depth_stencil_state};
++pub(crate) use depth_stencil::{
++    DepthStencilDescriptor, DepthStencilState, StencilState, new_depth_stencil_state,
++};
+ pub(crate) use heap::new_heap;
+ #[cfg(test)]
+ pub(crate) use heap::placement_of;
+ pub(crate) use heap::{heap_buffer_size_and_align, heap_texture_size_and_align};
+ pub(crate) use sampler::{SamplerDescriptor, SamplerState, compare_op, new_sampler};
+ #[cfg(test)]
+-pub(crate) use texture::Region;
++pub(crate) use texture::{Region, SwizzleChannels, ViewRange};
+ pub(crate) use texture::{
+     Texture, TextureDescriptor, drawable_texture, new_internal_attachment, new_texture,
+ };
+@@ -120,6 +122,8 @@ pub(crate) fn install() {
          // as it is Metal's when this is left at its default.
          "allowGPUOptimizedContents" => crate::device::yes, c"B16@0:8";
          "setAllowGPUOptimizedContents:" => crate::no_op, c"v20@0:8c16";
@@ -6885,7 +7961,7 @@ index 3ef87001..826a4791 100644
      });
      methods!(descriptor.metaclass(), {
          "texture2DDescriptorWithPixelFormat:width:height:mipmapped:"
-@@ -193,6 +195,7 @@ pub(crate) fn install() {
+@@ -193,6 +197,7 @@ pub(crate) fn install() {
          "newTextureViewWithPixelFormat:textureType:levels:slices:swizzle:"
              => texture::new_texture_view_swizzled,
              c"@68@0:8Q16Q24{_NSRange=QQ}32{_NSRange=QQ}48{MTLTextureSwizzleChannels=CCCC}64";
@@ -6893,8 +7969,44 @@ index 3ef87001..826a4791 100644
      });
      methods!(texture, {
          "parentTexture" => texture_parent, c"@16@0:8";
+@@ -233,11 +238,12 @@ pub(crate) fn install() {
+         );
+     }
+ 
+-    let depth = object::register::<DepthStencilState>(c"MTLDepthStencilDescriptor");
++    let depth = object::register::<DepthStencilDescriptor>(c"MTLDepthStencilDescriptor");
+     object::register::<DepthStencilState>(c"RosemaryMTLDepthStencilState");
+-    let stencil = object::register::<StencilState>(c"MTLStencilDescriptor");
++    let stencil = object::register::<StencilElement>(c"MTLStencilDescriptor");
+     methods!(depth, {
+         "init" => depth_descriptor_init, c"@16@0:8";
++        "dealloc" => depth_descriptor_dealloc, c"v16@0:8";
+         "depthCompareFunction" => depth_compare, c"Q16@0:8";
+         "setDepthCompareFunction:" => set_depth_compare, c"v24@0:8Q16";
+         "isDepthWriteEnabled" => depth_write, c"c16@0:8";
+@@ -265,6 +271,20 @@ pub(crate) fn install() {
+             c"v24@0:8Q16",
+         );
+     }
++    for selector in [
++        "stencilCompareFunction",
++        "stencilFailureOperation",
++        "depthFailureOperation",
++        "depthStencilPassOperation",
++        "readMask",
++        "writeMask",
++    ] {
++        stencil.replace_method(
++            objc::sel::get(selector),
++            stencil_value as *const std::ffi::c_void,
++            c"Q16@0:8",
++        );
++    }
+ 
+     let vertex = object::register::<VertexDescriptor>(c"MTLVertexDescriptor");
+     let collection = object::register::<IndexedCollection>(c"RosemaryMTLIndexedCollection");
 diff --git a/crates/metal/src/resource/texture.rs b/crates/metal/src/resource/texture.rs
-index f983d3c7..f1bc595e 100644
+index f983d3c7..8d8833ad 100644
 --- a/crates/metal/src/resource/texture.rs
 +++ b/crates/metal/src/resource/texture.rs
 @@ -73,6 +73,7 @@ pub(crate) struct TextureDescriptor {
@@ -6934,6 +8046,19 @@ index f983d3c7..f1bc595e 100644
      };
      object::make(
          c"RosemaryMTLTexture",
+@@ -856,9 +863,9 @@ fn lcm(a: u64, b: u64) -> u64 {
+ /// `NSRange`, as the view methods take their level and slice ranges.
+ #[repr(C)]
+ #[derive(Clone, Copy)]
+-pub(super) struct ViewRange {
+-    location: u64,
+-    length: u64,
++pub(crate) struct ViewRange {
++    pub(crate) location: u64,
++    pub(crate) length: u64,
+ }
+ 
+ /// `-newTextureViewWithPixelFormat:`: every level and slice, another format.
 @@ -908,12 +915,39 @@ pub(super) unsafe extern "C" fn new_texture_view_range(
  
  /// `MTLTextureSwizzleChannels`: each output channel's `MTLTextureSwizzle`.
@@ -7068,7 +8193,7 @@ index 1d278874..c89fd69d 100644
              Ok(suboptimal) => {
                  if suboptimal {
 diff --git a/crates/metal/src/tests.rs b/crates/metal/src/tests.rs
-index 67d1296e..45e3ef45 100644
+index 67d1296e..675e80de 100644
 --- a/crates/metal/src/tests.rs
 +++ b/crates/metal/src/tests.rs
 @@ -651,6 +651,7 @@ fn a_translated_kernel_runs_on_the_gpu() {
@@ -7247,6 +8372,247 @@ index 67d1296e..45e3ef45 100644
                  },
              );
              assert!(!texture.is_null());
+@@ -6255,3 +6277,240 @@ fn the_pipeline_cache_saves_after_enough_new_pipelines_without_exiting() {
+     }
+     assert!(gpu.reopened_pipeline_cache_bytes(None).is_some());
+ }
++
++/// An `A8Unorm` texture created with `ShaderRead | ShaderWrite | RenderTarget`
++/// (the exact usage CapCut's AGFX requests for font glyph atlases) must keep
++/// its `(0, 0, 0, R)` sampling swizzle while still allowing storage writes via
++/// its dedicated identity-swizzled storage view.
++#[test]
++fn a8_unorm_texture_with_storage_usage_samples_as_alpha_and_supports_storage_write() {
++    isolate_metal_fixture!();
++    let Some(device) = gpu_device() else {
++        return;
++    };
++    let gpu = gpu_of(device).expect("a Vulkan device");
++    let sample_kernel = kernel_from_source(
++        device,
++        "kernel void sample_a8(device float4* output [[buffer(0)]],\n\
++                               texture2d<float> source [[texture(0)]]) {\n\
++             constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::nearest);\n\
++             output[0] = source.sample(s, float2(0.5, 0.5), level(0.0));\n\
++         }",
++        "sample_a8",
++    );
++    let write_kernel = kernel_from_source(
++        device,
++        "kernel void write_a8(texture2d<float, access::write> dest [[texture(0)]]) {\n\
++             dest.write(float4(0.25, 0.0, 0.0, 0.0), uint2(0, 0));\n\
++         }",
++        "write_a8",
++    );
++    // SAFETY: objects this test made, sent the selectors they implement.
++    unsafe {
++        let texture = resource::new_texture(
++            gpu,
++            resource::TextureDescriptor {
++                texture_type: TEXTURE_TYPE_2D,
++                pixel_format: 1, // MTLPixelFormatA8Unorm
++                width: 1,
++                height: 1,
++                depth: 1,
++                mipmap_level_count: 1,
++                sample_count: 1,
++                array_length: 1,
++                storage_mode: 0,
++                usage: gpu::USAGE_SHADER_READ | gpu::USAGE_SHADER_WRITE | gpu::USAGE_RENDER_TARGET,
++                swizzle: Default::default(),
++            },
++        );
++        assert!(!texture.is_null());
++        replace_region(texture, [0, 0, 1, 1], &[0x80u8], 1);
++
++        let output = new_buffer(device, std::ptr::null(), 16, 0);
++        let queue = new_command_queue(device, std::ptr::null());
++
++        let run_sample = || -> [f32; 4] {
++            let command = send(queue, "commandBuffer");
++            let encoder = send(command, "computeCommandEncoder");
++            send_with_object(encoder, "setComputePipelineState:", sample_kernel);
++            let (bind, sel) =
++                method::<unsafe extern "C" fn(Id, Sel, Id, u64)>(encoder, "setTexture:atIndex:");
++            bind(encoder, sel, texture, 0);
++            set_buffer_at(encoder, output, 0, 0);
++            dispatch(encoder, 1);
++            send_void(encoder, "endEncoding");
++            send_void(command, "commit");
++            send_void(command, "waitUntilCompleted");
++            let contents = object::body::<resource::Buffer>(output).inner.contents as *const [f32; 4];
++            std::ptr::read(contents)
++        };
++
++        let sampled = run_sample();
++        assert!(
++            sampled[0].abs() < 0.01
++                && sampled[1].abs() < 0.01
++                && sampled[2].abs() < 0.01
++                && (sampled[3] - (128.0 / 255.0)).abs() < 0.02,
++            "A8Unorm with ShaderWrite|RenderTarget usage lost its (0,0,0,R) swizzle: {sampled:?}"
++        );
++
++        // Storage write must bind the identity-swizzled storage view and update
++        // the underlying R8 channel so subsequent sampling reads the new alpha.
++        let command = send(queue, "commandBuffer");
++        let encoder = send(command, "computeCommandEncoder");
++        send_with_object(encoder, "setComputePipelineState:", write_kernel);
++        let (bind, sel) =
++            method::<unsafe extern "C" fn(Id, Sel, Id, u64)>(encoder, "setTexture:atIndex:");
++        bind(encoder, sel, texture, 0);
++        dispatch(encoder, 1);
++        send_void(encoder, "endEncoding");
++        send_void(command, "commit");
++        send_void(command, "waitUntilCompleted");
++
++        let rewritten = run_sample();
++        assert!(
++            rewritten[0].abs() < 0.01
++                && rewritten[1].abs() < 0.01
++                && rewritten[2].abs() < 0.01
++                && (rewritten[3] - 0.25).abs() < 0.02,
++            "storage write + re-sample of A8Unorm failed: {rewritten:?}"
++        );
++    }
++}
++
++/// Custom descriptor swizzles and swizzled texture views on storage-capable
++/// textures must preserve their sampling swizzle.
++#[test]
++fn swizzled_storage_texture_and_texture_view_preserve_sampling_swizzle() {
++    isolate_metal_fixture!();
++    let Some(device) = gpu_device() else {
++        return;
++    };
++    let gpu = gpu_of(device).expect("a Vulkan device");
++    let sample_kernel = kernel_from_source(
++        device,
++        "kernel void sample_rgba(device float4* output [[buffer(0)]],\n\
++                                 texture2d<float> source [[texture(0)]]) {\n\
++             constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::nearest);\n\
++             output[0] = source.sample(s, float2(0.5, 0.5), level(0.0));\n\
++         }",
++        "sample_rgba",
++    );
++    // SAFETY: objects this test made, sent the selectors they implement.
++    unsafe {
++        let luminance = resource::new_texture(
++            gpu,
++            resource::TextureDescriptor {
++                texture_type: TEXTURE_TYPE_2D,
++                pixel_format: 10, // MTLPixelFormatR8Unorm
++                width: 1,
++                height: 1,
++                depth: 1,
++                mipmap_level_count: 1,
++                sample_count: 1,
++                array_length: 1,
++                storage_mode: 0,
++                usage: gpu::USAGE_SHADER_READ | gpu::USAGE_SHADER_WRITE | gpu::USAGE_RENDER_TARGET,
++                swizzle: resource::SwizzleChannels {
++                    red: 2,   // Red
++                    green: 2, // Red
++                    blue: 2,  // Red
++                    alpha: 1, // One
++                },
++            },
++        );
++        assert!(!luminance.is_null());
++        replace_region(luminance, [0, 0, 1, 1], &[0x80u8], 1);
++
++        let rgba = resource::new_texture(
++            gpu,
++            resource::TextureDescriptor {
++                texture_type: TEXTURE_TYPE_2D,
++                pixel_format: 70, // MTLPixelFormatRGBA8Unorm
++                width: 1,
++                height: 1,
++                depth: 1,
++                mipmap_level_count: 1,
++                sample_count: 1,
++                array_length: 1,
++                storage_mode: 0,
++                usage: gpu::USAGE_SHADER_READ | gpu::USAGE_SHADER_WRITE,
++                swizzle: Default::default(),
++            },
++        );
++        assert!(!rgba.is_null());
++        replace_region(rgba, [0, 0, 1, 1], &[255u8, 64, 0, 128], 4);
++        let (make_view, make_view_sel) = method::<
++            unsafe extern "C" fn(
++                Id,
++                Sel,
++                u64,
++                u64,
++                resource::ViewRange,
++                resource::ViewRange,
++                resource::SwizzleChannels,
++            ) -> Id,
++        >(
++            rgba,
++            "newTextureViewWithPixelFormat:textureType:levels:slices:swizzle:",
++        );
++        let swapped = make_view(
++            rgba,
++            make_view_sel,
++            70,
++            TEXTURE_TYPE_2D,
++            resource::ViewRange {
++                location: 0,
++                length: 1,
++            },
++            resource::ViewRange {
++                location: 0,
++                length: 1,
++            },
++            resource::SwizzleChannels {
++                red: 4,   // Blue
++                green: 3, // Green
++                blue: 2,  // Red
++                alpha: 5, // Alpha
++            },
++        );
++        assert!(!swapped.is_null());
++
++        let output = new_buffer(device, std::ptr::null(), 16, 0);
++        let queue = new_command_queue(device, std::ptr::null());
++        let sample = |tex: Id| -> [f32; 4] {
++            let command = send(queue, "commandBuffer");
++            let encoder = send(command, "computeCommandEncoder");
++            send_with_object(encoder, "setComputePipelineState:", sample_kernel);
++            let (bind, sel) =
++                method::<unsafe extern "C" fn(Id, Sel, Id, u64)>(encoder, "setTexture:atIndex:");
++            bind(encoder, sel, tex, 0);
++            set_buffer_at(encoder, output, 0, 0);
++            dispatch(encoder, 1);
++            send_void(encoder, "endEncoding");
++            send_void(command, "commit");
++            send_void(command, "waitUntilCompleted");
++            let contents = object::body::<resource::Buffer>(output).inner.contents as *const [f32; 4];
++            std::ptr::read(contents)
++        };
++
++        let lum = sample(luminance);
++        let half = 128.0 / 255.0;
++        assert!(
++            (lum[0] - half).abs() < 0.02
++                && (lum[1] - half).abs() < 0.02
++                && (lum[2] - half).abs() < 0.02
++                && (lum[3] - 1.0).abs() < 0.01,
++            "custom descriptor swizzle with ShaderWrite usage failed: {lum:?}"
++        );
++
++        let view = sample(swapped);
++        assert!(
++            view[0].abs() < 0.01
++                && (view[1] - (64.0 / 255.0)).abs() < 0.02
++                && (view[2] - 1.0).abs() < 0.01
++                && (view[3] - half).abs() < 0.02,
++            "swizzled texture view on storage texture failed: {view:?}"
++        );
++    }
++}
 diff --git a/crates/metal/src/tests/depth_stencil.rs b/crates/metal/src/tests/depth_stencil.rs
 index 99a11a89..168533de 100644
 --- a/crates/metal/src/tests/depth_stencil.rs
@@ -7291,11 +8657,73 @@ index 3b70a725..0ed67c98 100644
              },
          );
          let vertices = new_buffer(device, std::ptr::null(), 48, 0);
+diff --git a/crates/metal_translate/src/air/bitcode.rs b/crates/metal_translate/src/air/bitcode.rs
+index fbd09b24..0174b62c 100644
+--- a/crates/metal_translate/src/air/bitcode.rs
++++ b/crates/metal_translate/src/air/bitcode.rs
+@@ -177,6 +177,7 @@ pub(super) fn parse_minimal_store_bitcode(bitcode: &Bitcode) -> Result<Module, T
+                 access,
+                 ty: pointer,
+                 name: Some(parameter_name),
++                type_name: None,
+                 inline_sampler: None,
+             }],
+             inputs: Vec::new(),
+@@ -282,6 +283,7 @@ fn parse_packed_air(
+             access: Access::Read,
+             ty: Type::Sampler,
+             name: names.get(&state).cloned(),
++            type_name: None,
+             inline_sampler: Some(super::sampler_state::decode(word)?),
+         });
+     }
+@@ -331,6 +333,7 @@ fn parse_packed_air(
+                 access: resource.access,
+                 ty: parameter.ty.clone(),
+                 name: resource.name.clone(),
++                type_name: resource.type_name.clone(),
+                 inline_sampler: None,
+             })
+         })
+diff --git a/crates/metal_translate/src/air/metadata/fields.rs b/crates/metal_translate/src/air/metadata/fields.rs
+index e6935524..752a0031 100644
+--- a/crates/metal_translate/src/air/metadata/fields.rs
++++ b/crates/metal_translate/src/air/metadata/fields.rs
+@@ -119,6 +119,13 @@ pub(super) fn argument_name(items: &[Item<'_>]) -> Option<String> {
+     }
+ }
+ 
++pub(super) fn argument_type_name(items: &[Item<'_>]) -> Option<String> {
++    match keyed(items, "air.arg_type_name") {
++        [Item::Text(name), ..] => Some((*name).to_string()),
++        _ => None,
++    }
++}
++
+ /// Whether `air.arg_type_name` spells a signed integer scalar or vector,
+ /// such as `int`, `short2` or `char4`.
+ pub(super) fn signed_integer_argument(items: &[Item<'_>]) -> bool {
 diff --git a/crates/metal_translate/src/air/metadata/mod.rs b/crates/metal_translate/src/air/metadata/mod.rs
-index 0d385de6..b7569d47 100644
+index 0d385de6..38ac28c0 100644
 --- a/crates/metal_translate/src/air/metadata/mod.rs
 +++ b/crates/metal_translate/src/air/metadata/mod.rs
-@@ -456,7 +456,11 @@ impl Metadata {
+@@ -318,6 +318,7 @@ pub(super) struct MetadataResource {
+     pub count: u32,
+     pub access: Access,
+     pub name: Option<String>,
++    pub type_name: Option<String>,
+     /// The Metal type spelled by `air.arg_type_name`, for arguments whose
+     /// LLVM type is opaque. A buffer's type comes from LLVM instead.
+     pub ty: Option<Type>,
+@@ -446,6 +447,7 @@ impl Metadata {
+                         count: location_count(rest)?,
+                         access,
+                         name: argument_name(&items),
++                        type_name: argument_type_name(&items),
+                         ty: match kind {
+                             ResourceKind::Texture => Some(texture_type(&items, access)?),
+                             ResourceKind::Sampler => Some(Type::Sampler),
+@@ -456,7 +458,11 @@ impl Metadata {
                  None => interface.inputs.push(StageInput {
                      argument,
                      binding: input_binding(tag, rest, &mut next_input)?,
@@ -7354,6 +8782,18 @@ index 16646429..92375979 100644
 +    assert_eq!(interface.inputs.len(), 1);
 +    assert_eq!(interface.inputs[0].name.as_deref(), Some("aPosition"));
 +}
+diff --git a/crates/metal_translate/src/air/text.rs b/crates/metal_translate/src/air/text.rs
+index e9389ebe..d2abd1bf 100644
+--- a/crates/metal_translate/src/air/text.rs
++++ b/crates/metal_translate/src/air/text.rs
+@@ -558,6 +558,7 @@ impl MetadataResource {
+             access: self.access,
+             ty: parameter.ty.clone(),
+             name: self.name,
++            type_name: Some(self.type_name),
+             inline_sampler: None,
+         })
+     }
 diff --git a/crates/metal_translate/src/cache/codec.rs b/crates/metal_translate/src/cache/codec.rs
 index 96197fea..e8f3aa02 100644
 --- a/crates/metal_translate/src/cache/codec.rs
@@ -7596,6 +9036,20 @@ index 404b6c79..7bd781b8 100644
                  varyings: Vec::new(),
              },
          ],
+diff --git a/crates/metal_translate/src/ir/mod.rs b/crates/metal_translate/src/ir/mod.rs
+index 9f0991cf..6698d66d 100644
+--- a/crates/metal_translate/src/ir/mod.rs
++++ b/crates/metal_translate/src/ir/mod.rs
+@@ -235,6 +235,9 @@ pub struct Resource {
+     pub access: Access,
+     pub ty: Type,
+     pub name: Option<String>,
++    /// Metal type spelled by AIR `air.arg_type_name` (e.g. `float4x4`, `int`)
++    /// when LLVM bitcode erases signedness or wraps matrices in structs.
++    pub type_name: Option<String>,
+     /// A sampler the shader describes itself (`constexpr sampler`), which the
+     /// runtime makes and binds rather than taking one from the encoder.
+     pub inline_sampler: Option<InlineSampler>,
 diff --git a/crates/metal_translate/src/lib.rs b/crates/metal_translate/src/lib.rs
 index 5126a37b..692fe0b9 100644
 --- a/crates/metal_translate/src/lib.rs
@@ -7698,7 +9152,7 @@ index c5b4fc69..2df0b27c 100644
                  let v = self.floating(v.clone(), line)?;
                  let lanes = v.ty.lanes().unwrap();
 diff --git a/crates/metal_translate/src/msl/lower/mod.rs b/crates/metal_translate/src/msl/lower/mod.rs
-index bae4e37c..75ec23f8 100644
+index bae4e37c..65594614 100644
 --- a/crates/metal_translate/src/msl/lower/mod.rs
 +++ b/crates/metal_translate/src/msl/lower/mod.rs
 @@ -1279,7 +1279,8 @@ impl<'c, 'p> Lowerer<'c, 'p> {
@@ -7711,7 +9165,31 @@ index bae4e37c..75ec23f8 100644
              lowerer.parameter(param, &mut parameters, &mut entry, &mut next_location)?;
          }
          lowerer.returns(function, &mut entry)?;
-@@ -1810,3 +1811,38 @@ fn builtin_ty(builtin: Builtin) -> Ty {
+@@ -1372,6 +1373,7 @@ impl<'c, 'p> Lowerer<'c, 'p> {
+                     },
+                     ty,
+                     name: Some(param.name.clone()),
++                    type_name: None,
+                     inline_sampler: None,
+                 });
+                 let place = Place {
+@@ -1409,6 +1411,7 @@ impl<'c, 'p> Lowerer<'c, 'p> {
+                     access: Access::Read,
+                     ty,
+                     name: Some(param.name.clone()),
++                    type_name: None,
+                     inline_sampler: Some(sampler),
+                 });
+                 self.bind(
+@@ -1442,6 +1445,7 @@ impl<'c, 'p> Lowerer<'c, 'p> {
+                     access,
+                     ty,
+                     name: Some(param.name.clone()),
++                    type_name: None,
+                     inline_sampler: None,
+                 });
+                 self.bind(
+@@ -1810,3 +1814,38 @@ fn builtin_ty(builtin: Builtin) -> Ty {
          _ => Ty::Scalar(Scalar::UINT),
      }
  }
@@ -7750,6 +9228,18 @@ index bae4e37c..75ec23f8 100644
 +    }
 +    Ok(located)
 +}
+diff --git a/crates/metal_translate/src/msl/mod.rs b/crates/metal_translate/src/msl/mod.rs
+index a3278f76..b86ed7b5 100644
+--- a/crates/metal_translate/src/msl/mod.rs
++++ b/crates/metal_translate/src/msl/mod.rs
+@@ -209,6 +209,7 @@ fn parse_kernel(
+                 access,
+                 ty,
+                 name: Some(name.to_string()),
++                type_name: None,
+                 inline_sampler: None,
+             });
+         } else {
 diff --git a/crates/metal_translate/src/msl/parse.rs b/crates/metal_translate/src/msl/parse.rs
 index 1794473c..4182dcfa 100644
 --- a/crates/metal_translate/src/msl/parse.rs
@@ -7892,10 +9382,10 @@ index dce52ea5..e11a6bf3 100644
  
 diff --git a/crates/metal_translate/src/spirv/reflect.rs b/crates/metal_translate/src/spirv/reflect.rs
 new file mode 100644
-index 00000000..14a0121e
+index 00000000..890ecb74
 --- /dev/null
 +++ b/crates/metal_translate/src/spirv/reflect.rs
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,469 @@
 +//! Argument reflection for `MTLRenderPipelineReflection` and
 +//! `MTLComputePipelineReflection`: each resource argument's name, slot and,
 +//! for a buffer, the layout of the type it points at.
@@ -7986,13 +9476,23 @@ index 00000000..14a0121e
 +                _ => (0, 0),
 +            };
 +            let buffer = match (&resource.kind, &parameter.ty) {
-+                (ResourceKind::Buffer, Type::Pointer { pointee, .. }) => {
-+                    Some(reflect_type(pointee, 0))
-+                }
++                (ResourceKind::Buffer, Type::Pointer { pointee, .. }) => Some(
++                    resource
++                        .type_name
++                        .as_deref()
++                        .and_then(reflect_named_metal_type)
++                        .unwrap_or_else(|| reflect_type(pointee, 0)),
++                ),
 +                _ => None,
 +            };
++            let name = resource
++                .name
++                .as_deref()
++                .filter(|name| !name.is_empty())
++                .unwrap_or(&parameter.name)
++                .to_string();
 +            Some(ArgumentReflection {
-+                name: parameter.name.clone(),
++                name,
 +                kind: resource.kind,
 +                index: resource.index,
 +                count: resource.count,
@@ -8142,6 +9642,217 @@ index 00000000..14a0121e
 +            }
 +        }
 +        _ => 0,
++    }
++}
++
++/// Reflect a built-in Metal scalar, vector, or matrix spelled by AIR's
++/// `air.arg_type_name` metadata.
++///
++/// Apple AIR lowers Metal matrices (`float4x4`, `float3x3`, ...) into single-field
++/// structs `%"struct.metal::matrix" = type { [C x <R x float>] }` and erases
++/// integer signedness (`int` vs `uint` are both LLVM `i32`). Reflecting from
++/// `air.arg_type_name` restores the exact `MTLDataType`, size, and alignment
++/// that macOS Metal reports in `MTLRenderPipelineReflection`.
++fn reflect_named_metal_type(name: &str) -> Option<ReflectedType> {
++    let (packed, base) = match name.strip_prefix("packed_") {
++        Some(rest) => (true, rest),
++        None => (false, name),
++    };
++    if !packed {
++        if let Some((prefix, dims)) = base
++            .strip_prefix("float")
++            .map(|d| (7u64, 4u32, d))
++            .or_else(|| base.strip_prefix("half").map(|d| (20u64, 2u32, d)))
++            .and_then(|(mat_base, scalar_bytes, rest)| {
++                let (c, r) = rest.split_once('x')?;
++                let cols: u32 = c.parse().ok()?;
++                let rows: u32 = r.parse().ok()?;
++                if (2..=4).contains(&cols) && (2..=4).contains(&rows) {
++                    Some((mat_base + u64::from(cols - 2) * 3 + u64::from(rows - 2), (scalar_bytes, cols, rows)))
++                } else {
++                    None
++                }
++            })
++        {
++            let (scalar_bytes, cols, rows) = dims;
++            let col_lanes = if rows == 3 { 4 } else { rows };
++            let col_size = scalar_bytes * col_lanes;
++            return Some(ReflectedType::Data {
++                data_type: prefix,
++                size: col_size * cols,
++                alignment: col_size,
++            });
++        }
++    }
++    let (scalar_name, lanes) = match base.as_bytes().last().copied() {
++        Some(b'2') => (&base[..base.len() - 1], 2u32),
++        Some(b'3') => (&base[..base.len() - 1], 3u32),
++        Some(b'4') => (&base[..base.len() - 1], 4u32),
++        _ => (base, 1u32),
++    };
++    let (type_base, scalar_bytes) = match scalar_name {
++        "float" => (3u64, 4u32),
++        "half" => (16u64, 2u32),
++        "int" => (29u64, 4u32),
++        "uint" => (33u64, 4u32),
++        "short" => (37u64, 2u32),
++        "ushort" => (41u64, 2u32),
++        "char" => (45u64, 1u32),
++        "uchar" => (49u64, 1u32),
++        "bool" => (53u64, 1u32),
++        _ => return None,
++    };
++    let (size, alignment) = if packed {
++        (scalar_bytes * lanes, scalar_bytes)
++    } else {
++        let padded = if lanes == 3 { 4 } else { lanes };
++        let bytes = scalar_bytes * padded;
++        (bytes, bytes)
++    };
++    Some(ReflectedType::Data {
++        data_type: type_base + u64::from(lanes - 1),
++        size,
++        alignment,
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::ir::{
++        AddressSpace, Block, BlockId, Function, Parameter, Resource, Stage, StructField,
++        StructType, Terminator,
++    };
++
++    #[test]
++    fn air_resource_metadata_names_and_buffer_types_override_unnamed_llvm_parameters() {
++        let matrix_wrapper = Type::Struct(StructType {
++            fields: vec![StructField {
++                name: None,
++                offset: 0,
++                ty: Type::Array {
++                    element: Box::new(Type::Vector {
++                        element: Box::new(Type::Float { bits: 32 }),
++                        lanes: 4,
++                    }),
++                    count: 4,
++                },
++            }],
++            size: 64,
++            alignment: 16,
++            packed: false,
++        });
++        let function = Function {
++            name: "main0".to_string(),
++            parameters: vec![
++                Parameter {
++                    value: crate::ir::ValueId(0),
++                    name: "arg0".to_string(),
++                    ty: Type::Pointer {
++                        space: AddressSpace::Constant,
++                        pointee: Box::new(matrix_wrapper),
++                    },
++                },
++                Parameter {
++                    value: crate::ir::ValueId(1),
++                    name: "arg1".to_string(),
++                    ty: Type::Pointer {
++                        space: AddressSpace::Constant,
++                        pointee: Box::new(Type::Int {
++                            bits: 32,
++                            signed: false,
++                        }),
++                    },
++                },
++                Parameter {
++                    value: crate::ir::ValueId(2),
++                    name: "arg2".to_string(),
++                    ty: Type::Texture(TextureType {
++                        dimension: TextureDimension::D2,
++                        array: false,
++                        multisampled: false,
++                        depth: false,
++                        texel: Box::new(Type::Float { bits: 32 }),
++                        signed: false,
++                        access: Access::Sample,
++                    }),
++                },
++            ],
++            result: Type::Void,
++            values: Vec::new(),
++            blocks: vec![Block {
++                id: BlockId(0),
++                name: "entry".to_string(),
++                instructions: Vec::new(),
++                terminator: Terminator::Return(None),
++            }],
++        };
++        let entry = EntryPoint {
++            function: 0,
++            stage: Stage::Fragment,
++            early_fragment_tests: false,
++            resources: vec![
++                Resource {
++                    argument: 0,
++                    kind: ResourceKind::Buffer,
++                    index: 0,
++                    count: 1,
++                    access: Access::Read,
++                    ty: function.parameters[0].ty.clone(),
++                    name: Some("uMVPMatrix".to_string()),
++                    type_name: Some("float4x4".to_string()),
++                    inline_sampler: None,
++                },
++                Resource {
++                    argument: 1,
++                    kind: ResourceKind::Buffer,
++                    index: 1,
++                    count: 1,
++                    access: Access::Read,
++                    ty: function.parameters[1].ty.clone(),
++                    name: Some("uPremultiplyAlpha".to_string()),
++                    type_name: Some("int".to_string()),
++                    inline_sampler: None,
++                },
++                Resource {
++                    argument: 2,
++                    kind: ResourceKind::Texture,
++                    index: 0,
++                    count: 1,
++                    access: Access::Sample,
++                    ty: function.parameters[2].ty.clone(),
++                    name: Some("uSamplerTexture".to_string()),
++                    type_name: Some("texture2d<float, sample>".to_string()),
++                    inline_sampler: None,
++                },
++            ],
++            inputs: Vec::new(),
++            outputs: Vec::new(),
++        };
++
++        let reflected = argument_reflection(&entry, &function);
++        assert_eq!(reflected.len(), 3);
++        assert_eq!(reflected[0].name, "uMVPMatrix");
++        assert_eq!(
++            reflected[0].buffer,
++            Some(ReflectedType::Data {
++                data_type: 15, // MTLDataTypeFloat4x4
++                size: 64,
++                alignment: 16,
++            })
++        );
++        assert_eq!(reflected[1].name, "uPremultiplyAlpha");
++        assert_eq!(
++            reflected[1].buffer,
++            Some(ReflectedType::Data {
++                data_type: 29, // MTLDataTypeInt (signed)
++                size: 4,
++                alignment: 4,
++            })
++        );
++        assert_eq!(reflected[2].name, "uSamplerTexture");
++        assert_eq!(reflected[2].texture_type, 2);
++        assert_eq!(reflected[2].texture_data_type, 3);
 +    }
 +}
 diff --git a/crates/metal_translate/tests/source_reflection.rs b/crates/metal_translate/tests/source_reflection.rs
@@ -8441,7 +10152,7 @@ index 7c27abf6..d03998ad 100644
      fn every_entry_has_a_signature_the_emulated_backend_can_call() {
          let mut claimed = Vec::new();
 diff --git a/crates/rosemary/src/frameworks.rs b/crates/rosemary/src/frameworks.rs
-index 6f1297e7..d2e5422a 100644
+index 6f1297e7..59448bc1 100644
 --- a/crates/rosemary/src/frameworks.rs
 +++ b/crates/rosemary/src/frameworks.rs
 @@ -187,9 +187,9 @@ static FRAMEWORKS: &[Framework] = &[
@@ -8451,9 +10162,9 @@ index 6f1297e7..d2e5422a 100644
 -        // AppKit's crate also implements Quartz, so a `dlopen` of
 -        // CoreGraphics by path has to find these too.
 -        umbrellas: &["Cocoa", "CoreGraphics"],
-+        // AppKit's crate also implements Quartz and MetalKit (`MTKView`), so a
-+        // `dlopen` of CoreGraphics or MetalKit by path has to find these too.
-+        umbrellas: &["Cocoa", "CoreGraphics", "MetalKit"],
++        // AppKit's crate also implements Quartz, CoreImage, and MetalKit (`MTKView`),
++        // so a `dlopen` of CoreGraphics, CoreImage, or MetalKit by path finds these too.
++        umbrellas: &["Cocoa", "CoreGraphics", "CoreImage", "MetalKit"],
          provide: Some(appkit::provide),
          data: Some(appkit::data_symbols),
          symbol: Some(appkit::symbol),
@@ -8490,6 +10201,14 @@ index 6f1297e7..d2e5422a 100644
  ];
  
  /// CoreFoundation's `CFUserNotification` keys.
+@@ -967,6 +986,7 @@ fn avfoundation_data() -> Vec<(String, u64)> {
+ fn shimmed() -> Vec<(&'static str, *const ())> {
+     vec![
+         ("NSLog", crate::shims::nslog::native::nslog() as *const ()),
++        ("NSLogv", crate::shims::nslog::native::nslogv() as *const ()),
+         (
+             "NSRunAlertPanel",
+             crate::shims::nslog::native::run_alert_panel() as *const (),
 diff --git a/crates/rosemary/src/shims/coregraphics.rs b/crates/rosemary/src/shims/coregraphics.rs
 index e2b753b6..76305731 100644
 --- a/crates/rosemary/src/shims/coregraphics.rs
@@ -8573,6 +10292,85 @@ index c48b026d..ac3a7b25 100644
      /// The layout claim every function here rests on, which a wrong answer would
      /// violate silently.
      #[test]
+diff --git a/crates/rosemary/src/shims/mod.rs b/crates/rosemary/src/shims/mod.rs
+index 338d7fb7..3ae64c4c 100644
+--- a/crates/rosemary/src/shims/mod.rs
++++ b/crates/rosemary/src/shims/mod.rs
+@@ -200,6 +200,7 @@ fn macos_callback_shim_for(name: &str) -> Option<CallbackShim> {
+ fn foundation_variadic(name: &str) -> Option<Shim> {
+     match name {
+         "NSLog" => Some(bind!("NSLog" => nslog::nslog)),
++        "NSLogv" => Some(bind!("NSLogv" => nslog::nslogv)),
+         // The other `NSString`-format variadic, and the one a Cocoa game reports a
+         // fatal error through. See [`nslog::run_alert_panel`].
+         "NSRunAlertPanel" => Some(bind!("NSRunAlertPanel" => nslog::run_alert_panel)),
+diff --git a/crates/rosemary/src/shims/nslog.rs b/crates/rosemary/src/shims/nslog.rs
+index 83889038..52dfd0c5 100644
+--- a/crates/rosemary/src/shims/nslog.rs
++++ b/crates/rosemary/src/shims/nslog.rs
+@@ -43,6 +43,24 @@ pub fn nslog(symbol: &str, ctx: &mut RegisterContext, mem: &mut dyn GuestMemory)
+     Ok(())
+ }
+ 
++/// Service `NSLogv(NSString *format, va_list args)`.
++pub fn nslogv(symbol: &str, ctx: &mut RegisterContext, mem: &mut dyn GuestMemory) -> Result<()> {
++    let Some(fmt) = cf_string_bytes(ctx.rdi) else {
++        set_int_return(ctx, 0);
++        return Ok(());
++    };
++    let describe = |obj: u64| description_bytes(obj).unwrap_or_default();
++    let Ok(args) = VarArgs::from_va_list(symbol, &*mem, ctx.rsi) else {
++        set_int_return(ctx, 0);
++        return Ok(());
++    };
++    let mut args = args.describing(&describe);
++    if let Ok(out) = render(&fmt, &mut args) {
++        emit(&out);
++    }
++    Ok(())
++}
++
+ /// Service `NSRunAlertPanel`.
+ ///
+ /// `NSInteger NSRunAlertPanel(NSString *title, NSString *msgFormat, NSString
+@@ -412,6 +430,11 @@ pub mod native {
+         trampoline as *const c_void
+     }
+ 
++    /// The address `_NSLogv` is bound to.
++    pub fn nslogv() -> *const c_void {
++        render_native as *const c_void
++    }
++
+     /// The address `_NSRunAlertPanel` is bound to by the built-in frameworks.
+     pub fn run_alert_panel() -> *const c_void {
+         alert_trampoline as *const c_void
+@@ -713,4 +736,25 @@ pub mod native {
+             render = sym render_cfstring,
+         )
+     }
++
++    #[cfg(test)]
++    mod tests {
++        use super::*;
++
++        #[test]
++        fn nslogv_is_exported_and_renders_va_list_formats() {
++            assert!(!nslogv().is_null());
++            assert_eq!(render_tail("NSLogv", 0, 0), None);
++            let fmt = corefoundation::string::from_bytes(b"hello", false);
++            // A null va_list is rejected cleanly without faulting.
++            assert_eq!(render_tail("NSLogv", fmt as usize as u64, 0), None);
++            // Calling the exported symbol with null pointers is a safe no-op.
++            unsafe {
++                let f: unsafe extern "C" fn(u64, u64) = core::mem::transmute(nslogv());
++                f(0, 0);
++                f(fmt as usize as u64, 0);
++                corefoundation::api::CFRelease(fmt);
++            }
++        }
++    }
+ }
 diff --git a/crates/videotoolbox/src/compression.rs b/crates/videotoolbox/src/compression.rs
 index 1f27af51..538c23a9 100644
 --- a/crates/videotoolbox/src/compression.rs

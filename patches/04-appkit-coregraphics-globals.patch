@@ -1,8 +1,17 @@
 diff --git a/crates/appkit/Cargo.toml b/crates/appkit/Cargo.toml
-index 89bdaa43..dae6b672 100644
+index 89bdaa43..ddde8650 100644
 --- a/crates/appkit/Cargo.toml
 +++ b/crates/appkit/Cargo.toml
-@@ -21,10 +21,10 @@ iosurface.workspace = true
+@@ -11,6 +11,8 @@ darwin.workspace = true
+ objc.workspace = true
+ corefoundation.workspace = true
+ coretext.workspace = true
++corevideo.workspace = true
++half.workspace = true
+ prefix.workspace = true
+ server.workspace = true
+ foundation.workspace = true
+@@ -21,10 +23,10 @@ iosurface.workspace = true
  static_init.workspace = true
  owned_ttf_parser.workspace = true
  tiny-skia.workspace = true
@@ -756,10 +765,10 @@ index 00000000..5241c04c
 +    out
 +}
 diff --git a/crates/appkit/src/classes.rs b/crates/appkit/src/classes.rs
-index 18cd730f..2175c544 100644
+index 18cd730f..e6c8f601 100644
 --- a/crates/appkit/src/classes.rs
 +++ b/crates/appkit/src/classes.rs
-@@ -39,6 +39,7 @@ static HIERARCHY: &[(&str, Option<&str>, usize)] = &[
+@@ -39,11 +39,18 @@ static HIERARCHY: &[(&str, Option<&str>, usize)] = &[
          Some("CALayer"),
          crate::layer::METAL_INSTANCE_SIZE,
      ),
@@ -767,7 +776,18 @@ index 18cd730f..2175c544 100644
      // Basic animations; their state is `crate::coreanimation`'s side tables.
      ("CAAnimation", None, 0),
      ("CAPropertyAnimation", Some("CAAnimation"), 0),
-@@ -102,6 +103,11 @@ static HIERARCHY: &[(&str, Option<&str>, usize)] = &[
+     ("CABasicAnimation", Some("CAPropertyAnimation"), 0),
+     ("CAMediaTimingFunction", None, 0),
++    // CoreImage classes; see `crate::coreimage`.
++    ("CIImage", None, crate::coreimage::IMAGE_INSTANCE_SIZE),
++    ("CIContext", None, crate::coreimage::CONTEXT_INSTANCE_SIZE),
++    ("CIVector", None, crate::coreimage::VECTOR_INSTANCE_SIZE),
++    ("CIFilter", None, crate::coreimage::FILTER_INSTANCE_SIZE),
++    ("CIColor", None, crate::coreimage::COLOR_INSTANCE_SIZE),
+     ("NSControl", Some("NSView"), 0),
+     ("NSButton", Some("NSControl"), 0),
+     ("NSPopUpButton", Some("NSButton"), 0),
+@@ -102,6 +109,11 @@ static HIERARCHY: &[(&str, Option<&str>, usize)] = &[
          Some("NSView"),
          crate::opengl::VIEW_INSTANCE_SIZE,
      ),
@@ -888,32 +908,28 @@ index 2f1f6db1..3ab4e599 100644
      });
      methods!(class, {
 diff --git a/crates/appkit/src/coreanimation.rs b/crates/appkit/src/coreanimation.rs
-index 54e4cb04..021d34c3 100644
+index 54e4cb04..f13e1328 100644
 --- a/crates/appkit/src/coreanimation.rs
 +++ b/crates/appkit/src/coreanimation.rs
-@@ -118,6 +118,10 @@ struct Node {
+@@ -118,6 +118,8 @@ struct Node {
      superlayer: usize,
      masks_to_bounds: bool,
      hidden: bool,
 +    geometry_flipped: bool,
-+    opaque: bool,
-+    needs_display_on_bounds_change: bool,
 +    autoresizing_mask: u32,
      opacity: f64,
      /// `-cornerRadius`, in points.
      corner_radius: f64,
-@@ -153,6 +157,10 @@ impl Default for Node {
+@@ -153,6 +155,8 @@ impl Default for Node {
              superlayer: 0,
              masks_to_bounds: false,
              hidden: false,
 +            geometry_flipped: false,
-+            opaque: false,
-+            needs_display_on_bounds_change: false,
 +            autoresizing_mask: 0,
              opacity: 1.0,
              corner_radius: 0.0,
              metadata_revision: 0,
-@@ -861,6 +869,48 @@ unsafe extern "C" fn set_hidden(receiver: Id, _sel: Sel, value: u8) {
+@@ -861,6 +865,25 @@ unsafe extern "C" fn set_hidden(receiver: Id, _sel: Sel, value: u8) {
      changed_metadata(receiver);
  }
  
@@ -928,29 +944,6 @@ index 54e4cb04..021d34c3 100644
 +    changed_metadata(receiver);
 +}
 +
-+unsafe extern "C" fn is_opaque(receiver: Id, _sel: Sel) -> u8 {
-+    read_node(receiver, |node| {
-+        u8::from(node.is_some_and(|node| node.opaque))
-+    })
-+}
-+
-+unsafe extern "C" fn set_opaque(receiver: Id, _sel: Sel, value: u8) {
-+    with_node(receiver, |node| node.opaque = value != 0);
-+    changed_metadata(receiver);
-+}
-+
-+unsafe extern "C" fn needs_display_on_bounds_change(receiver: Id, _sel: Sel) -> u8 {
-+    read_node(receiver, |node| {
-+        u8::from(node.is_some_and(|node| node.needs_display_on_bounds_change))
-+    })
-+}
-+
-+unsafe extern "C" fn set_needs_display_on_bounds_change(receiver: Id, _sel: Sel, value: u8) {
-+    with_node(receiver, |node| {
-+        node.needs_display_on_bounds_change = value != 0
-+    });
-+}
-+
 +unsafe extern "C" fn autoresizing_mask(receiver: Id, _sel: Sel) -> u32 {
 +    read_node(receiver, |node| node.map_or(0, |node| node.autoresizing_mask))
 +}
@@ -962,7 +955,7 @@ index 54e4cb04..021d34c3 100644
  unsafe extern "C" fn opacity(receiver: Id, _sel: Sel) -> f32 {
      read_node(receiver, |node| node.map_or(1.0, |node| node.opacity)) as f32
  }
-@@ -3476,7 +3526,19 @@ pub(crate) fn install() {
+@@ -3476,7 +3499,14 @@ pub(crate) fn install() {
          "cornerRadius" => corner_radius, c"d16@0:8";
          "setCornerRadius:" => set_corner_radius, c"v24@0:8d16";
          "isHidden" => is_hidden, c"c16@0:8";
@@ -972,16 +965,2091 @@ index 54e4cb04..021d34c3 100644
 +        "geometryFlipped" => is_geometry_flipped, c"c16@0:8";
 +        "contentsAreFlipped" => is_geometry_flipped, c"c16@0:8";
 +        "setGeometryFlipped:" => set_geometry_flipped, c"v20@0:8c16";
-+        "isOpaque" => is_opaque, c"c16@0:8";
-+        "opaque" => is_opaque, c"c16@0:8";
-+        "setOpaque:" => set_opaque, c"v20@0:8c16";
-+        "needsDisplayOnBoundsChange" => needs_display_on_bounds_change, c"c16@0:8";
-+        "setNeedsDisplayOnBoundsChange:" => set_needs_display_on_bounds_change, c"v20@0:8c16";
 +        "autoresizingMask" => autoresizing_mask, c"I16@0:8";
 +        "setAutoresizingMask:" => set_autoresizing_mask, c"v20@0:8I16";
          "opacity" => opacity, c"f16@0:8";
          "contents" => contents, c"@16@0:8";
          "setContents:" => set_contents, c"v24@0:8@16";
+diff --git a/crates/appkit/src/coreimage.rs b/crates/appkit/src/coreimage.rs
+new file mode 100644
+index 00000000..c59f37c3
+--- /dev/null
++++ b/crates/appkit/src/coreimage.rs
+@@ -0,0 +1,2074 @@
++//! CoreImage (`CIImage`, `CIContext`, `CIVector`, `CIFilter`, `CIColor`).
++//!
++//! Decodes images from `NSData`, `NSURL`, `CGImageRef`, and `CVPixelBufferRef`,
++//! applies affine transforms / orientation / crops in CoreImage's y-up space,
++//! and renders into `CVPixelBufferRef` or `CGImageRef` targets.
++
++use std::collections::HashMap;
++use std::ffi::c_void;
++use std::ptr;
++
++use corefoundation::base::CFTypeRef;
++use foundation::geometry::{NSPoint, NSRect, NSSize};
++use half::f16;
++use objc::object::Id;
++use objc::sel::Sel;
++
++use crate::cgcontext::CGAffineTransform;
++use crate::define::{class_methods, methods};
++
++const PIXEL_FORMAT_BGRA: u32 = u32::from_be_bytes(*b"BGRA");
++const PIXEL_FORMAT_RGBA: u32 = u32::from_be_bytes(*b"RGBA");
++const PIXEL_FORMAT_ARGB: u32 = 0x20;
++const PIXEL_FORMAT_RGBA_HALF: u32 = u32::from_be_bytes(*b"RGhA");
++const READ_ONLY_LOCK: u64 = 1;
++
++const MAX_RENDER_DIM: u32 = 16_384;
++
++struct CiImageInner {
++    /// RGBA pixels, top row first, `width * height * 4` bytes.
++    width: u32,
++    height: u32,
++    pixels: Vec<u8>,
++    premultiplied: bool,
++    /// Image bounds in CoreImage's y-up coordinate space.
++    extent: NSRect,
++    /// Retained `CGColorSpaceRef`.
++    color_space: CFTypeRef,
++    /// Retained `CFDictionaryRef` properties, or null.
++    properties: CFTypeRef,
++}
++
++impl Drop for CiImageInner {
++    fn drop(&mut self) {
++        if !self.color_space.is_null() {
++            unsafe { crate::graphics::CGColorSpaceRelease(self.color_space) };
++        }
++        if !self.properties.is_null() {
++            unsafe { corefoundation::api::CFRelease(self.properties) };
++        }
++    }
++}
++
++#[repr(C)]
++struct CiImageObj {
++    isa: *const c_void,
++    inner: *mut CiImageInner,
++}
++
++pub const IMAGE_INSTANCE_SIZE: usize = size_of::<CiImageObj>();
++
++#[repr(C)]
++struct CiContextObj {
++    isa: *const c_void,
++    output_premultiplied: u8,
++}
++
++pub const CONTEXT_INSTANCE_SIZE: usize = size_of::<CiContextObj>();
++
++#[repr(C)]
++struct CiVectorObj {
++    isa: *const c_void,
++    values: [f64; 4],
++    count: usize,
++}
++
++pub const VECTOR_INSTANCE_SIZE: usize = size_of::<CiVectorObj>();
++
++struct CiFilterInner {
++    name: String,
++    params: HashMap<String, Id>,
++}
++
++impl Drop for CiFilterInner {
++    fn drop(&mut self) {
++        for (_, val) in self.params.drain() {
++            objc::arc::release(val);
++        }
++    }
++}
++
++#[repr(C)]
++struct CiFilterObj {
++    isa: *const c_void,
++    inner: *mut CiFilterInner,
++}
++
++pub const FILTER_INSTANCE_SIZE: usize = size_of::<CiFilterObj>();
++
++#[repr(C)]
++struct CiColorObj {
++    isa: *const c_void,
++    rgba: [f64; 4],
++}
++
++pub const COLOR_INSTANCE_SIZE: usize = size_of::<CiColorObj>();
++
++pub fn install() {
++    let ci_image = objc::class::lookup(c"CIImage").expect("declared in classes.rs");
++    class_methods!(ci_image, {
++        "emptyImage" => ci_image_empty, c"@16@0:8";
++        "imageWithData:" => ci_image_with_data, c"@24@0:8@16";
++        "imageWithData:options:" => ci_image_with_data_options, c"@32@0:8@16@24";
++        "imageWithContentsOfURL:" => ci_image_with_url, c"@24@0:8@16";
++        "imageWithContentsOfURL:options:" => ci_image_with_url_options, c"@32@0:8@16@24";
++        "imageWithCGImage:" => ci_image_with_cgimage, c"@24@0:8^{CGImage=}16";
++        "imageWithCGImage:options:" => ci_image_with_cgimage_options, c"@32@0:8^{CGImage=}16@24";
++        "imageWithCVPixelBuffer:" => ci_image_with_cvpixelbuffer, c"@24@0:8^{__CVBuffer=}16";
++        "imageWithCVPixelBuffer:options:" => ci_image_with_cvpixelbuffer_options, c"@32@0:8^{__CVBuffer=}16@24";
++        "imageWithCVImageBuffer:" => ci_image_with_cvpixelbuffer, c"@24@0:8^{__CVBuffer=}16";
++        "imageWithCVImageBuffer:options:" => ci_image_with_cvpixelbuffer_options, c"@32@0:8^{__CVBuffer=}16@24";
++    });
++    methods!(ci_image, {
++        "init" => ci_image_init, c"@16@0:8";
++        "initWithData:" => ci_image_init_with_data, c"@24@0:8@16";
++        "initWithData:options:" => ci_image_init_with_data_options, c"@32@0:8@16@24";
++        "initWithContentsOfURL:" => ci_image_init_with_url, c"@24@0:8@16";
++        "initWithContentsOfURL:options:" => ci_image_init_with_url_options, c"@32@0:8@16@24";
++        "initWithCGImage:" => ci_image_init_with_cgimage, c"@24@0:8^{CGImage=}16";
++        "initWithCGImage:options:" => ci_image_init_with_cgimage_options, c"@32@0:8^{CGImage=}16@24";
++        "initWithCVPixelBuffer:" => ci_image_init_with_cvpixelbuffer, c"@24@0:8^{__CVBuffer=}16";
++        "initWithCVPixelBuffer:options:" => ci_image_init_with_cvpixelbuffer_options, c"@32@0:8^{__CVBuffer=}16@24";
++        "initWithCVImageBuffer:" => ci_image_init_with_cvpixelbuffer, c"@24@0:8^{__CVBuffer=}16";
++        "initWithCVImageBuffer:options:" => ci_image_init_with_cvpixelbuffer_options, c"@32@0:8^{__CVBuffer=}16@24";
++        "dealloc" => ci_image_dealloc, c"v16@0:8";
++        "extent" => ci_image_extent, c"{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8";
++        "colorSpace" => ci_image_color_space, c"^{CGColorSpace=}16@0:8";
++        "properties" => ci_image_properties, c"@16@0:8";
++        "imageByApplyingTransform:" => ci_image_by_applying_transform, c"@64@0:8{CGAffineTransform=dddddd}16";
++        "imageByApplyingTransform:highQualityDownsample:" => ci_image_by_applying_transform_hq, c"@68@0:8{CGAffineTransform=dddddd}16c64";
++        "imageByApplyingCGOrientation:" => ci_image_by_applying_orientation, c"@20@0:8I16";
++        "imageByCroppingToRect:" => ci_image_by_cropping, c"@48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16";
++        "imageByClampingToExtent" => ci_image_clamping_to_extent, c"@16@0:8";
++        "imageBySettingAlphaOneInExtent:" => ci_image_setting_alpha_one, c"@48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16";
++        "imageByApplyingFilter:withInputParameters:" => ci_image_applying_filter, c"@32@0:8@16@24";
++    });
++
++    let ci_context = objc::class::lookup(c"CIContext").expect("declared in classes.rs");
++    class_methods!(ci_context, {
++        "context" => ci_context_default, c"@16@0:8";
++        "contextWithOptions:" => ci_context_with_options, c"@24@0:8@16";
++        "contextWithMTLDevice:" => ci_context_with_mtl_device, c"@24@0:8@16";
++        "contextWithMTLDevice:options:" => ci_context_with_mtl_device_options, c"@32@0:8@16@24";
++        "contextWithCGContext:options:" => ci_context_with_cgcontext_options, c"@32@0:8^{CGContext=}16@24";
++    });
++    methods!(ci_context, {
++        "init" => ci_context_init, c"@16@0:8";
++        "initWithOptions:" => ci_context_init_with_options, c"@24@0:8@16";
++        "render:toCVPixelBuffer:" => ci_context_render_to_cvpb, c"v32@0:8@16^{__CVBuffer=}24";
++        "render:toCVPixelBuffer:bounds:colorSpace:" => ci_context_render_to_cvpb_bounds, c"v72@0:8@16^{__CVBuffer=}24{CGRect={CGPoint=dd}{CGSize=dd}}32^{CGColorSpace=}64";
++        "createCGImage:fromRect:" => ci_context_create_cgimage, c"^{CGImage=}56@0:8@16{CGRect={CGPoint=dd}{CGSize=dd}}24";
++        "createCGImage:fromRect:format:colorSpace:" => ci_context_create_cgimage_format, c"^{CGImage=}68@0:8@16{CGRect={CGPoint=dd}{CGSize=dd}}24i56^{CGColorSpace=}60";
++        "clearCaches" => ci_context_noop, c"v16@0:8";
++        "reclaimResources" => ci_context_noop, c"v16@0:8";
++    });
++
++    let ci_vector = objc::class::lookup(c"CIVector").expect("declared in classes.rs");
++    class_methods!(ci_vector, {
++        "vectorWithCGRect:" => ci_vector_with_rect, c"@48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16";
++        "vectorWithX:Y:Z:W:" => ci_vector_with_xyzw, c"@48@0:8d16d24d32d40";
++        "vectorWithX:Y:" => ci_vector_with_xy, c"@32@0:8d16d24";
++        "vectorWithX:" => ci_vector_with_x, c"@24@0:8d16";
++    });
++    methods!(ci_vector, {
++        "initWithCGRect:" => ci_vector_init_with_rect, c"@48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16";
++        "CGRectValue" => ci_vector_cgrect_value, c"{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8";
++        "X" => ci_vector_x, c"d16@0:8";
++        "Y" => ci_vector_y, c"d16@0:8";
++        "Z" => ci_vector_z, c"d16@0:8";
++        "W" => ci_vector_w, c"d16@0:8";
++        "count" => ci_vector_count, c"Q16@0:8";
++        "valueAtIndex:" => ci_vector_value_at_index, c"d24@0:8Q16";
++    });
++
++    let ci_filter = objc::class::lookup(c"CIFilter").expect("declared in classes.rs");
++    class_methods!(ci_filter, {
++        "filterWithName:" => ci_filter_with_name, c"@24@0:8@16";
++        "filterWithName:withInputParameters:" => ci_filter_with_name_params, c"@32@0:8@16@24";
++        "filterNamesInCategory:" => ci_filter_names_in_category, c"@24@0:8@16";
++    });
++    methods!(ci_filter, {
++        "dealloc" => ci_filter_dealloc, c"v16@0:8";
++        "setValue:forKey:" => ci_filter_set_value, c"v32@0:8@16@24";
++        "valueForKey:" => ci_filter_value_for_key, c"@24@0:8@16";
++        "setDefaults" => ci_context_noop, c"v16@0:8";
++        "outputImage" => ci_filter_output_image, c"@16@0:8";
++        "attributes" => ci_filter_attributes, c"@16@0:8";
++    });
++
++    let ci_color = objc::class::lookup(c"CIColor").expect("declared in classes.rs");
++    class_methods!(ci_color, {
++        "colorWithRed:green:blue:alpha:" => ci_color_with_rgba, c"@48@0:8d16d24d32d40";
++        "colorWithRed:green:blue:" => ci_color_with_rgb, c"@40@0:8d16d24d32";
++    });
++    methods!(ci_color, {
++        "red" => ci_color_red, c"d16@0:8";
++        "green" => ci_color_green, c"d16@0:8";
++        "blue" => ci_color_blue, c"d16@0:8";
++        "alpha" => ci_color_alpha, c"d16@0:8";
++    });
++}
++
++// ---------------------------------------------------------------------------
++// Helpers
++// ---------------------------------------------------------------------------
++
++fn autorelease(object: Id) -> Id {
++    if object.is_null() {
++        return ptr::null_mut();
++    }
++    unsafe { corefoundation::api::CFAutorelease(object as CFTypeRef) as Id }
++}
++
++fn alloc_of(class: Id) -> Id {
++    let Some(cls) = (unsafe { objc::class::from_ptr(class as *const objc::class::Class) }) else {
++        return ptr::null_mut();
++    };
++    objc::object::create_instance(cls, 0)
++}
++
++fn is_ci_image(obj: Id) -> bool {
++    if obj.is_null() {
++        return false;
++    }
++    objc::class::lookup(c"CIImage").is_some_and(|base| {
++        unsafe { objc::object::class_of(obj) }
++            .is_some_and(|cls| cls.chain().any(|c| ptr::eq(c, base)))
++    })
++}
++
++fn image_inner<'a>(obj: Id) -> Option<&'a CiImageInner> {
++    if !is_ci_image(obj) {
++        return None;
++    }
++    let ptr = unsafe { (*(obj as *const CiImageObj)).inner };
++    if ptr.is_null() {
++        None
++    } else {
++        Some(unsafe { &*ptr })
++    }
++}
++
++fn set_image_inner(obj: Id, inner: CiImageInner) {
++    let slot = unsafe { &mut (*(obj as *mut CiImageObj)).inner };
++    if !slot.is_null() {
++        drop(unsafe { Box::from_raw(*slot) });
++    }
++    *slot = Box::into_raw(Box::new(inner));
++}
++
++fn make_ci_image(class: Id, inner: CiImageInner) -> Id {
++    let obj = alloc_of(class);
++    if obj.is_null() {
++        return ptr::null_mut();
++    }
++    set_image_inner(obj, inner);
++    obj
++}
++
++fn default_color_space() -> CFTypeRef {
++    unsafe { crate::graphics::CGColorSpaceCreateDeviceRGB() }
++}
++
++fn dict_value(dict: Id, keys: &[&str]) -> CFTypeRef {
++    if dict.is_null() {
++        return ptr::null();
++    }
++    for key in keys {
++        let cf_key = corefoundation::base::interned_name(key) as usize as CFTypeRef;
++        let val = unsafe { corefoundation::api::CFDictionaryGetValue(dict as CFTypeRef, cf_key) };
++        if !val.is_null() {
++            return val;
++        }
++    }
++    ptr::null()
++}
++
++fn option_bool(options: Id, keys: &[&str], default: bool) -> bool {
++    let val = dict_value(options, keys);
++    if val.is_null() {
++        return default;
++    }
++    if unsafe { corefoundation::api::CFGetTypeID(val) }
++        == unsafe { corefoundation::api::CFBooleanGetTypeID() }
++    {
++        return unsafe { corefoundation::api::CFBooleanGetValue(val) } != 0;
++    }
++    if let Some(num) = unsafe { corefoundation::collections::number(val) } {
++        return num.as_f64() != 0.0;
++    }
++    default
++}
++
++fn option_color_space(options: Id) -> CFTypeRef {
++    let val = dict_value(options, &["kCIImageColorSpace", "CIImageColorSpace"]);
++    if !val.is_null() && crate::graphics::space_components(val).is_some() {
++        unsafe { corefoundation::api::CFRetain(val) }
++    } else {
++        default_color_space()
++    }
++}
++
++fn nsdata_bytes(data: Id) -> Option<Vec<u8>> {
++    if data.is_null() {
++        return None;
++    }
++    let cf_ptr = unsafe { corefoundation::api::CFDataGetBytePtr(data as CFTypeRef) };
++    if !cf_ptr.is_null() {
++        let len = unsafe { corefoundation::api::CFDataGetLength(data as CFTypeRef) };
++        let len = usize::try_from(len).ok()?;
++        return Some(unsafe { std::slice::from_raw_parts(cf_ptr, len) }.to_vec());
++    }
++    unsafe {
++        let len_fn: unsafe extern "C" fn(Id, Sel) -> usize = std::mem::transmute(objc::msg::entry());
++        let bytes_fn: unsafe extern "C" fn(Id, Sel) -> *const u8 =
++            std::mem::transmute(objc::msg::entry());
++        let len = len_fn(data, objc::sel::get("length"));
++        let ptr = bytes_fn(data, objc::sel::get("bytes"));
++        if ptr.is_null() || len == 0 {
++            return None;
++        }
++        Some(std::slice::from_raw_parts(ptr, len).to_vec())
++    }
++}
++
++fn data_from_url(url: Id) -> Option<Vec<u8>> {
++    if url.is_null() {
++        return None;
++    }
++    let cls = objc::class::lookup(c"NSData")?;
++    let data = unsafe {
++        let f: unsafe extern "C" fn(Id, Sel, Id) -> Id = std::mem::transmute(objc::msg::entry());
++        f(
++            objc::class::ptr(cls) as Id,
++            objc::sel::get("dataWithContentsOfURL:"),
++            url,
++        )
++    };
++    nsdata_bytes(data)
++}
++
++#[inline]
++fn premul(c: u8, a: u8) -> u8 {
++    ((u16::from(c) * u16::from(a) + 127) / 255) as u8
++}
++
++#[inline]
++fn unpremul(c: u8, a: u8) -> u8 {
++    if a == 0 {
++        0
++    } else if a == 255 {
++        c
++    } else {
++        ((u32::from(c) * 255 + u32::from(a) / 2) / u32::from(a)).min(255) as u8
++    }
++}
++
++/// Extract EXIF orientation (1..=8) from JPEG APP1 or TIFF bytes.
++fn parse_exif_orientation(bytes: &[u8]) -> u32 {
++    if bytes.starts_with(b"II") || bytes.starts_with(b"MM") {
++        return parse_tiff_orientation(bytes).unwrap_or(1);
++    }
++    if !bytes.starts_with(&[0xFF, 0xD8]) {
++        return 1;
++    }
++    let mut i = 2usize;
++    while i + 4 <= bytes.len() {
++        if bytes[i] != 0xFF {
++            break;
++        }
++        let marker = bytes[i + 1];
++        i += 2;
++        if marker == 0xD9 || marker == 0xDA {
++            break;
++        }
++        if (0xD0..=0xD8).contains(&marker) || marker == 0x01 {
++            continue;
++        }
++        let seg_len = u16::from_be_bytes([bytes[i], bytes[i + 1]]) as usize;
++        if seg_len < 2 || i + seg_len > bytes.len() {
++            break;
++        }
++        if marker == 0xE1 && seg_len >= 8 && &bytes[i + 2..i + 8] == b"Exif\0\0" {
++            if let Some(o) = parse_tiff_orientation(&bytes[i + 8..i + seg_len]) {
++                return o;
++            }
++        }
++        i += seg_len;
++    }
++    1
++}
++
++fn parse_tiff_orientation(tiff: &[u8]) -> Option<u32> {
++    if tiff.len() < 8 {
++        return None;
++    }
++    let le = match &tiff[0..2] {
++        b"II" => true,
++        b"MM" => false,
++        _ => return None,
++    };
++    let r16 = |off: usize| -> Option<u16> {
++        let s = tiff.get(off..off + 2)?;
++        Some(if le {
++            u16::from_le_bytes([s[0], s[1]])
++        } else {
++            u16::from_be_bytes([s[0], s[1]])
++        })
++    };
++    let r32 = |off: usize| -> Option<u32> {
++        let s = tiff.get(off..off + 4)?;
++        Some(if le {
++            u32::from_le_bytes([s[0], s[1], s[2], s[3]])
++        } else {
++            u32::from_be_bytes([s[0], s[1], s[2], s[3]])
++        })
++    };
++    if r16(2)? != 42 {
++        return None;
++    }
++    let ifd = r32(4)? as usize;
++    let count = r16(ifd)? as usize;
++    for idx in 0..count {
++        let entry = ifd + 2 + idx * 12;
++        if entry + 12 > tiff.len() {
++            break;
++        }
++        if r16(entry)? == 0x0112 {
++            let val = u32::from(r16(entry + 8)?);
++            if (1..=8).contains(&val) {
++                return Some(val);
++            }
++        }
++    }
++    None
++}
++
++/// Apply EXIF orientation `1..=8` to a top-row-first RGBA bitmap.
++fn apply_orientation(w: u32, h: u32, pixels: &[u8], orientation: u32) -> (u32, u32, Vec<u8>) {
++    if orientation <= 1 || orientation > 8 || w == 0 || h == 0 {
++        return (w, h, pixels.to_vec());
++    }
++    let sw = w as usize;
++    let sh = h as usize;
++    let (dw, dh) = if orientation >= 5 { (sh, sw) } else { (sw, sh) };
++    let mut out = vec![0u8; dw * dh * 4];
++    for sy in 0..sh {
++        for sx in 0..sw {
++            let (dx, dy) = match orientation {
++                2 => (sw - 1 - sx, sy),
++                3 => (sw - 1 - sx, sh - 1 - sy),
++                4 => (sx, sh - 1 - sy),
++                5 => (sy, sx),
++                6 => (sh - 1 - sy, sx),
++                7 => (sh - 1 - sy, sw - 1 - sx),
++                8 => (sy, sw - 1 - sx),
++                _ => (sx, sy),
++            };
++            let src = (sy * sw + sx) * 4;
++            let dst = (dy * dw + dx) * 4;
++            out[dst..dst + 4].copy_from_slice(&pixels[src..src + 4]);
++        }
++    }
++    (dw as u32, dh as u32, out)
++}
++
++fn make_properties_dict(width: u32, height: u32, orientation: u32) -> CFTypeRef {
++    let kw = corefoundation::string::from_bytes(b"PixelWidth", false);
++    let vw = corefoundation::collections::new_number(corefoundation::collections::Number::Integer(
++        i64::from(width),
++    ));
++    let kh = corefoundation::string::from_bytes(b"PixelHeight", false);
++    let vh = corefoundation::collections::new_number(corefoundation::collections::Number::Integer(
++        i64::from(height),
++    ));
++    let ko = corefoundation::string::from_bytes(b"Orientation", false);
++    let vo = corefoundation::collections::new_number(corefoundation::collections::Number::Integer(
++        i64::from(orientation),
++    ));
++    let dict = corefoundation::collections::new_dictionary(
++        &[(kw, vw), (kh, vh), (ko, vo)],
++        corefoundation::callbacks::Policy::from_key_callbacks(),
++        corefoundation::callbacks::Policy::from_type_callbacks(),
++        false,
++    );
++    for obj in [kw, vw, kh, vh, ko, vo] {
++        unsafe { corefoundation::api::CFRelease(obj) };
++    }
++    dict
++}
++
++fn decode_bytes_to_inner(bytes: &[u8], options: Id) -> Option<CiImageInner> {
++    let bitmap = crate::raster::decode(bytes)?;
++    if bitmap.width == 0 || bitmap.height == 0 {
++        return None;
++    }
++    let apply_orient = option_bool(
++        options,
++        &[
++            "kCIImageApplyOrientationProperty",
++            "CIImageApplyOrientationProperty",
++        ],
++        false,
++    );
++    let raw_orient = parse_exif_orientation(bytes);
++    let (width, height, pixels, stored_orient) = if apply_orient && raw_orient > 1 {
++        let (w, h, p) = apply_orientation(bitmap.width, bitmap.height, &bitmap.pixels, raw_orient);
++        (w, h, p, 1)
++    } else {
++        (bitmap.width, bitmap.height, bitmap.pixels, raw_orient)
++    };
++    Some(CiImageInner {
++        width,
++        height,
++        pixels,
++        premultiplied: false,
++        extent: NSRect {
++            origin: NSPoint { x: 0.0, y: 0.0 },
++            size: NSSize {
++                width: f64::from(width),
++                height: f64::from(height),
++            },
++        },
++        color_space: option_color_space(options),
++        properties: make_properties_dict(width, height, stored_orient),
++    })
++}
++
++fn decode_cgimage_to_inner(cg_image: CFTypeRef, options: Id) -> Option<CiImageInner> {
++    if cg_image.is_null() {
++        return None;
++    }
++    let (w, h, bgra) = crate::graphics::image_bgra(cg_image)?;
++    if w == 0 || h == 0 {
++        return None;
++    }
++    let mut rgba = vec![0u8; w * h * 4];
++    for (src, dst) in bgra.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
++        dst[0] = src[2];
++        dst[1] = src[1];
++        dst[2] = src[0];
++        dst[3] = src[3];
++    }
++    let cs = {
++        let opt = dict_value(options, &["kCIImageColorSpace", "CIImageColorSpace"]);
++        if !opt.is_null() && crate::graphics::space_components(opt).is_some() {
++            unsafe { corefoundation::api::CFRetain(opt) }
++        } else {
++            let img_cs = unsafe { crate::graphics::CGImageGetColorSpace(cg_image) };
++            if !img_cs.is_null() {
++                unsafe { corefoundation::api::CFRetain(img_cs) }
++            } else {
++                default_color_space()
++            }
++        }
++    };
++    Some(CiImageInner {
++        width: w as u32,
++        height: h as u32,
++        pixels: rgba,
++        premultiplied: true,
++        extent: NSRect {
++            origin: NSPoint { x: 0.0, y: 0.0 },
++            size: NSSize {
++                width: w as f64,
++                height: h as f64,
++            },
++        },
++        color_space: cs,
++        properties: make_properties_dict(w as u32, h as u32, 1),
++    })
++}
++
++fn decode_cvpixelbuffer_to_inner(pb: CFTypeRef, options: Id) -> Option<CiImageInner> {
++    if pb.is_null() {
++        return None;
++    }
++    let w = unsafe { corevideo::pixel_buffer::CVPixelBufferGetWidth(pb) };
++    let h = unsafe { corevideo::pixel_buffer::CVPixelBufferGetHeight(pb) };
++    let fmt = unsafe { corevideo::pixel_buffer::CVPixelBufferGetPixelFormatType(pb) };
++    if w == 0 || h == 0 {
++        return None;
++    }
++    if unsafe { corevideo::pixel_buffer::CVPixelBufferLockBaseAddress(pb, READ_ONLY_LOCK) } != 0 {
++        return None;
++    }
++    let base = unsafe { corevideo::pixel_buffer::CVPixelBufferGetBaseAddress(pb) } as *const u8;
++    let row_bytes = unsafe { corevideo::pixel_buffer::CVPixelBufferGetBytesPerRow(pb) };
++    if base.is_null() {
++        unsafe { corevideo::pixel_buffer::CVPixelBufferUnlockBaseAddress(pb, READ_ONLY_LOCK) };
++        return None;
++    }
++    let mut rgba = vec![0u8; w * h * 4];
++    let ok = match fmt {
++        PIXEL_FORMAT_BGRA => {
++            for y in 0..h {
++                let row = unsafe { std::slice::from_raw_parts(base.add(y * row_bytes), w * 4) };
++                let dst = &mut rgba[y * w * 4..(y + 1) * w * 4];
++                for (s, d) in row.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
++                    d[0] = s[2];
++                    d[1] = s[1];
++                    d[2] = s[0];
++                    d[3] = s[3];
++                }
++            }
++            true
++        }
++        PIXEL_FORMAT_RGBA => {
++            for y in 0..h {
++                let row = unsafe { std::slice::from_raw_parts(base.add(y * row_bytes), w * 4) };
++                rgba[y * w * 4..(y + 1) * w * 4].copy_from_slice(row);
++            }
++            true
++        }
++        PIXEL_FORMAT_ARGB => {
++            for y in 0..h {
++                let row = unsafe { std::slice::from_raw_parts(base.add(y * row_bytes), w * 4) };
++                let dst = &mut rgba[y * w * 4..(y + 1) * w * 4];
++                for (s, d) in row.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
++                    d[0] = s[1];
++                    d[1] = s[2];
++                    d[2] = s[3];
++                    d[3] = s[0];
++                }
++            }
++            true
++        }
++        PIXEL_FORMAT_RGBA_HALF => {
++            for y in 0..h {
++                let row = unsafe { std::slice::from_raw_parts(base.add(y * row_bytes), w * 8) };
++                let dst = &mut rgba[y * w * 4..(y + 1) * w * 4];
++                for (s, d) in row.chunks_exact(8).zip(dst.chunks_exact_mut(4)) {
++                    for c in 0..4 {
++                        let bits = u16::from_le_bytes([s[c * 2], s[c * 2 + 1]]);
++                        let v = f16::from_bits(bits).to_f32().clamp(0.0, 1.0);
++                        d[c] = (v * 255.0 + 0.5) as u8;
++                    }
++                }
++            }
++            true
++        }
++        _ => false,
++    };
++    unsafe { corevideo::pixel_buffer::CVPixelBufferUnlockBaseAddress(pb, READ_ONLY_LOCK) };
++    if !ok {
++        return None;
++    }
++    Some(CiImageInner {
++        width: w as u32,
++        height: h as u32,
++        pixels: rgba,
++        premultiplied: true,
++        extent: NSRect {
++            origin: NSPoint { x: 0.0, y: 0.0 },
++            size: NSSize {
++                width: w as f64,
++                height: h as f64,
++            },
++        },
++        color_space: option_color_space(options),
++        properties: make_properties_dict(w as u32, h as u32, 1),
++    })
++}
++
++/// Bilinear sample of an RGBA image at top-down pixel coordinates `(u, v)`
++/// where pixel centers are at integer coordinates `(0, 0)..(w-1, h-1)`.
++#[inline]
++fn sample_bilinear(img: &CiImageInner, u: f64, v: f64) -> [u8; 4] {
++    let w = img.width as isize;
++    let h = img.height as isize;
++    if w == 0 || h == 0 {
++        return [0, 0, 0, 0];
++    }
++    let u = u.clamp(0.0, (w - 1) as f64);
++    let v = v.clamp(0.0, (h - 1) as f64);
++    let x0 = u.floor() as isize;
++    let y0 = v.floor() as isize;
++    let x1 = (x0 + 1).min(w - 1);
++    let y1 = (y0 + 1).min(h - 1);
++    let fx = (u - x0 as f64) as f32;
++    let fy = (v - y0 as f64) as f32;
++    let w00 = (1.0 - fx) * (1.0 - fy);
++    let w10 = fx * (1.0 - fy);
++    let w01 = (1.0 - fx) * fy;
++    let w11 = fx * fy;
++    let stride = w as usize * 4;
++    let p00 = y0 as usize * stride + x0 as usize * 4;
++    let p10 = y0 as usize * stride + x1 as usize * 4;
++    let p01 = y1 as usize * stride + x0 as usize * 4;
++    let p11 = y1 as usize * stride + x1 as usize * 4;
++    let px = &img.pixels;
++    let mut out = [0u8; 4];
++    for c in 0..4 {
++        let val = f32::from(px[p00 + c]) * w00
++            + f32::from(px[p10 + c]) * w10
++            + f32::from(px[p01 + c]) * w01
++            + f32::from(px[p11 + c]) * w11;
++        out[c] = val.round().clamp(0.0, 255.0) as u8;
++    }
++    out
++}
++
++/// Box-filtered downsample for clean reduction when `scale_x` or `scale_y` > 2.
++fn resample_axis_aligned_scale(
++    img: &CiImageInner,
++    out_w: u32,
++    out_h: u32,
++    flip_x: bool,
++    flip_y: bool,
++    high_quality: bool,
++) -> Vec<u8> {
++    let sw = img.width as usize;
++    let sh = img.height as usize;
++    let dw = out_w as usize;
++    let dh = out_h as usize;
++    let mut out = vec![0u8; dw * dh * 4];
++    let ratio_x = sw as f64 / dw as f64;
++    let ratio_y = sh as f64 / dh as f64;
++
++    if high_quality && (ratio_x >= 1.5 || ratio_y >= 1.5) {
++        for dy in 0..dh {
++            let fy = if flip_y { dh - 1 - dy } else { dy };
++            let y_start = (fy as f64 * ratio_y).floor().max(0.0) as usize;
++            let y_end = (((fy + 1) as f64) * ratio_y)
++                .ceil()
++                .min(sh as f64)
++                .max((y_start + 1) as f64) as usize;
++            for dx in 0..dw {
++                let fx = if flip_x { dw - 1 - dx } else { dx };
++                let x_start = (fx as f64 * ratio_x).floor().max(0.0) as usize;
++                let x_end = (((fx + 1) as f64) * ratio_x)
++                    .ceil()
++                    .min(sw as f64)
++                    .max((x_start + 1) as f64) as usize;
++                let mut acc = [0u64; 4];
++                let mut count = 0u64;
++                for sy in y_start..y_end {
++                    let row_off = sy * sw * 4;
++                    for sx in x_start..x_end {
++                        let off = row_off + sx * 4;
++                        acc[0] += u64::from(img.pixels[off]);
++                        acc[1] += u64::from(img.pixels[off + 1]);
++                        acc[2] += u64::from(img.pixels[off + 2]);
++                        acc[3] += u64::from(img.pixels[off + 3]);
++                        count += 1;
++                    }
++                }
++                let dst = (dy * dw + dx) * 4;
++                let half = count / 2;
++                out[dst] = ((acc[0] + half) / count) as u8;
++                out[dst + 1] = ((acc[1] + half) / count) as u8;
++                out[dst + 2] = ((acc[2] + half) / count) as u8;
++                out[dst + 3] = ((acc[3] + half) / count) as u8;
++            }
++        }
++        return out;
++    }
++
++    for dy in 0..dh {
++        let fy = if flip_y { dh - 1 - dy } else { dy };
++        let v = (fy as f64 + 0.5) * ratio_y - 0.5;
++        for dx in 0..dw {
++            let fx = if flip_x { dw - 1 - dx } else { dx };
++            let u = (fx as f64 + 0.5) * ratio_x - 0.5;
++            let px = sample_bilinear(img, u, v);
++            let dst = (dy * dw + dx) * 4;
++            out[dst..dst + 4].copy_from_slice(&px);
++        }
++    }
++    out
++}
++
++fn transform_image(img: &CiImageInner, t: CGAffineTransform, high_quality: bool) -> Option<CiImageInner> {
++    if img.width == 0 || img.height == 0 {
++        return None;
++    }
++    let det = t.a * t.d - t.b * t.c;
++    if !det.is_finite() || det.abs() < 1e-12 {
++        return None;
++    }
++    let ex = img.extent.origin.x;
++    let ey = img.extent.origin.y;
++    let ew = img.extent.size.width;
++    let eh = img.extent.size.height;
++    let corners = [
++        t.apply(ex, ey),
++        t.apply(ex + ew, ey),
++        t.apply(ex, ey + eh),
++        t.apply(ex + ew, ey + eh),
++    ];
++    let min_x = corners.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
++    let max_x = corners.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
++    let min_y = corners.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
++    let max_y = corners.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
++    let out_ew = (max_x - min_x).max(0.0);
++    let out_eh = (max_y - min_y).max(0.0);
++    let out_w = (out_ew.round().clamp(1.0, f64::from(MAX_RENDER_DIM))) as u32;
++    let out_h = (out_eh.round().clamp(1.0, f64::from(MAX_RENDER_DIM))) as u32;
++
++    let out_extent = NSRect {
++        origin: NSPoint { x: min_x, y: min_y },
++        size: NSSize {
++            width: out_ew,
++            height: out_eh,
++        },
++    };
++    let cs = if !img.color_space.is_null() {
++        unsafe { corefoundation::api::CFRetain(img.color_space) }
++    } else {
++        default_color_space()
++    };
++
++    // Fast path for pure axis-aligned scale / translate / flip (b == 0, c == 0).
++    let pixels = if t.b.abs() < 1e-9 && t.c.abs() < 1e-9 {
++        let flip_x = t.a < 0.0;
++        let flip_y = t.d < 0.0;
++        if out_w == img.width && out_h == img.height && !flip_x && !flip_y {
++            img.pixels.clone()
++        } else {
++            resample_axis_aligned_scale(img, out_w, out_h, flip_x, flip_y, high_quality)
++        }
++    } else {
++        // General 2D affine inverse in CoreImage y-up coordinates.
++        let inv_det = 1.0 / det;
++        let ia = t.d * inv_det;
++        let ib = -t.b * inv_det;
++        let ic = -t.c * inv_det;
++        let id = t.a * inv_det;
++        let itx = (t.c * t.ty - t.d * t.tx) * inv_det;
++        let ity = (t.b * t.tx - t.a * t.ty) * inv_det;
++        let mut out = vec![0u8; out_w as usize * out_h as usize * 4];
++        let step_x = out_ew / f64::from(out_w);
++        let step_y = out_eh / f64::from(out_h);
++        let sx_scale = f64::from(img.width) / ew.max(1e-9);
++        let sy_scale = f64::from(img.height) / eh.max(1e-9);
++        for dy in 0..out_h as usize {
++            let oy = max_y - (dy as f64 + 0.5) * step_y;
++            for dx in 0..out_w as usize {
++                let ox = min_x + (dx as f64 + 0.5) * step_x;
++                let sx = ia * ox + ic * oy + itx;
++                let sy = ib * ox + id * oy + ity;
++                if sx >= ex && sx <= ex + ew && sy >= ey && sy <= ey + eh {
++                    let u = (sx - ex) * sx_scale - 0.5;
++                    let v = (ey + eh - sy) * sy_scale - 0.5;
++                    let px = sample_bilinear(img, u, v);
++                    let off = (dy * out_w as usize + dx) * 4;
++                    out[off..off + 4].copy_from_slice(&px);
++                }
++            }
++        }
++        out
++    };
++
++    Some(CiImageInner {
++        width: out_w,
++        height: out_h,
++        pixels,
++        premultiplied: img.premultiplied,
++        extent: out_extent,
++        color_space: cs,
++        properties: make_properties_dict(out_w, out_h, 1),
++    })
++}
++
++/// Convert RGBA `[r, g, b, a]` to the requested alpha premultiplication state.
++#[inline]
++fn convert_alpha(px: [u8; 4], src_premul: bool, dst_premul: bool) -> [u8; 4] {
++    if src_premul == dst_premul {
++        return px;
++    }
++    let [r, g, b, a] = px;
++    if dst_premul {
++        [premul(r, a), premul(g, a), premul(b, a), a]
++    } else {
++        [unpremul(r, a), unpremul(g, a), unpremul(b, a), a]
++    }
++}
++
++/// Render `img` inside `bounds` (CoreImage y-up) into an RGBA buffer of size `(dst_w, dst_h)`
++/// top-row-first with `dst_premul` alpha.
++fn rasterize_bounds(
++    img: &CiImageInner,
++    bounds: NSRect,
++    dst_w: usize,
++    dst_h: usize,
++    dst_premul: bool,
++) -> Vec<u8> {
++    let mut out = vec![0u8; dst_w * dst_h * 4];
++    if img.width == 0
++        || img.height == 0
++        || dst_w == 0
++        || dst_h == 0
++        || bounds.size.width <= 0.0
++        || bounds.size.height <= 0.0
++    {
++        return out;
++    }
++
++    let ex = img.extent.origin.x;
++    let ey = img.extent.origin.y;
++    let ew = img.extent.size.width;
++    let eh = img.extent.size.height;
++
++    // Fast 1:1 direct copy when bounds match the image's extent and dimensions.
++    let same_bounds = (bounds.origin.x - ex).abs() < 1e-3
++        && (bounds.origin.y - ey).abs() < 1e-3
++        && (bounds.size.width - ew).abs() < 1e-3
++        && (bounds.size.height - eh).abs() < 1e-3
++        && dst_w == img.width as usize
++        && dst_h == img.height as usize;
++
++    if same_bounds {
++        if img.premultiplied == dst_premul {
++            out.copy_from_slice(&img.pixels);
++        } else {
++            for (s, d) in img.pixels.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
++                let c = convert_alpha([s[0], s[1], s[2], s[3]], img.premultiplied, dst_premul);
++                d.copy_from_slice(&c);
++            }
++        }
++        return out;
++    }
++
++    let bx = bounds.origin.x;
++    let by = bounds.origin.y;
++    let bw = bounds.size.width;
++    let bh = bounds.size.height;
++    let sx_scale = f64::from(img.width) / ew.max(1e-9);
++    let sy_scale = f64::from(img.height) / eh.max(1e-9);
++    let step_x = bw / dst_w as f64;
++    let step_y = bh / dst_h as f64;
++
++    for dy in 0..dst_h {
++        let ci_y = by + bh - (dy as f64 + 0.5) * step_y;
++        if ci_y < ey || ci_y > ey + eh {
++            continue;
++        }
++        let v = (ey + eh - ci_y) * sy_scale - 0.5;
++        let row_off = dy * dst_w * 4;
++        for dx in 0..dst_w {
++            let ci_x = bx + (dx as f64 + 0.5) * step_x;
++            if ci_x < ex || ci_x > ex + ew {
++                continue;
++            }
++            let u = (ci_x - ex) * sx_scale - 0.5;
++            let raw = sample_bilinear(img, u, v);
++            let px = convert_alpha(raw, img.premultiplied, dst_premul);
++            let off = row_off + dx * 4;
++            out[off..off + 4].copy_from_slice(&px);
++        }
++    }
++    out
++}
++
++// ---------------------------------------------------------------------------
++// CIImage methods
++// ---------------------------------------------------------------------------
++
++unsafe extern "C" fn ci_image_empty(class: Id, _sel: Sel) -> Id {
++    let inner = CiImageInner {
++        width: 0,
++        height: 0,
++        pixels: Vec::new(),
++        premultiplied: true,
++        extent: NSRect::default(),
++        color_space: default_color_space(),
++        properties: ptr::null(),
++    };
++    autorelease(make_ci_image(class, inner))
++}
++
++unsafe extern "C" fn ci_image_with_data(class: Id, _sel: Sel, data: Id) -> Id {
++    unsafe { ci_image_with_data_options(class, _sel, data, ptr::null_mut()) }
++}
++
++unsafe extern "C" fn ci_image_with_data_options(
++    class: Id,
++    _sel: Sel,
++    data: Id,
++    options: Id,
++) -> Id {
++    let Some(bytes) = nsdata_bytes(data) else {
++        return ptr::null_mut();
++    };
++    let Some(inner) = decode_bytes_to_inner(&bytes, options) else {
++        return ptr::null_mut();
++    };
++    autorelease(make_ci_image(class, inner))
++}
++
++unsafe extern "C" fn ci_image_with_url(class: Id, _sel: Sel, url: Id) -> Id {
++    unsafe { ci_image_with_url_options(class, _sel, url, ptr::null_mut()) }
++}
++
++unsafe extern "C" fn ci_image_with_url_options(
++    class: Id,
++    _sel: Sel,
++    url: Id,
++    options: Id,
++) -> Id {
++    let Some(bytes) = data_from_url(url) else {
++        return ptr::null_mut();
++    };
++    let Some(inner) = decode_bytes_to_inner(&bytes, options) else {
++        return ptr::null_mut();
++    };
++    autorelease(make_ci_image(class, inner))
++}
++
++unsafe extern "C" fn ci_image_with_cgimage(class: Id, _sel: Sel, cg_image: CFTypeRef) -> Id {
++    unsafe { ci_image_with_cgimage_options(class, _sel, cg_image, ptr::null_mut()) }
++}
++
++unsafe extern "C" fn ci_image_with_cgimage_options(
++    class: Id,
++    _sel: Sel,
++    cg_image: CFTypeRef,
++    options: Id,
++) -> Id {
++    let Some(inner) = decode_cgimage_to_inner(cg_image, options) else {
++        return ptr::null_mut();
++    };
++    autorelease(make_ci_image(class, inner))
++}
++
++unsafe extern "C" fn ci_image_with_cvpixelbuffer(class: Id, _sel: Sel, pb: CFTypeRef) -> Id {
++    unsafe { ci_image_with_cvpixelbuffer_options(class, _sel, pb, ptr::null_mut()) }
++}
++
++unsafe extern "C" fn ci_image_with_cvpixelbuffer_options(
++    class: Id,
++    _sel: Sel,
++    pb: CFTypeRef,
++    options: Id,
++) -> Id {
++    let Some(inner) = decode_cvpixelbuffer_to_inner(pb, options) else {
++        return ptr::null_mut();
++    };
++    autorelease(make_ci_image(class, inner))
++}
++
++unsafe extern "C" fn ci_image_init(receiver: Id, _sel: Sel) -> Id {
++    set_image_inner(
++        receiver,
++        CiImageInner {
++            width: 0,
++            height: 0,
++            pixels: Vec::new(),
++            premultiplied: true,
++            extent: NSRect::default(),
++            color_space: default_color_space(),
++            properties: ptr::null(),
++        },
++    );
++    receiver
++}
++
++unsafe extern "C" fn ci_image_init_with_data(receiver: Id, _sel: Sel, data: Id) -> Id {
++    unsafe { ci_image_init_with_data_options(receiver, _sel, data, ptr::null_mut()) }
++}
++
++unsafe extern "C" fn ci_image_init_with_data_options(
++    receiver: Id,
++    _sel: Sel,
++    data: Id,
++    options: Id,
++) -> Id {
++    let Some(bytes) = nsdata_bytes(data) else {
++        objc::arc::release(receiver);
++        return ptr::null_mut();
++    };
++    let Some(inner) = decode_bytes_to_inner(&bytes, options) else {
++        objc::arc::release(receiver);
++        return ptr::null_mut();
++    };
++    set_image_inner(receiver, inner);
++    receiver
++}
++
++unsafe extern "C" fn ci_image_init_with_url(receiver: Id, _sel: Sel, url: Id) -> Id {
++    unsafe { ci_image_init_with_url_options(receiver, _sel, url, ptr::null_mut()) }
++}
++
++unsafe extern "C" fn ci_image_init_with_url_options(
++    receiver: Id,
++    _sel: Sel,
++    url: Id,
++    options: Id,
++) -> Id {
++    let Some(bytes) = data_from_url(url) else {
++        objc::arc::release(receiver);
++        return ptr::null_mut();
++    };
++    let Some(inner) = decode_bytes_to_inner(&bytes, options) else {
++        objc::arc::release(receiver);
++        return ptr::null_mut();
++    };
++    set_image_inner(receiver, inner);
++    receiver
++}
++
++unsafe extern "C" fn ci_image_init_with_cgimage(
++    receiver: Id,
++    _sel: Sel,
++    cg_image: CFTypeRef,
++) -> Id {
++    unsafe { ci_image_init_with_cgimage_options(receiver, _sel, cg_image, ptr::null_mut()) }
++}
++
++unsafe extern "C" fn ci_image_init_with_cgimage_options(
++    receiver: Id,
++    _sel: Sel,
++    cg_image: CFTypeRef,
++    options: Id,
++) -> Id {
++    let Some(inner) = decode_cgimage_to_inner(cg_image, options) else {
++        objc::arc::release(receiver);
++        return ptr::null_mut();
++    };
++    set_image_inner(receiver, inner);
++    receiver
++}
++
++unsafe extern "C" fn ci_image_init_with_cvpixelbuffer(
++    receiver: Id,
++    _sel: Sel,
++    pb: CFTypeRef,
++) -> Id {
++    unsafe { ci_image_init_with_cvpixelbuffer_options(receiver, _sel, pb, ptr::null_mut()) }
++}
++
++unsafe extern "C" fn ci_image_init_with_cvpixelbuffer_options(
++    receiver: Id,
++    _sel: Sel,
++    pb: CFTypeRef,
++    options: Id,
++) -> Id {
++    let Some(inner) = decode_cvpixelbuffer_to_inner(pb, options) else {
++        objc::arc::release(receiver);
++        return ptr::null_mut();
++    };
++    set_image_inner(receiver, inner);
++    receiver
++}
++
++unsafe extern "C" fn ci_image_dealloc(receiver: Id, _sel: Sel) {
++    let obj = unsafe { &mut *(receiver as *mut CiImageObj) };
++    if !obj.inner.is_null() {
++        drop(unsafe { Box::from_raw(obj.inner) });
++        obj.inner = ptr::null_mut();
++    }
++    objc::arc::finalize(receiver);
++}
++
++unsafe extern "C" fn ci_image_extent(receiver: Id, _sel: Sel) -> NSRect {
++    image_inner(receiver).map_or_else(NSRect::default, |img| img.extent)
++}
++
++unsafe extern "C" fn ci_image_color_space(receiver: Id, _sel: Sel) -> CFTypeRef {
++    image_inner(receiver).map_or(ptr::null(), |img| img.color_space)
++}
++
++unsafe extern "C" fn ci_image_properties(receiver: Id, _sel: Sel) -> Id {
++    if let Some(img) = image_inner(receiver)
++        && !img.properties.is_null()
++    {
++        return img.properties as Id;
++    }
++    let empty = corefoundation::collections::new_dictionary(
++        &[],
++        corefoundation::callbacks::Policy::from_key_callbacks(),
++        corefoundation::callbacks::Policy::from_type_callbacks(),
++        false,
++    );
++    autorelease(empty as Id)
++}
++
++unsafe extern "C" fn ci_image_by_applying_transform(
++    receiver: Id,
++    _sel: Sel,
++    transform: CGAffineTransform,
++) -> Id {
++    unsafe { ci_image_by_applying_transform_hq(receiver, _sel, transform, 0) }
++}
++
++unsafe extern "C" fn ci_image_by_applying_transform_hq(
++    receiver: Id,
++    _sel: Sel,
++    transform: CGAffineTransform,
++    high_quality: u8,
++) -> Id {
++    let Some(img) = image_inner(receiver) else {
++        return ptr::null_mut();
++    };
++    let Some(next) = transform_image(img, transform, high_quality != 0) else {
++        return ptr::null_mut();
++    };
++    let class = objc::class::lookup(c"CIImage").expect("CIImage installed");
++    autorelease(make_ci_image(objc::class::ptr(class) as Id, next))
++}
++
++unsafe extern "C" fn ci_image_by_applying_orientation(
++    receiver: Id,
++    _sel: Sel,
++    orientation: u32,
++) -> Id {
++    let Some(img) = image_inner(receiver) else {
++        return ptr::null_mut();
++    };
++    let (w, h, pixels) = apply_orientation(img.width, img.height, &img.pixels, orientation);
++    let cs = if !img.color_space.is_null() {
++        unsafe { corefoundation::api::CFRetain(img.color_space) }
++    } else {
++        default_color_space()
++    };
++    let next = CiImageInner {
++        width: w,
++        height: h,
++        pixels,
++        premultiplied: img.premultiplied,
++        extent: NSRect {
++            origin: NSPoint { x: 0.0, y: 0.0 },
++            size: NSSize {
++                width: f64::from(w),
++                height: f64::from(h),
++            },
++        },
++        color_space: cs,
++        properties: make_properties_dict(w, h, 1),
++    };
++    let class = objc::class::lookup(c"CIImage").expect("CIImage installed");
++    autorelease(make_ci_image(objc::class::ptr(class) as Id, next))
++}
++
++unsafe extern "C" fn ci_image_by_cropping(receiver: Id, _sel: Sel, rect: NSRect) -> Id {
++    let Some(img) = image_inner(receiver) else {
++        return ptr::null_mut();
++    };
++    let x0 = rect.origin.x.max(img.extent.origin.x);
++    let y0 = rect.origin.y.max(img.extent.origin.y);
++    let x1 = (rect.origin.x + rect.size.width).min(img.extent.origin.x + img.extent.size.width);
++    let y1 = (rect.origin.y + rect.size.height).min(img.extent.origin.y + img.extent.size.height);
++    if x1 <= x0 || y1 <= y0 {
++        let class = objc::class::lookup(c"CIImage").expect("CIImage installed");
++        return unsafe { ci_image_empty(objc::class::ptr(class) as Id, _sel) };
++    }
++    let crop = NSRect {
++        origin: NSPoint { x: x0, y: y0 },
++        size: NSSize {
++            width: x1 - x0,
++            height: y1 - y0,
++        },
++    };
++    let out_w = crop.size.width.round().clamp(1.0, f64::from(MAX_RENDER_DIM)) as usize;
++    let out_h = crop.size.height.round().clamp(1.0, f64::from(MAX_RENDER_DIM)) as usize;
++    let pixels = rasterize_bounds(img, crop, out_w, out_h, img.premultiplied);
++    let cs = if !img.color_space.is_null() {
++        unsafe { corefoundation::api::CFRetain(img.color_space) }
++    } else {
++        default_color_space()
++    };
++    let next = CiImageInner {
++        width: out_w as u32,
++        height: out_h as u32,
++        pixels,
++        premultiplied: img.premultiplied,
++        extent: crop,
++        color_space: cs,
++        properties: make_properties_dict(out_w as u32, out_h as u32, 1),
++    };
++    let class = objc::class::lookup(c"CIImage").expect("CIImage installed");
++    autorelease(make_ci_image(objc::class::ptr(class) as Id, next))
++}
++
++unsafe extern "C" fn ci_image_clamping_to_extent(receiver: Id, _sel: Sel) -> Id {
++    autorelease(objc::arc::retain(receiver))
++}
++
++unsafe extern "C" fn ci_image_setting_alpha_one(receiver: Id, _sel: Sel, _rect: NSRect) -> Id {
++    let Some(img) = image_inner(receiver) else {
++        return ptr::null_mut();
++    };
++    let mut pixels = img.pixels.clone();
++    for px in pixels.chunks_exact_mut(4) {
++        px[3] = 255;
++    }
++    let cs = if !img.color_space.is_null() {
++        unsafe { corefoundation::api::CFRetain(img.color_space) }
++    } else {
++        default_color_space()
++    };
++    let next = CiImageInner {
++        width: img.width,
++        height: img.height,
++        pixels,
++        premultiplied: img.premultiplied,
++        extent: img.extent,
++        color_space: cs,
++        properties: make_properties_dict(img.width, img.height, 1),
++    };
++    let class = objc::class::lookup(c"CIImage").expect("CIImage installed");
++    autorelease(make_ci_image(objc::class::ptr(class) as Id, next))
++}
++
++unsafe extern "C" fn ci_image_applying_filter(
++    receiver: Id,
++    _sel: Sel,
++    name: Id,
++    params: Id,
++) -> Id {
++    let filter_name = if name.is_null() {
++        String::new()
++    } else {
++        String::from_utf8_lossy(&unsafe { foundation::string::bytes(name) }).into_owned()
++    };
++    if filter_name == "CILanczosScaleTransform"
++        && let Some(scale_val) = Some(dict_value(params, &["inputScale"]))
++            .filter(|v| !v.is_null())
++            .and_then(|v| unsafe { corefoundation::collections::number(v) })
++    {
++        let scale = scale_val.as_f64();
++        let aspect = Some(dict_value(params, &["inputAspectRatio"]))
++            .filter(|v| !v.is_null())
++            .and_then(|v| unsafe { corefoundation::collections::number(v) })
++            .map_or(1.0, |n| n.as_f64());
++        let t = CGAffineTransform {
++            a: scale * aspect,
++            b: 0.0,
++            c: 0.0,
++            d: scale,
++            tx: 0.0,
++            ty: 0.0,
++        };
++        return unsafe { ci_image_by_applying_transform_hq(receiver, _sel, t, 1) };
++    }
++    autorelease(objc::arc::retain(receiver))
++}
++
++// ---------------------------------------------------------------------------
++// CIContext methods
++// ---------------------------------------------------------------------------
++
++fn init_ci_context(obj: Id, options: Id) -> Id {
++    if obj.is_null() {
++        return ptr::null_mut();
++    }
++    let premul = option_bool(
++        options,
++        &[
++            "kCIContextOutputPremultiplied",
++            "CIContextOutputPremultiplied",
++        ],
++        true,
++    );
++    unsafe {
++        (*(obj as *mut CiContextObj)).output_premultiplied = u8::from(premul);
++    }
++    obj
++}
++
++unsafe extern "C" fn ci_context_default(class: Id, _sel: Sel) -> Id {
++    autorelease(init_ci_context(alloc_of(class), ptr::null_mut()))
++}
++
++unsafe extern "C" fn ci_context_with_options(class: Id, _sel: Sel, options: Id) -> Id {
++    autorelease(init_ci_context(alloc_of(class), options))
++}
++
++unsafe extern "C" fn ci_context_with_mtl_device(class: Id, _sel: Sel, _device: Id) -> Id {
++    autorelease(init_ci_context(alloc_of(class), ptr::null_mut()))
++}
++
++unsafe extern "C" fn ci_context_with_mtl_device_options(
++    class: Id,
++    _sel: Sel,
++    _device: Id,
++    options: Id,
++) -> Id {
++    autorelease(init_ci_context(alloc_of(class), options))
++}
++
++unsafe extern "C" fn ci_context_with_cgcontext_options(
++    class: Id,
++    _sel: Sel,
++    _cg_ctx: CFTypeRef,
++    options: Id,
++) -> Id {
++    autorelease(init_ci_context(alloc_of(class), options))
++}
++
++unsafe extern "C" fn ci_context_init(receiver: Id, _sel: Sel) -> Id {
++    init_ci_context(receiver, ptr::null_mut())
++}
++
++unsafe extern "C" fn ci_context_init_with_options(receiver: Id, _sel: Sel, options: Id) -> Id {
++    init_ci_context(receiver, options)
++}
++
++unsafe extern "C" fn ci_context_noop(_receiver: Id, _sel: Sel) {}
++
++unsafe extern "C" fn ci_context_render_to_cvpb(
++    receiver: Id,
++    sel: Sel,
++    image: Id,
++    buffer: CFTypeRef,
++) {
++    let w = unsafe { corevideo::pixel_buffer::CVPixelBufferGetWidth(buffer) } as f64;
++    let h = unsafe { corevideo::pixel_buffer::CVPixelBufferGetHeight(buffer) } as f64;
++    let bounds = NSRect {
++        origin: NSPoint { x: 0.0, y: 0.0 },
++        size: NSSize {
++            width: w,
++            height: h,
++        },
++    };
++    unsafe { ci_context_render_to_cvpb_bounds(receiver, sel, image, buffer, bounds, ptr::null()) };
++}
++
++unsafe extern "C" fn ci_context_render_to_cvpb_bounds(
++    receiver: Id,
++    _sel: Sel,
++    image: Id,
++    buffer: CFTypeRef,
++    bounds: NSRect,
++    _color_space: CFTypeRef,
++) {
++    let Some(img) = image_inner(image) else {
++        return;
++    };
++    if buffer.is_null() {
++        return;
++    }
++    let pb_w = unsafe { corevideo::pixel_buffer::CVPixelBufferGetWidth(buffer) };
++    let pb_h = unsafe { corevideo::pixel_buffer::CVPixelBufferGetHeight(buffer) };
++    let fmt = unsafe { corevideo::pixel_buffer::CVPixelBufferGetPixelFormatType(buffer) };
++    if pb_w == 0 || pb_h == 0 {
++        return;
++    }
++    let eff_bounds = if bounds.size.width > 0.0 && bounds.size.height > 0.0 {
++        bounds
++    } else {
++        NSRect {
++            origin: NSPoint { x: 0.0, y: 0.0 },
++            size: NSSize {
++                width: pb_w as f64,
++                height: pb_h as f64,
++            },
++        }
++    };
++    let output_premul = unsafe { (*(receiver as *const CiContextObj)).output_premultiplied } != 0;
++    let rgba = rasterize_bounds(img, eff_bounds, pb_w, pb_h, output_premul);
++
++    // Lock with flags=0 (write) so unlock increments cpu_generation / IOSurface seed.
++    if unsafe { corevideo::pixel_buffer::CVPixelBufferLockBaseAddress(buffer, 0) } != 0 {
++        return;
++    }
++    let base = unsafe { corevideo::pixel_buffer::CVPixelBufferGetBaseAddress(buffer) } as *mut u8;
++    let row_bytes = unsafe { corevideo::pixel_buffer::CVPixelBufferGetBytesPerRow(buffer) };
++    if !base.is_null() {
++        match fmt {
++            PIXEL_FORMAT_BGRA => {
++                for y in 0..pb_h {
++                    let src = &rgba[y * pb_w * 4..(y + 1) * pb_w * 4];
++                    let dst = unsafe { std::slice::from_raw_parts_mut(base.add(y * row_bytes), pb_w * 4) };
++                    for (s, d) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
++                        d[0] = s[2];
++                        d[1] = s[1];
++                        d[2] = s[0];
++                        d[3] = s[3];
++                    }
++                }
++            }
++            PIXEL_FORMAT_RGBA => {
++                for y in 0..pb_h {
++                    let src = &rgba[y * pb_w * 4..(y + 1) * pb_w * 4];
++                    let dst = unsafe { std::slice::from_raw_parts_mut(base.add(y * row_bytes), pb_w * 4) };
++                    dst.copy_from_slice(src);
++                }
++            }
++            PIXEL_FORMAT_ARGB => {
++                for y in 0..pb_h {
++                    let src = &rgba[y * pb_w * 4..(y + 1) * pb_w * 4];
++                    let dst = unsafe { std::slice::from_raw_parts_mut(base.add(y * row_bytes), pb_w * 4) };
++                    for (s, d) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
++                        d[0] = s[3];
++                        d[1] = s[0];
++                        d[2] = s[1];
++                        d[3] = s[2];
++                    }
++                }
++            }
++            PIXEL_FORMAT_RGBA_HALF => {
++                for y in 0..pb_h {
++                    let src = &rgba[y * pb_w * 4..(y + 1) * pb_w * 4];
++                    let dst = unsafe { std::slice::from_raw_parts_mut(base.add(y * row_bytes), pb_w * 8) };
++                    for (s, d) in src.chunks_exact(4).zip(dst.chunks_exact_mut(8)) {
++                        for c in 0..4 {
++                            let h = f16::from_f32(f32::from(s[c]) / 255.0).to_le_bytes();
++                            d[c * 2] = h[0];
++                            d[c * 2 + 1] = h[1];
++                        }
++                    }
++                }
++            }
++            _ => {}
++        }
++    }
++    unsafe { corevideo::pixel_buffer::CVPixelBufferUnlockBaseAddress(buffer, 0) };
++}
++
++unsafe extern "C" fn ci_context_create_cgimage(
++    _receiver: Id,
++    _sel: Sel,
++    image: Id,
++    rect: NSRect,
++) -> CFTypeRef {
++    let Some(img) = image_inner(image) else {
++        return ptr::null();
++    };
++    if rect.size.width <= 0.0 || rect.size.height <= 0.0 {
++        return ptr::null();
++    }
++    let w = rect.size.width.round().clamp(1.0, f64::from(MAX_RENDER_DIM)) as usize;
++    let h = rect.size.height.round().clamp(1.0, f64::from(MAX_RENDER_DIM)) as usize;
++    let rgba = rasterize_bounds(img, rect, w, h, true);
++    let mut bgra = vec![0u8; w * h * 4];
++    for (s, d) in rgba.chunks_exact(4).zip(bgra.chunks_exact_mut(4)) {
++        d[0] = s[2];
++        d[1] = s[1];
++        d[2] = s[0];
++        d[3] = s[3];
++    }
++    crate::graphics::image_from_pixels(bgra, w, h, w * 4, crate::graphics::PREMULTIPLIED_BGRA)
++}
++
++unsafe extern "C" fn ci_context_create_cgimage_format(
++    receiver: Id,
++    sel: Sel,
++    image: Id,
++    rect: NSRect,
++    _format: i32,
++    _color_space: CFTypeRef,
++) -> CFTypeRef {
++    unsafe { ci_context_create_cgimage(receiver, sel, image, rect) }
++}
++
++// ---------------------------------------------------------------------------
++// CIVector methods
++// ---------------------------------------------------------------------------
++
++fn make_vector(class: Id, values: [f64; 4], count: usize) -> Id {
++    let obj = alloc_of(class);
++    if !obj.is_null() {
++        let vec = unsafe { &mut *(obj as *mut CiVectorObj) };
++        vec.values = values;
++        vec.count = count;
++    }
++    obj
++}
++
++unsafe extern "C" fn ci_vector_with_rect(class: Id, _sel: Sel, rect: NSRect) -> Id {
++    autorelease(make_vector(
++        class,
++        [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height],
++        4,
++    ))
++}
++
++unsafe extern "C" fn ci_vector_with_xyzw(
++    class: Id,
++    _sel: Sel,
++    x: f64,
++    y: f64,
++    z: f64,
++    w: f64,
++) -> Id {
++    autorelease(make_vector(class, [x, y, z, w], 4))
++}
++
++unsafe extern "C" fn ci_vector_with_xy(class: Id, _sel: Sel, x: f64, y: f64) -> Id {
++    autorelease(make_vector(class, [x, y, 0.0, 0.0], 2))
++}
++
++unsafe extern "C" fn ci_vector_with_x(class: Id, _sel: Sel, x: f64) -> Id {
++    autorelease(make_vector(class, [x, 0.0, 0.0, 0.0], 1))
++}
++
++unsafe extern "C" fn ci_vector_init_with_rect(receiver: Id, _sel: Sel, rect: NSRect) -> Id {
++    let vec = unsafe { &mut *(receiver as *mut CiVectorObj) };
++    vec.values = [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height];
++    vec.count = 4;
++    receiver
++}
++
++unsafe extern "C" fn ci_vector_cgrect_value(receiver: Id, _sel: Sel) -> NSRect {
++    let vec = unsafe { &*(receiver as *const CiVectorObj) };
++    NSRect {
++        origin: NSPoint {
++            x: vec.values[0],
++            y: vec.values[1],
++        },
++        size: NSSize {
++            width: vec.values[2],
++            height: vec.values[3],
++        },
++    }
++}
++
++unsafe extern "C" fn ci_vector_x(receiver: Id, _sel: Sel) -> f64 {
++    unsafe { (*(receiver as *const CiVectorObj)).values[0] }
++}
++
++unsafe extern "C" fn ci_vector_y(receiver: Id, _sel: Sel) -> f64 {
++    unsafe { (*(receiver as *const CiVectorObj)).values[1] }
++}
++
++unsafe extern "C" fn ci_vector_z(receiver: Id, _sel: Sel) -> f64 {
++    unsafe { (*(receiver as *const CiVectorObj)).values[2] }
++}
++
++unsafe extern "C" fn ci_vector_w(receiver: Id, _sel: Sel) -> f64 {
++    unsafe { (*(receiver as *const CiVectorObj)).values[3] }
++}
++
++unsafe extern "C" fn ci_vector_count(receiver: Id, _sel: Sel) -> usize {
++    unsafe { (*(receiver as *const CiVectorObj)).count }
++}
++
++unsafe extern "C" fn ci_vector_value_at_index(receiver: Id, _sel: Sel, idx: usize) -> f64 {
++    let vec = unsafe { &*(receiver as *const CiVectorObj) };
++    vec.values.get(idx).copied().unwrap_or(0.0)
++}
++
++// ---------------------------------------------------------------------------
++// CIFilter & CIColor methods
++// ---------------------------------------------------------------------------
++
++unsafe extern "C" fn ci_filter_with_name(class: Id, _sel: Sel, name: Id) -> Id {
++    unsafe { ci_filter_with_name_params(class, _sel, name, ptr::null_mut()) }
++}
++
++unsafe extern "C" fn ci_filter_with_name_params(
++    class: Id,
++    _sel: Sel,
++    name: Id,
++    params: Id,
++) -> Id {
++    let obj = alloc_of(class);
++    if obj.is_null() {
++        return ptr::null_mut();
++    }
++    let filter_name = if name.is_null() {
++        String::new()
++    } else {
++        String::from_utf8_lossy(&unsafe { foundation::string::bytes(name) }).into_owned()
++    };
++    let mut map = HashMap::new();
++    if !params.is_null()
++        && let Some(dict) = unsafe { corefoundation::collections::dictionary(params as CFTypeRef) }
++    {
++        for (k, v) in dict.entries() {
++            let key = String::from_utf8_lossy(&unsafe { foundation::string::bytes(*k as Id) })
++                .into_owned();
++            map.insert(key, objc::arc::retain(*v as Id));
++        }
++    }
++    let inner = Box::new(CiFilterInner {
++        name: filter_name,
++        params: map,
++    });
++    unsafe { (*(obj as *mut CiFilterObj)).inner = Box::into_raw(inner) };
++    autorelease(obj)
++}
++
++unsafe extern "C" fn ci_filter_names_in_category(_class: Id, _sel: Sel, _category: Id) -> Id {
++    let empty = corefoundation::collections::new_array(
++        &[],
++        corefoundation::callbacks::Policy::from_type_callbacks(),
++        false,
++    );
++    autorelease(empty as Id)
++}
++
++unsafe extern "C" fn ci_filter_dealloc(receiver: Id, _sel: Sel) {
++    let obj = unsafe { &mut *(receiver as *mut CiFilterObj) };
++    if !obj.inner.is_null() {
++        drop(unsafe { Box::from_raw(obj.inner) });
++        obj.inner = ptr::null_mut();
++    }
++    objc::arc::finalize(receiver);
++}
++
++unsafe extern "C" fn ci_filter_set_value(receiver: Id, _sel: Sel, value: Id, key: Id) {
++    let ptr = unsafe { (*(receiver as *mut CiFilterObj)).inner };
++    if ptr.is_null() || key.is_null() {
++        return;
++    }
++    let key_str =
++        String::from_utf8_lossy(&unsafe { foundation::string::bytes(key) }).into_owned();
++    let inner = unsafe { &mut *ptr };
++    let old = if value.is_null() {
++        inner.params.remove(&key_str)
++    } else {
++        inner.params.insert(key_str, objc::arc::retain(value))
++    };
++    if let Some(prev) = old {
++        objc::arc::release(prev);
++    }
++}
++
++unsafe extern "C" fn ci_filter_value_for_key(receiver: Id, sel: Sel, key: Id) -> Id {
++    if key.is_null() {
++        return ptr::null_mut();
++    }
++    let key_str =
++        String::from_utf8_lossy(&unsafe { foundation::string::bytes(key) }).into_owned();
++    if key_str == "outputImage" || key_str == "kCIOutputImageKey" {
++        return unsafe { ci_filter_output_image(receiver, sel) };
++    }
++    let ptr = unsafe { (*(receiver as *const CiFilterObj)).inner };
++    if ptr.is_null() {
++        return ptr::null_mut();
++    }
++    let inner = unsafe { &*ptr };
++    inner.params.get(&key_str).copied().unwrap_or(ptr::null_mut())
++}
++
++unsafe extern "C" fn ci_filter_output_image(receiver: Id, sel: Sel) -> Id {
++    let ptr = unsafe { (*(receiver as *const CiFilterObj)).inner };
++    if ptr.is_null() {
++        return ptr::null_mut();
++    }
++    let inner = unsafe { &*ptr };
++    let input = inner
++        .params
++        .get("inputImage")
++        .or_else(|| inner.params.get("kCIInputImageKey"))
++        .copied()
++        .unwrap_or(ptr::null_mut());
++    if input.is_null() {
++        return ptr::null_mut();
++    }
++    if inner.name == "CILanczosScaleTransform" {
++        let scale = inner
++            .params
++            .get("inputScale")
++            .and_then(|v| unsafe { corefoundation::collections::number(*v as CFTypeRef) })
++            .map_or(1.0, |n| n.as_f64());
++        let aspect = inner
++            .params
++            .get("inputAspectRatio")
++            .and_then(|v| unsafe { corefoundation::collections::number(*v as CFTypeRef) })
++            .map_or(1.0, |n| n.as_f64());
++        let t = CGAffineTransform {
++            a: scale * aspect,
++            b: 0.0,
++            c: 0.0,
++            d: scale,
++            tx: 0.0,
++            ty: 0.0,
++        };
++        return unsafe { ci_image_by_applying_transform_hq(input, sel, t, 1) };
++    }
++    autorelease(objc::arc::retain(input))
++}
++
++unsafe extern "C" fn ci_filter_attributes(_receiver: Id, _sel: Sel) -> Id {
++    let empty = corefoundation::collections::new_dictionary(
++        &[],
++        corefoundation::callbacks::Policy::from_key_callbacks(),
++        corefoundation::callbacks::Policy::from_type_callbacks(),
++        false,
++    );
++    autorelease(empty as Id)
++}
++
++unsafe extern "C" fn ci_color_with_rgba(
++    class: Id,
++    _sel: Sel,
++    r: f64,
++    g: f64,
++    b: f64,
++    a: f64,
++) -> Id {
++    let obj = alloc_of(class);
++    if !obj.is_null() {
++        unsafe { (*(obj as *mut CiColorObj)).rgba = [r, g, b, a] };
++    }
++    autorelease(obj)
++}
++
++unsafe extern "C" fn ci_color_with_rgb(class: Id, sel: Sel, r: f64, g: f64, b: f64) -> Id {
++    unsafe { ci_color_with_rgba(class, sel, r, g, b, 1.0) }
++}
++
++unsafe extern "C" fn ci_color_red(receiver: Id, _sel: Sel) -> f64 {
++    unsafe { (*(receiver as *const CiColorObj)).rgba[0] }
++}
++
++unsafe extern "C" fn ci_color_green(receiver: Id, _sel: Sel) -> f64 {
++    unsafe { (*(receiver as *const CiColorObj)).rgba[1] }
++}
++
++unsafe extern "C" fn ci_color_blue(receiver: Id, _sel: Sel) -> f64 {
++    unsafe { (*(receiver as *const CiColorObj)).rgba[2] }
++}
++
++unsafe extern "C" fn ci_color_alpha(receiver: Id, _sel: Sel) -> f64 {
++    unsafe { (*(receiver as *const CiColorObj)).rgba[3] }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn encode_test_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
++        let bmp = crate::raster::Bitmap {
++            width,
++            height,
++            pixels: rgba.to_vec(),
++        };
++        crate::raster::encode_png(&bmp)
++    }
++
++    #[test]
++    fn ci_image_decodes_png_scales_and_renders_premultiplied_bgra_and_rgha_pixel_buffers() {
++        crate::bootstrap();
++        let pool = objc::arc::pool_push();
++        // 4x2 image: top half bright red opaque, bottom half semi-transparent green.
++        let mut rgba = Vec::with_capacity(4 * 2 * 4);
++        for _ in 0..4 {
++            rgba.extend_from_slice(&[255, 0, 0, 255]);
++        }
++        for _ in 0..4 {
++            rgba.extend_from_slice(&[0, 200, 0, 128]);
++        }
++        let png = encode_test_png(4, 2, &rgba);
++        let data = corefoundation::collections::new_data(png);
++
++        let ci_image_cls = objc::class::ptr(objc::class::lookup(c"CIImage").unwrap()) as Id;
++        let ci_context_cls = objc::class::ptr(objc::class::lookup(c"CIContext").unwrap()) as Id;
++
++        let image = unsafe {
++            let f: unsafe extern "C" fn(Id, Sel, Id, Id) -> Id =
++                std::mem::transmute(objc::msg::entry());
++            f(
++                ci_image_cls,
++                objc::sel::get("imageWithData:options:"),
++                data as Id,
++                ptr::null_mut(),
++            )
++        };
++        assert!(!image.is_null());
++
++        let extent = unsafe {
++            let f: unsafe extern "C" fn(Id, Sel) -> NSRect =
++                std::mem::transmute(objc::msg::entry_stret());
++            f(image, objc::sel::get("extent"))
++        };
++        assert_eq!(extent.size.width, 4.0);
++        assert_eq!(extent.size.height, 2.0);
++
++        let cs = unsafe {
++            let f: unsafe extern "C" fn(Id, Sel) -> CFTypeRef =
++                std::mem::transmute(objc::msg::entry());
++            f(image, objc::sel::get("colorSpace"))
++        };
++        assert!(!cs.is_null());
++
++        // Scale 2x via imageByApplyingTransform:highQualityDownsample:
++        let scale = unsafe { crate::cgcontext::CGAffineTransformMakeScale(2.0, 2.0) };
++        let scaled = unsafe {
++            let f: unsafe extern "C" fn(Id, Sel, CGAffineTransform, u8) -> Id =
++                std::mem::transmute(objc::msg::entry());
++            f(
++                image,
++                objc::sel::get("imageByApplyingTransform:highQualityDownsample:"),
++                scale,
++                1,
++            )
++        };
++        assert!(!scaled.is_null());
++        let scaled_extent = unsafe {
++            let f: unsafe extern "C" fn(Id, Sel) -> NSRect =
++                std::mem::transmute(objc::msg::entry_stret());
++            f(scaled, objc::sel::get("extent"))
++        };
++        assert_eq!((scaled_extent.size.width, scaled_extent.size.height), (8.0, 4.0));
++
++        // Render to 8x4 BGRA CVPixelBuffer (premultiplied default).
++        let ctx = unsafe {
++            let f: unsafe extern "C" fn(Id, Sel, Id) -> Id =
++                std::mem::transmute(objc::msg::entry());
++            f(
++                ci_context_cls,
++                objc::sel::get("contextWithOptions:"),
++                ptr::null_mut(),
++            )
++        };
++        let mut pb: CFTypeRef = ptr::null();
++        assert_eq!(
++            unsafe {
++                corevideo::pixel_buffer::CVPixelBufferCreate(
++                    ptr::null(),
++                    8,
++                    4,
++                    PIXEL_FORMAT_BGRA,
++                    ptr::null(),
++                    &mut pb,
++                )
++            },
++            0
++        );
++        unsafe {
++            let render: unsafe extern "C" fn(Id, Sel, Id, CFTypeRef, NSRect, CFTypeRef) =
++                std::mem::transmute(objc::msg::entry());
++            render(
++                ctx,
++                objc::sel::get("render:toCVPixelBuffer:bounds:colorSpace:"),
++                scaled,
++                pb,
++                scaled_extent,
++                cs,
++            );
++            assert_eq!(
++                corevideo::pixel_buffer::CVPixelBufferLockBaseAddress(pb, READ_ONLY_LOCK),
++                0
++            );
++            let base = corevideo::pixel_buffer::CVPixelBufferGetBaseAddress(pb) as *const u8;
++            let stride = corevideo::pixel_buffer::CVPixelBufferGetBytesPerRow(pb);
++            // Row 0 (top): bright red in BGRA -> [0, 0, 255, 255]
++            let top = std::slice::from_raw_parts(base, 4);
++            assert_eq!(top, &[0, 0, 255, 255]);
++            // Row 3 (bottom): semi-transparent green premultiplied -> [0, ~100, 0, 128]
++            let bottom = std::slice::from_raw_parts(base.add(3 * stride), 4);
++            assert_eq!(bottom[0], 0);
++            assert!((i32::from(bottom[1]) - 100).abs() <= 1, "bottom={bottom:?}");
++            assert_eq!(bottom[2], 0);
++            assert_eq!(bottom[3], 128);
++            corevideo::pixel_buffer::CVPixelBufferUnlockBaseAddress(pb, READ_ONLY_LOCK);
++            corevideo::pixel_buffer::CVPixelBufferRelease(pb);
++        }
++
++        // Also render original 4x2 into RGhA (64-bit half-float RGBA) pixel buffer.
++        let mut pb_hdr: CFTypeRef = ptr::null();
++        assert_eq!(
++            unsafe {
++                corevideo::pixel_buffer::CVPixelBufferCreate(
++                    ptr::null(),
++                    4,
++                    2,
++                    PIXEL_FORMAT_RGBA_HALF,
++                    ptr::null(),
++                    &mut pb_hdr,
++                )
++            },
++            0
++        );
++        unsafe {
++            let render: unsafe extern "C" fn(Id, Sel, Id, CFTypeRef, NSRect, CFTypeRef) =
++                std::mem::transmute(objc::msg::entry());
++            render(
++                ctx,
++                objc::sel::get("render:toCVPixelBuffer:bounds:colorSpace:"),
++                image,
++                pb_hdr,
++                extent,
++                cs,
++            );
++            assert_eq!(
++                corevideo::pixel_buffer::CVPixelBufferLockBaseAddress(pb_hdr, READ_ONLY_LOCK),
++                0
++            );
++            let base = corevideo::pixel_buffer::CVPixelBufferGetBaseAddress(pb_hdr) as *const u8;
++            let px = std::slice::from_raw_parts(base, 8);
++            let r = f16::from_le_bytes([px[0], px[1]]).to_f32();
++            let g = f16::from_le_bytes([px[2], px[3]]).to_f32();
++            let a = f16::from_le_bytes([px[6], px[7]]).to_f32();
++            assert!((r - 1.0).abs() < 0.01 && g.abs() < 0.01 && (a - 1.0).abs() < 0.01);
++            corevideo::pixel_buffer::CVPixelBufferUnlockBaseAddress(pb_hdr, READ_ONLY_LOCK);
++            corevideo::pixel_buffer::CVPixelBufferRelease(pb_hdr);
++            corefoundation::api::CFRelease(data);
++        }
++        objc::arc::pool_pop(pool);
++    }
++
++    #[test]
++    fn ci_image_from_cgimage_renders_to_pixel_buffer_and_round_trips_cgimage() {
++        crate::bootstrap();
++        let pool = objc::arc::pool_push();
++        // 2x2 premultiplied BGRA (blue pixel at top-left: B=255, G=0, R=0, A=255).
++        let pixels = vec![
++            255, 0, 0, 255, 255, 0, 0, 255, // row 0: blue
++            0, 255, 0, 255, 0, 255, 0, 255, // row 1: green
++        ];
++        let cg = crate::graphics::image_from_pixels(
++            pixels,
++            2,
++            2,
++            8,
++            crate::graphics::PREMULTIPLIED_BGRA,
++        );
++        let ci_image_cls = objc::class::ptr(objc::class::lookup(c"CIImage").unwrap()) as Id;
++        let ci_context_cls = objc::class::ptr(objc::class::lookup(c"CIContext").unwrap()) as Id;
++        let image = unsafe {
++            let f: unsafe extern "C" fn(Id, Sel, CFTypeRef) -> Id =
++                std::mem::transmute(objc::msg::entry());
++            f(ci_image_cls, objc::sel::get("imageWithCGImage:"), cg)
++        };
++        assert!(!image.is_null());
++
++        let ctx = unsafe {
++            let f: unsafe extern "C" fn(Id, Sel) -> Id = std::mem::transmute(objc::msg::entry());
++            f(ci_context_cls, objc::sel::get("context"))
++        };
++        let rect = NSRect {
++            origin: NSPoint { x: 0.0, y: 0.0 },
++            size: NSSize {
++                width: 2.0,
++                height: 2.0,
++            },
++        };
++        let out_cg = unsafe {
++            let f: unsafe extern "C" fn(Id, Sel, Id, NSRect) -> CFTypeRef =
++                std::mem::transmute(objc::msg::entry());
++            f(ctx, objc::sel::get("createCGImage:fromRect:"), image, rect)
++        };
++        assert!(!out_cg.is_null());
++        let (w, h, out_bgra) = crate::graphics::image_bgra(out_cg).unwrap();
++        assert_eq!((w, h), (2, 2));
++        assert_eq!(&out_bgra[0..4], &[255, 0, 0, 255]);
++        assert_eq!(&out_bgra[8..12], &[0, 255, 0, 255]);
++        unsafe {
++            crate::graphics::CGImageRelease(out_cg);
++            crate::graphics::CGImageRelease(cg);
++        }
++        objc::arc::pool_pop(pool);
++    }
++
++    #[test]
++    fn ci_vector_round_trips_cgrect() {
++        crate::bootstrap();
++        let pool = objc::arc::pool_push();
++        let cls = objc::class::ptr(objc::class::lookup(c"CIVector").unwrap()) as Id;
++        let rect = NSRect {
++            origin: NSPoint { x: 10.0, y: 20.0 },
++            size: NSSize {
++                width: 300.0,
++                height: 400.0,
++            },
++        };
++        let vec = unsafe {
++            let f: unsafe extern "C" fn(Id, Sel, NSRect) -> Id =
++                std::mem::transmute(objc::msg::entry());
++            f(cls, objc::sel::get("vectorWithCGRect:"), rect)
++        };
++        let back = unsafe {
++            let f: unsafe extern "C" fn(Id, Sel) -> NSRect =
++                std::mem::transmute(objc::msg::entry_stret());
++            f(vec, objc::sel::get("CGRectValue"))
++        };
++        assert_eq!(back, rect);
++        objc::arc::pool_pop(pool);
++    }
++}
 diff --git a/crates/appkit/src/event.rs b/crates/appkit/src/event.rs
 index 44ed1219..36ce3a83 100644
 --- a/crates/appkit/src/event.rs
@@ -1841,7 +3909,7 @@ index 81cb1bc6..c10107d1 100644
          "LSOpenFromURLSpec" => LSOpenFromURLSpec,
      }
 diff --git a/crates/appkit/src/layer.rs b/crates/appkit/src/layer.rs
-index 62a78329..bf65bc1a 100644
+index 62a78329..245e59be 100644
 --- a/crates/appkit/src/layer.rs
 +++ b/crates/appkit/src/layer.rs
 @@ -45,6 +45,7 @@ struct MetalLayer {
@@ -1860,7 +3928,20 @@ index 62a78329..bf65bc1a 100644
          metal.framebuffer_only = 1;
          metal.display_sync_enabled = 1;
      }
-@@ -660,6 +662,29 @@ unsafe extern "C" fn allows_next_drawable_timeout(receiver: Id, _sel: Sel) -> u8
+@@ -222,6 +224,12 @@ pub(crate) fn set_masks_to_bounds_of(layer: Id, masks: bool) {
+     }
+ }
+ 
++pub(crate) fn set_needs_display_on_bounds_change_of(layer: Id, value: bool) {
++    if is_layer(layer) {
++        layer_of(layer).needs_display_on_bounds_change = u8::from(value);
++    }
++}
++
+ /// A layer's `-contentsScale`, one for something that is not a layer.
+ pub(crate) fn contents_scale_of(layer: Id) -> f64 {
+     match is_layer(layer) {
+@@ -660,6 +668,29 @@ unsafe extern "C" fn allows_next_drawable_timeout(receiver: Id, _sel: Sel) -> u8
      u8::from(metal_layer_of(receiver).no_next_drawable_timeout == 0)
  }
  
@@ -1890,7 +3971,15 @@ index 62a78329..bf65bc1a 100644
  pub(crate) fn install() {
      let class = objc::class::lookup(c"CALayer").expect("declared before its methods");
      class_methods!(class, {
-@@ -710,14 +735,25 @@ pub(crate) fn install() {
+@@ -670,6 +701,7 @@ pub(crate) fn install() {
+         "setContentsScale:" => set_contents_scale, c"v24@0:8d16";
+         "setOpaque:" => set_opaque, c"v20@0:8c16";
+         "isOpaque" => is_opaque, c"c16@0:8";
++        "opaque" => is_opaque, c"c16@0:8";
+         "bounds" => bounds, c"{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8";
+         "setBounds:" => set_bounds, c"v48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16";
+         "mask" => mask, c"@16@0:8";
+@@ -710,14 +742,25 @@ pub(crate) fn install() {
          "displaySyncEnabled" => display_sync_enabled, c"c16@0:8";
          "setAllowsNextDrawableTimeout:" => set_allows_next_drawable_timeout, c"v20@0:8c16";
          "allowsNextDrawableTimeout" => allows_next_drawable_timeout, c"c16@0:8";
@@ -1916,11 +4005,86 @@ index 62a78329..bf65bc1a 100644
  }
  
  unsafe extern "C" fn ignore_object(_receiver: Id, _sel: Sel, _value: Id) {}
+@@ -1009,4 +1052,66 @@ mod tests {
+         // SAFETY: as the caller's.
+         unsafe { delegate(layer, objc::sel::get("delegate")) }
+     }
++
++    #[test]
++    fn metal_layer_opaque_and_bounds_display_flags_round_trip_through_objc_dispatch() {
++        crate::bootstrap();
++        let make = |name: &std::ffi::CStr| {
++            let class = objc::class::lookup(name).expect("layer class");
++            // SAFETY: declared CALayer / CAMetalLayer class.
++            unsafe { new_layer(objc::class::ptr(class) as Id, objc::sel::get("layer")) }
++        };
++        let get_flag = |receiver: Id, name: &str| -> u8 {
++            let sel = objc::sel::get(name);
++            let class = unsafe { objc::object::class_of(receiver) }.expect("class");
++            let method = class.method(sel).expect("getter");
++            let call: unsafe extern "C" fn(Id, Sel) -> u8 =
++                unsafe { std::mem::transmute(method.implementation()) };
++            unsafe { call(receiver, sel) }
++        };
++        let set_flag = |receiver: Id, name: &str, value: u8| {
++            let sel = objc::sel::get(name);
++            let class = unsafe { objc::object::class_of(receiver) }.expect("class");
++            let method = class.method(sel).expect("setter");
++            let call: unsafe extern "C" fn(Id, Sel, u8) =
++                unsafe { std::mem::transmute(method.implementation()) };
++            unsafe { call(receiver, sel, value) }
++        };
++
++        let plain = make(c"CALayer");
++        assert_eq!(get_flag(plain, "isOpaque"), 0);
++        assert_eq!(get_flag(plain, "opaque"), 0);
++        assert!(!opaque_of(plain));
++        set_flag(plain, "setOpaque:", 1);
++        assert_eq!(get_flag(plain, "isOpaque"), 1);
++        assert_eq!(get_flag(plain, "opaque"), 1);
++        assert!(opaque_of(plain));
++
++        let metal = make(c"CAMetalLayer");
++        assert_eq!(get_flag(metal, "isOpaque"), 1);
++        assert_eq!(get_flag(metal, "opaque"), 1);
++        assert!(opaque_of(metal));
++        set_flag(metal, "setOpaque:", 0);
++        assert_eq!(get_flag(metal, "isOpaque"), 0);
++        assert_eq!(get_flag(metal, "opaque"), 0);
++        assert!(!opaque_of(metal));
++
++        assert_eq!(get_flag(plain, "needsDisplayOnBoundsChange"), 0);
++        set_flag(plain, "setNeedsDisplayOnBoundsChange:", 1);
++        assert_eq!(get_flag(plain, "needsDisplayOnBoundsChange"), 1);
++        unsafe {
++            set_bounds(
++                plain,
++                objc::sel::get("setBounds:"),
++                NSRect {
++                    size: NSSize {
++                        width: 12.0,
++                        height: 8.0,
++                    },
++                    ..Default::default()
++                },
++            );
++        }
++        assert_eq!(get_flag(plain, "needsDisplay"), 1);
++    }
+ }
 diff --git a/crates/appkit/src/lib.rs b/crates/appkit/src/lib.rs
-index a4137b46..650141f3 100644
+index a4137b46..4ca987d8 100644
 --- a/crates/appkit/src/lib.rs
 +++ b/crates/appkit/src/lib.rs
-@@ -68,10 +68,12 @@ mod matrix;
+@@ -33,6 +33,7 @@ pub mod classes;
+ pub mod color;
+ mod controls;
+ mod coreanimation;
++mod coreimage;
+ mod ctdraw;
+ mod ctline;
+ pub mod cursor;
+@@ -68,10 +69,12 @@ mod matrix;
  pub mod menu;
  pub mod metadata;
  pub mod monitor;
@@ -1933,15 +4097,17 @@ index a4137b46..650141f3 100644
  mod paragraph;
  pub mod pasteboard;
  mod pasteboard_manager;
-@@ -149,6 +151,7 @@ pub fn bootstrap() {
+@@ -149,7 +152,9 @@ pub fn bootstrap() {
          view_animation::install();
          bezier::install();
          layer::install();
 +        mtkview::install();
          coreanimation::install();
++        coreimage::install();
          text::install();
          label::install();
-@@ -169,6 +172,7 @@ pub fn bootstrap() {
+         // Last of the controls (text fields and labels included): a cell
+@@ -169,6 +174,7 @@ pub fn bootstrap() {
  
  exports::exports! {
      functions {
@@ -1949,7 +4115,7 @@ index a4137b46..650141f3 100644
          "NSApplicationMain" => application::NSApplicationMain,
          "NSApplicationLoad" => application::NSApplicationLoad,
          "CAFrameRateRangeMake" => displaylink::CAFrameRateRangeMake,
-@@ -258,6 +262,40 @@ exports::exports! {
+@@ -258,6 +264,40 @@ exports::exports! {
          "CGColorSpaceCreatePattern" => graphics::CGColorSpaceCreatePattern,
          "CGColorSpaceGetNumberOfComponents" => graphics::CGColorSpaceGetNumberOfComponents,
          "CGColorSpaceRelease" => graphics::CGColorSpaceRelease,
@@ -1990,7 +4156,7 @@ index a4137b46..650141f3 100644
          "CGColorSpaceGetName" => graphics::CGColorSpaceGetName,
          "CGColorSpaceCopyName" => graphics::CGColorSpaceCopyName,
          "CGColorSpaceCopyPropertyList" => graphics::CGColorSpaceCopyPropertyList,
-@@ -276,11 +314,25 @@ exports::exports! {
+@@ -276,11 +316,25 @@ exports::exports! {
          "CGImageGetAlphaInfo" => graphics::CGImageGetAlphaInfo,
          "CGImageGetColorSpace" => graphics::CGImageGetColorSpace,
          "CGImageSourceCreateWithData" => graphics::CGImageSourceCreateWithData,
@@ -2016,7 +4182,7 @@ index a4137b46..650141f3 100644
          "CGRectGetWidth" => geometry::CGRectGetWidth,
          "CGRectGetHeight" => geometry::CGRectGetHeight,
          "CGRectGetMinX" => geometry::CGRectGetMinX,
-@@ -378,10 +430,19 @@ pub fn ns_app_cell() -> u64 {
+@@ -378,10 +432,19 @@ pub fn ns_app_cell() -> u64 {
  static CG_AFFINE_TRANSFORM_IDENTITY: [f64; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
  /// `{{-CGFLOAT_MAX / 2, -CGFLOAT_MAX / 2}, {CGFLOAT_MAX, CGFLOAT_MAX}}`.
  static CG_RECT_INFINITE: [f64; 4] = [f64::MAX / -2.0, f64::MAX / -2.0, f64::MAX, f64::MAX];
@@ -2036,7 +4202,7 @@ index a4137b46..650141f3 100644
      out.extend(cgcontext::data_symbols());
      out.push(("_NSApp".to_string(), ns_app_cell()));
      out.push((
-@@ -392,6 +453,14 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+@@ -392,6 +455,14 @@ pub fn data_symbols() -> Vec<(String, u64)> {
          "_CGRectInfinite".to_string(),
          CG_RECT_INFINITE.as_ptr() as usize as u64,
      ));
@@ -2051,7 +4217,7 @@ index a4137b46..650141f3 100644
      let srgb = foundation::notification::name_object("kCGColorSpaceSRGB");
      out.push((
          "_kCGColorSpaceSRGB".to_string(),
-@@ -602,6 +671,22 @@ pub const STRING_GLOBALS: &[(&str, &str)] = &[
+@@ -602,6 +673,22 @@ pub const STRING_GLOBALS: &[(&str, &str)] = &[
      ),
      // SDL's GPU swapchain table reads it whenever the OS version says it exists.
      ("_kCGColorSpaceITUR_2100_PQ", "kCGColorSpaceITUR_2100_PQ"),
@@ -3456,10 +5622,20 @@ index 978f00ea..1c2f11fd 100644
      // dictionary's retain is the only one that matters. Mixing an owned value
      // in with autoreleased ones is how a leak or a double release gets written.
 diff --git a/crates/appkit/src/view.rs b/crates/appkit/src/view.rs
-index 221c3265..1ccabfcf 100644
+index 221c3265..6a4e37fc 100644
 --- a/crates/appkit/src/view.rs
 +++ b/crates/appkit/src/view.rs
-@@ -470,6 +470,34 @@ pub(crate) fn surface_poll_visits_for_test() -> usize {
+@@ -65,6 +65,9 @@ const WANTS_LAYER: usize = 1;
+ const BACKING_LAYER: usize = 2;
+ const CLIPS_TO_BOUNDS: usize = 4;
+ const PLACEMENT_SHIFT: u32 = 8;
++const PLACEMENT_MASK: usize = 0xF << PLACEMENT_SHIFT;
++const REDRAW_POLICY_SHIFT: u32 = 16;
++const REDRAW_POLICY_MASK: usize = 0xF << REDRAW_POLICY_SHIFT;
+ 
+ /// The bits of [`View::posts`].
+ const POSTS_FRAME: usize = 1;
+@@ -470,6 +473,34 @@ pub(crate) fn surface_poll_visits_for_test() -> usize {
      METAL_SURFACE_POLL_VISITS.load(std::sync::atomic::Ordering::Relaxed)
  }
  
@@ -3494,7 +5670,40 @@ index 221c3265..1ccabfcf 100644
  fn capture_surface_poll_owners(window: sdl3::Window) {
      let mut owners = Vec::new();
      if crate::coreanimation::has_surface_publications() {
-@@ -1322,6 +1350,24 @@ fn publish_metal_scene_at(sdl: sdl3::Window, now: f64, force: bool) {
+@@ -1043,6 +1074,11 @@ fn visit_metal_scene(
+             }
+         }
+     }
++    let child_clip = if current_masks {
++        own_frame.map(|frame| ca_clip.map_or(frame, |clip| intersect_scene_clips(frame, clip)))
++    } else {
++        ca_clip
++    };
+     if !layer.is_null()
+         && crate::layer::is_metal(layer)
+         && let Some(frame) = unsafe { metal_contents_frame(view, layer) }
+@@ -1054,7 +1090,7 @@ fn visit_metal_scene(
+             frame,
+             opacity: source_view_alpha * layer_opacity,
+             opaque: crate::layer::opaque_of(layer),
+-            clip: ca_clip,
++            clip: child_clip,
+             rounded: rounded.clone(),
+             occluded: Vec::new(),
+             native_pixels: None,
+@@ -1067,11 +1103,6 @@ fn visit_metal_scene(
+         });
+         *seen_metal = true;
+     }
+-    let child_clip = if current_masks {
+-        own_frame.map(|frame| ca_clip.map_or(frame, |clip| intersect_scene_clips(frame, clip)))
+-    } else {
+-        ca_clip
+-    };
+     // The effective CA hierarchy, not the NSView child list alone, owns the
+     // stacking order when ordinary layers interleave with backed views.
+     let children = view_of(view).subviews;
+@@ -1322,6 +1353,25 @@ fn publish_metal_scene_at(sdl: sdl3::Window, now: f64, force: bool) {
      let differs = changed
          .as_ref()
          .is_none_or(|old| !same_metal_scene(old, &scene));
@@ -3503,13 +5712,14 @@ index 221c3265..1ccabfcf 100644
 +            .iter()
 +            .map(|l| {
 +                format!(
-+                    "{:#x} {}x{}@{},{} opacity {} native {}",
++                    "{:#x} {}x{}@{},{} opacity {} opaque {} native {}",
 +                    l.layer,
 +                    l.frame.width,
 +                    l.frame.height,
 +                    l.frame.x,
 +                    l.frame.y,
 +                    l.opacity,
++                    l.opaque,
 +                    l.native_pixels.is_some()
 +                )
 +            })
@@ -3519,7 +5729,85 @@ index 221c3265..1ccabfcf 100644
      if (differs || force)
          && let Some(hook) = METAL_SCENE_CHANGED.get()
      {
-@@ -2614,6 +2660,9 @@ pub unsafe fn superview_of(view: Id) -> Id {
+@@ -1714,6 +1764,10 @@ unsafe extern "C" fn set_wants_layer(receiver: Id, _sel: Sel, wants: u8) {
+         crate::layer::set_delegate_of(layer, receiver);
+     }
+     crate::layer::set_contents_gravity_for_placement(layer, contents_placement(receiver));
++    crate::layer::set_needs_display_on_bounds_change_of(
++        layer,
++        redraws_on_bounds_change(contents_redraw_policy(receiver)),
++    );
+     send_object(receiver, "setLayer:", layer);
+     // `-setLayer:` may be overridden to refuse; the flag describes the layer
+     // the view ended up with.
+@@ -1740,6 +1794,22 @@ fn contents_placement(view: Id) -> isize {
+     }
+ }
+ 
++/// The view's `-layerContentsRedrawPolicy`, sent so an override answers.
++fn contents_redraw_policy(view: Id) -> isize {
++    // SAFETY: `-layerContentsRedrawPolicy` is `NSInteger (id, SEL)`.
++    unsafe {
++        let f: unsafe extern "C" fn(Id, Sel) -> isize = std::mem::transmute(objc::msg::entry());
++        f(view, objc::sel::get("layerContentsRedrawPolicy"))
++    }
++}
++
++/// Whether an `NSViewLayerContentsRedrawPolicy` asks AppKit to redraw the
++/// backing layer when the view's bounds change (`DuringViewResize`,
++/// `BeforeViewResize`, or `Crossfade`).
++fn redraws_on_bounds_change(policy: isize) -> bool {
++    matches!(policy, 2..=4)
++}
++
+ /// `-makeBackingLayer`: a plain `CALayer`, autoreleased.
+ unsafe extern "C" fn make_backing_layer(_receiver: Id, _sel: Sel) -> Id {
+     let Some(class) = objc::class::lookup(c"CALayer") else {
+@@ -1759,20 +1829,40 @@ unsafe extern "C" fn wants_layer(receiver: Id, _sel: Sel) -> u8 {
+ /// `-layerContentsPlacement`, whose default of zero is
+ /// `NSViewLayerContentsPlacementScaleAxesIndependently`.
+ unsafe extern "C" fn layer_contents_placement(receiver: Id, _sel: Sel) -> isize {
+-    (view_of(receiver).layer_backing >> PLACEMENT_SHIFT) as isize
++    ((view_of(receiver).layer_backing & PLACEMENT_MASK) >> PLACEMENT_SHIFT) as isize
+ }
+ 
+ /// `-setLayerContentsPlacement:`, which AppKit applies to a backing layer's
+ /// `contentsGravity`.
+ unsafe extern "C" fn set_layer_contents_placement(receiver: Id, _sel: Sel, placement: isize) {
+     let view = view_of(receiver);
+-    let flags = view.layer_backing & ((1 << PLACEMENT_SHIFT) - 1);
+-    view.layer_backing = flags | ((placement.clamp(0, 11) as usize) << PLACEMENT_SHIFT);
++    view.layer_backing = (view.layer_backing & !PLACEMENT_MASK)
++        | ((placement.clamp(0, 11) as usize) << PLACEMENT_SHIFT);
+     if view.layer_backing & BACKING_LAYER != 0 {
+         crate::layer::set_contents_gravity_for_placement(view.layer, placement);
+     }
+ }
+ 
++/// `-layerContentsRedrawPolicy`, whose default of zero is
++/// `NSViewLayerContentsRedrawNever`.
++unsafe extern "C" fn layer_contents_redraw_policy(receiver: Id, _sel: Sel) -> isize {
++    ((view_of(receiver).layer_backing & REDRAW_POLICY_MASK) >> REDRAW_POLICY_SHIFT) as isize
++}
++
++/// `-setLayerContentsRedrawPolicy:`, which AppKit maps to
++/// `-[CALayer setNeedsDisplayOnBoundsChange:]` for resize-driven policies.
++unsafe extern "C" fn set_layer_contents_redraw_policy(receiver: Id, _sel: Sel, policy: isize) {
++    let view = view_of(receiver);
++    view.layer_backing = (view.layer_backing & !REDRAW_POLICY_MASK)
++        | ((policy.clamp(0, 4) as usize) << REDRAW_POLICY_SHIFT);
++    if view.layer_backing & BACKING_LAYER != 0 {
++        crate::layer::set_needs_display_on_bounds_change_of(
++            view.layer,
++            redraws_on_bounds_change(policy),
++        );
++    }
++}
++
+ /// `-[NSView setClipsToBounds:]`.
+ ///
+ /// Sets whether the view confines its drawing and that of its subviews to its
+@@ -2614,6 +2704,9 @@ pub unsafe fn superview_of(view: Id) -> Id {
  /// not set that flag leaves the guest drawing a point-sized viewport into a
  /// pixel-sized surface.
  fn scale(receiver: Id) -> f64 {
@@ -3529,7 +5817,7 @@ index 221c3265..1ccabfcf 100644
      // SAFETY: a view of this crate's.
      let window = unsafe { window_of(receiver) };
      // SAFETY: null or a window this crate made.
-@@ -3573,6 +3622,19 @@ unsafe extern "C" fn ignored(_receiver: Id, _sel: Sel) {}
+@@ -3573,6 +3666,19 @@ unsafe extern "C" fn ignored(_receiver: Id, _sel: Sel) {}
  
  unsafe extern "C" fn ignored_object(_receiver: Id, _sel: Sel, _object: Id) {}
  
@@ -3549,7 +5837,7 @@ index 221c3265..1ccabfcf 100644
  unsafe extern "C" fn ignored_flag(_receiver: Id, _sel: Sel, _flag: u8) {}
  
  unsafe extern "C" fn ignored_integer(_receiver: Id, _sel: Sel, _value: isize) {}
-@@ -3714,6 +3776,8 @@ pub(crate) fn install() {
+@@ -3714,6 +3820,8 @@ pub(crate) fn install() {
          // no observable result other than which future drag messages arrive.
          "registerForDraggedTypes:" => ignored_object, c"v24@0:8@16";
          "unregisterDraggedTypes" => ignored, c"v16@0:8";
@@ -3558,6 +5846,62 @@ index 221c3265..1ccabfcf 100644
          "setAutoresizingMask:" => set_autoresizing_mask, c"v24@0:8Q16";
          "autoresizingMask" => autoresizing_mask, c"Q16@0:8";
          "setAutoresizesSubviews:" => set_autoresizes_subviews, c"v20@0:8c16";
+@@ -3744,9 +3852,8 @@ pub(crate) fn install() {
+         "setLayer:" => set_layer, c"v24@0:8@16";
+         "layer" => layer, c"@16@0:8";
+         "setWantsLayer:" => set_wants_layer, c"v20@0:8c16";
+-        // A hint about when the backing store may be reused across a resize.
+-        // Nothing here keeps one, so every policy draws the same.
+-        "setLayerContentsRedrawPolicy:" => ignored_integer, c"v24@0:8q16";
++        "setLayerContentsRedrawPolicy:" => set_layer_contents_redraw_policy, c"v24@0:8q16";
++        "layerContentsRedrawPolicy" => layer_contents_redraw_policy, c"q16@0:8";
+         "setLayerContentsPlacement:" => set_layer_contents_placement, c"v24@0:8q16";
+         "layerContentsPlacement" => layer_contents_placement, c"q16@0:8";
+         "makeBackingLayer" => make_backing_layer, c"@16@0:8";
+@@ -6246,6 +6353,43 @@ mod tests {
+         objc::arc::release(view);
+     }
+ 
++    #[test]
++    fn layer_contents_redraw_policy_during_view_resize_marks_backing_layer_for_display_on_resize() {
++        crate::bootstrap();
++        unsafe extern "C" fn during_resize(_receiver: Id, _sel: Sel) -> isize {
++            2 // NSViewLayerContentsRedrawDuringViewResize
++        }
++        let base = objc::class::lookup(c"NSView").expect("NSView registered");
++        let sub = objc::class::allocate_pair(Some(base), c"TestResizeRedrawView", 0)
++            .expect("subclass");
++        sub.add_method(
++            objc::sel::get("layerContentsRedrawPolicy"),
++            during_resize as objc::class::Imp,
++            c"q16@0:8",
++        );
++        objc::class::register_pair(sub);
++        let v = objc::object::create_instance(sub, 0);
++        unsafe {
++            let init: unsafe extern "C" fn(Id, Sel, NSRect) -> Id =
++                std::mem::transmute(objc::msg::entry());
++            let _ = init(
++                v,
++                objc::sel::get("initWithFrame:"),
++                rect(0.0, 0.0, 200.0, 100.0),
++            );
++            set_wants_layer(v, objc::sel::get("setWantsLayer:"), 1);
++            let layer = view_of(v).layer;
++            assert!(!layer.is_null());
++            let get_flag: unsafe extern "C" fn(Id, Sel) -> u8 =
++                std::mem::transmute(objc::msg::entry());
++            assert_eq!(get_flag(layer, objc::sel::get("needsDisplayOnBoundsChange")), 1);
++            assert_eq!(get_flag(layer, objc::sel::get("needsDisplay")), 0);
++            set_frame_of(v, rect(0.0, 0.0, 120.0, 60.0));
++            assert_eq!(get_flag(layer, objc::sel::get("needsDisplay")), 1);
++        }
++        objc::arc::release(v);
++    }
++
+     #[test]
+     fn animated_ca_ancestor_position_and_bounds_republish_static_metal_clipping() {
+         if !sdl3::isolated::run_here() {
 diff --git a/crates/appkit/src/window.rs b/crates/appkit/src/window.rs
 index 484056dd..db80e0d0 100644
 --- a/crates/appkit/src/window.rs
@@ -3971,7 +6315,7 @@ index f5fe44f7..38554e1b 100644
          "launchApplicationAtURL:options:configuration:error:" => launch_application,
              c"@48@0:8@16Q24@32^@40";
 diff --git a/crates/rosemary/src/abi/table.rs b/crates/rosemary/src/abi/table.rs
-index 8f85a506..4c0b4abd 100644
+index 8f85a506..afe3790c 100644
 --- a/crates/rosemary/src/abi/table.rs
 +++ b/crates/rosemary/src/abi/table.rs
 @@ -437,6 +437,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
@@ -4013,7 +6357,15 @@ index 8f85a506..4c0b4abd 100644
      sig!("CVPixelBufferGetBaseAddress", P, P),
      sig!("CVPixelBufferGetBytesPerRow", U64, P),
      sig!("CVPixelBufferGetHeight", U64, P),
-@@ -1613,8 +1624,38 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -1550,6 +1561,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+     // `NSLog` takes an `NSString` format, not a C one, so even the rendering
+     // path the `printf` family uses needs a conversion first.
+     vsig!("NSLog", V, P),
++    sig!("NSLogv", V, P, P),
+     // Shimmed, and listed for the reason `NSLog` is. The format is the *second*
+     // argument, so the entry names five pointers before the tail.
+     vsig!("NSRunAlertPanel", I64, P, P, P, P, P),
+@@ -1613,8 +1625,38 @@ pub static SIGNATURES: &[FunctionAbi] = &[
      sig!("SecItemDelete", I32, P),
      sig!("SecItemUpdate", I32, P, P),
      sig!("SecCertificateCreateWithData", P, P, P),
@@ -4052,7 +6404,7 @@ index 8f85a506..4c0b4abd 100644
      sig!("SecTrustSetOptions", I32, P, U32),
      sig!("SecTrustEvaluate", I32, P, P),
      sig!("SecRandomCopyBytes", I32, P, U64, P),
-@@ -3265,6 +3306,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -3265,6 +3307,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
      sig!("posix_spawnattr_setpgroup", I32, P, I32),
      sig!("posix_spawnattr_setbinpref_np", I32, P, U64, P, P),
      sig!("posix_spawnattr_setarchpref_np", I32, P, U64, P, P, P),
@@ -4060,7 +6412,7 @@ index 8f85a506..4c0b4abd 100644
      // `short flags`, which SysV passes in the low half of a register and
      // AAPCS64 reads back out of one: narrower than the slot on both sides.
      sig!("posix_spawnattr_setflags", I32, P, U32),
-@@ -4018,6 +4060,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -4018,6 +4061,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
          U64,
          P
      ),
@@ -4068,7 +6420,7 @@ index 8f85a506..4c0b4abd 100644
      sig!("CVMetalTextureGetTexture", P, P),
      sig!("CVPixelBufferCreate", I32, P, U64, U64, U32, P, P),
      sig!("CVPixelBufferGetBaseAddressOfPlane", P, P, U64),
-@@ -4047,6 +4090,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -4047,6 +4091,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
      sig!("VTCompressionSessionInvalidate", V, P),
      sig!("VTCompressionSessionPrepareToEncodeFrames", I32, P),
      sig!("VTCopyVideoEncoderList", I32, P, P),
@@ -4076,7 +6428,7 @@ index 8f85a506..4c0b4abd 100644
      sig!(
          "VTDecompressionSessionCanAcceptFormatDescription",
          BOOL,
-@@ -4456,6 +4500,9 @@ pub static REFUSED: &[(&str, &str)] = &[
+@@ -4456,6 +4501,9 @@ pub static REFUSED: &[(&str, &str)] = &[
      // native backend calls both directly, with no marshaller in the way.
      ("CFAbsoluteTimeGetGregorianDate", AGGREGATE),
      ("CFGregorianDateGetAbsoluteTime", AGGREGATE),
