@@ -3971,7 +3971,7 @@ index f5fe44f7..38554e1b 100644
          "launchApplicationAtURL:options:configuration:error:" => launch_application,
              c"@48@0:8@16Q24@32^@40";
 diff --git a/crates/rosemary/src/abi/table.rs b/crates/rosemary/src/abi/table.rs
-index 8f85a506..351c98a8 100644
+index 8f85a506..4c0b4abd 100644
 --- a/crates/rosemary/src/abi/table.rs
 +++ b/crates/rosemary/src/abi/table.rs
 @@ -437,6 +437,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
@@ -4068,7 +4068,15 @@ index 8f85a506..351c98a8 100644
      sig!("CVMetalTextureGetTexture", P, P),
      sig!("CVPixelBufferCreate", I32, P, U64, U64, U32, P, P),
      sig!("CVPixelBufferGetBaseAddressOfPlane", P, P, U64),
-@@ -4456,6 +4499,9 @@ pub static REFUSED: &[(&str, &str)] = &[
+@@ -4047,6 +4090,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+     sig!("VTCompressionSessionInvalidate", V, P),
+     sig!("VTCompressionSessionPrepareToEncodeFrames", I32, P),
+     sig!("VTCopyVideoEncoderList", I32, P, P),
++    sig!("VTIsHardwareDecodeSupported", U8, U32),
+     sig!(
+         "VTDecompressionSessionCanAcceptFormatDescription",
+         BOOL,
+@@ -4456,6 +4500,9 @@ pub static REFUSED: &[(&str, &str)] = &[
      // native backend calls both directly, with no marshaller in the way.
      ("CFAbsoluteTimeGetGregorianDate", AGGREGATE),
      ("CFGregorianDateGetAbsoluteTime", AGGREGATE),

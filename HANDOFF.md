@@ -306,3 +306,26 @@ quien no escucha). Nunca hacer los envíos Mach no acotados.
 
 Lo que sí funciona (con `282d878`): el usuario confirma que **los Efectos cargan**.
 
+**Congelación al abrir + crash al aplicar efecto: resueltos (26-nov, noche)**
+
+- **Mach: dos sockets emisores** (`darwin/src/mach/wire.rs`). Linux carga cada datagrama no leído
+  (~2 KB aunque esté vacío) al socket que lo envió, y Rosemary usaba uno solo por proceso: con ~100
+  puertos con un wakeup pendiente (normal en Chromium) se llenaba y *todo* `mach_msg_send` bloqueaba
+  (hilo principal en `sock_alloc_send_pskb`). Ahora los mensajes **sin descriptores** usan un socket con
+  `SO_SNDBUF` grande (4 MB, tope `net.core.wmem_max`) y los que **llevan derechos** siguen en el socket
+  por defecto, que es lo que acota los descriptores en vuelo (límite por usuario; plasmashell tiene
+  `RLIMIT_NOFILE` 1024, ver aviso de abajo). Test `unread_wakeups_on_many_ports_do_not_block_later_sends`
+  (falla con el código anterior). Pendiente: `Chrome_IOThread` envía repetidamente un mensaje de 40 bytes
+  con un derecho (`msgh_id` en la cabecera `...1314...73686a6d`) a un puerto que nunca lo lee; está acotado,
+  pero si se llena vuelve a bloquear ese hilo.
+- **`VTIsHardwareDecodeSupported`** (`videotoolbox`): faltaba y aplicar un efecto saltaba a 0x0.
+  Devuelve false (aquí no hay decodificador hardware). Test incluido.
+- **MSL: referencia `const` a un temporal** (`metal_translate`): `const thread float4& color` recibiendo
+  una expresión fallaba con "color is passed something not in memory". Ahora se materializa en un
+  local, como en C++; una referencia no-const sigue rechazándose. 2 tests.
+- Herramienta: `ROSEMARY_PRESENT_READBACK=1 ROSEMARY_FRAME_OUT=<dir>` ahora nombra cada volcado con
+  la capa y su tamaño y registra "% not black" por capa. ⚠️ Escribe ~6 MB por imagen: no usar `/tmp` (tmpfs).
+
+Estado verificado por el usuario: Efectos cargan y se pueden aplicar sin crash; el reproductor ya dibuja
+(el texto aparece) pero **los glifos salen como cajas blancas**; **Exportar no hace nada** (sin crash).
+

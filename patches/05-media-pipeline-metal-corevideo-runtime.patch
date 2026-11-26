@@ -6433,6 +6433,51 @@ index dd652b28..44464a55 100644
      let descriptor = object::register::<RenderPipelineDescriptor>(c"MTLRenderPipelineDescriptor");
      let color = object::register::<ColorElement>(c"RosemaryMTLColorAttachmentDescriptor");
      // Of `MTLCompileOptions` only the preprocessor macros change what a
+diff --git a/crates/metal/src/present.rs b/crates/metal/src/present.rs
+index e4884938..e9039927 100644
+--- a/crates/metal/src/present.rs
++++ b/crates/metal/src/present.rs
+@@ -1340,7 +1340,7 @@ fn present_inner(drawable: Id) {
+             };
+             gpu::milestone("presented frame");
+             crate::stats::frame();
+-            dump_frame(pixels, width, height, texture.image.format);
++            dump_frame(pixels, width, height, texture.image.format, described.layer as usize);
+             if let Some(window) = window
+                 && let Some(properties) = sdl3::video::presentation_window(window)
+             {
+@@ -1393,7 +1393,7 @@ fn drawable_frame(layer: Id, image: &gpu::GpuImage) -> Option<appkit::view::Fram
+ /// or remote session has no other way to see it. `ROSEMARY_FRAME_INTERVAL`
+ /// says how many frames to skip between files; the default keeps a run's
+ /// output to a few files a second rather than one per frame.
+-fn dump_frame(pixels: &[u8], width: u32, height: u32, format: vk::Format) {
++fn dump_frame(pixels: &[u8], width: u32, height: u32, format: vk::Format, layer: usize) {
+     use std::sync::atomic::{AtomicU64, Ordering};
+ 
+     let Some(directory) = std::env::var_os("ROSEMARY_FRAME_OUT") else {
+@@ -1423,7 +1423,21 @@ fn dump_frame(pixels: &[u8], width: u32, height: u32, format: vk::Format) {
+             false => out.extend_from_slice(&[texel[0], texel[1], texel[2]]),
+         }
+     }
+-    let _ = std::fs::write(directory.join(format!("frame-{frame:06}.ppm")), out);
++    // Which layer drew nothing tells a guest's black output apart from a
++    // compositing fault, without opening the files.
++    let lit = pixels
++        .as_chunks::<4>()
++        .0
++        .iter()
++        .filter(|texel| texel[..3] != [0, 0, 0])
++        .count();
++    let texels = (width as usize * height as usize).max(1);
++    eprintln!(
++        "rosemary: Metal: frame {frame} layer {layer:#x} {width}x{height} {format:?}: {:.1}% not black",
++        lit as f64 * 100.0 / texels as f64
++    );
++    let name = format!("frame-{frame:06}-layer-{layer:x}-{width}x{height}.ppm");
++    let _ = std::fs::write(directory.join(name), out);
+ }
+ 
+ /// Source interval surviving both physical SDL bounds and the smaller logical
 diff --git a/crates/metal/src/reflection.rs b/crates/metal/src/reflection.rs
 new file mode 100644
 index 00000000..ccf6460a
@@ -7563,6 +7608,55 @@ index 5126a37b..692fe0b9 100644
      EntryArtifact, FunctionConstantInfo, FunctionReflection, RejectedEntry, RequiredFeatures,
      ResourceBinding, StageVariable, TargetProfile, TranslatedLibrary, WORKGROUP_SIZE_SPEC_IDS,
      emit_spirv,
+diff --git a/crates/metal_translate/src/msl/ast.rs b/crates/metal_translate/src/msl/ast.rs
+index 8e9adb42..6832c92a 100644
+--- a/crates/metal_translate/src/msl/ast.rs
++++ b/crates/metal_translate/src/msl/ast.rs
+@@ -295,6 +295,8 @@ pub(super) struct Param {
+     pub name: String,
+     pub space: Option<Space>,
+     pub indirection: Indirection,
++    /// Declared `const`, which lets a reference bind to a temporary.
++    pub is_const: bool,
+     pub attributes: Vec<Attribute>,
+     pub line: usize,
+ }
+diff --git a/crates/metal_translate/src/msl/lower/inline.rs b/crates/metal_translate/src/msl/lower/inline.rs
+index c40fe2fc..343567dd 100644
+--- a/crates/metal_translate/src/msl/lower/inline.rs
++++ b/crates/metal_translate/src/msl/lower/inline.rs
+@@ -319,14 +319,24 @@ impl<'p> Lowerer<'_, 'p> {
+                 self.store(&lvalue, value, line)?;
+                 Ok(Binding::LValue(lvalue))
+             }
+-            // A reference names the caller's own place.
++            // A reference names the caller's own place. A `const` one binds a
++            // temporary too, as in C++: the value is materialized in a local.
+             (Indirection::Reference, declared) => {
+-                let lvalue = self.lvalue(arg)?.ok_or_else(|| {
+-                    syntax_error(
+-                        line,
+-                        format!("{} is passed something not in memory", param.name),
+-                    )
+-                })?;
++                let Some(lvalue) = self.lvalue(arg)? else {
++                    if !param.is_const {
++                        return Err(syntax_error(
++                            line,
++                            format!("{} is passed something not in memory", param.name),
++                        ));
++                    }
++                    let value = self.rvalue(arg)?;
++                    deduce(declared, &value.ty, types, values, line)?;
++                    let ty = &substitute(declared, types, values, line)?;
++                    let value = self.convert(value, ty, line)?;
++                    let lvalue = self.local_lvalue(ty);
++                    self.store(&lvalue, value, line)?;
++                    return Ok(Binding::LValue(lvalue));
++                };
+                 deduce(declared, &lvalue.ty(), types, values, line)?;
+                 let ty = &substitute(declared, types, values, line)?;
+                 if lvalue.ty().in_memory() != ty.in_memory() {
 diff --git a/crates/metal_translate/src/msl/lower/library.rs b/crates/metal_translate/src/msl/lower/library.rs
 index c5b4fc69..2df0b27c 100644
 --- a/crates/metal_translate/src/msl/lower/library.rs
@@ -7656,6 +7750,41 @@ index bae4e37c..75ec23f8 100644
 +    }
 +    Ok(located)
 +}
+diff --git a/crates/metal_translate/src/msl/parse.rs b/crates/metal_translate/src/msl/parse.rs
+index 1794473c..4182dcfa 100644
+--- a/crates/metal_translate/src/msl/parse.rs
++++ b/crates/metal_translate/src/msl/parse.rs
+@@ -503,6 +503,7 @@ impl Parser<'_> {
+                             name: name.clone(),
+                             space: None,
+                             indirection: Indirection::Value,
++                            is_const: false,
+                             attributes: vec![Attribute {
+                                 name: INLINE_SAMPLER.to_string(),
+                                 args: vec![Expr {
+@@ -738,10 +739,14 @@ impl Parser<'_> {
+         }
+         loop {
+             let line = self.line();
++            let start = self.at;
+             let space = self.skip_qualifiers();
+             let ty = self.ty()?;
+             // `const` may follow the type, before the indirection.
+             self.skip_qualifiers();
++            let is_const = self.tokens[start..self.at]
++                .iter()
++                .any(|token| matches!(&token.kind, Kind::Ident(word) if word == "const"));
+             let grouped = self.eat("(");
+             let indirection = if self.eat("&") {
+                 Indirection::Reference
+@@ -765,6 +770,7 @@ impl Parser<'_> {
+                 name,
+                 space,
+                 indirection,
++                is_const,
+                 attributes,
+                 line,
+             });
 diff --git a/crates/metal_translate/src/spirv/emit/arithmetic.rs b/crates/metal_translate/src/spirv/emit/arithmetic.rs
 index c2ef1e77..5959336f 100644
 --- a/crates/metal_translate/src/spirv/emit/arithmetic.rs
@@ -8063,10 +8192,10 @@ index 00000000..4af46a99
 +    assert_eq!(*size, 112);
 +}
 diff --git a/crates/metal_translate/tests/translate.rs b/crates/metal_translate/tests/translate.rs
-index 251f932e..296900b1 100644
+index 251f932e..bd2732fe 100644
 --- a/crates/metal_translate/tests/translate.rs
 +++ b/crates/metal_translate/tests/translate.rs
-@@ -687,6 +687,80 @@ fn rejects_a_target_without_required_capabilities() {
+@@ -687,6 +687,136 @@ fn rejects_a_target_without_required_capabilities() {
      assert_eq!(error.diagnostics[0].phase, Phase::SpirvEmission);
  }
  
@@ -8087,12 +8216,49 @@ index 251f932e..296900b1 100644
 +"#;
 +    let library = translate_msl(source, &TargetProfile::vulkan_1_3()).unwrap();
 +    let module = rspirv::dr::load_words(&library.entries[0].words).unwrap();
-+    let ops: Vec<Op> = module.functions.iter().flat_map(|f| &f.blocks).flat_map(|b| &b.instructions).map(|i| i.class.opcode).collect();
++    let ops: Vec<Op> = module
++        .functions
++        .iter()
++        .flat_map(|f| &f.blocks)
++        .flat_map(|b| &b.instructions)
++        .map(|i| i.class.opcode)
++        .collect();
 +    // Vulkan has no `OpOrdered`/`OpUnordered` (they need `Kernel`): each
 +    // operand is tested with `OpIsNan`.
 +    assert!(!ops.contains(&Op::Unordered) && !ops.contains(&Op::Ordered));
 +    assert_eq!(ops.iter().filter(|op| **op == Op::IsNan).count(), 6);
 +    assert_eq!(ops.iter().filter(|op| **op == Op::LogicalNot).count(), 1);
++}
++
++/// A `const` reference binds a temporary, as in C++; CapCut's effect shaders
++/// pass an expression to a `const thread float4& color` parameter.
++#[test]
++fn source_msl_binds_a_temporary_to_a_const_reference() {
++    let source = r#"
++#include <metal_stdlib>
++using namespace metal;
++float4 tint(const thread float4& color) { return color * 0.5; }
++kernel void k(device float4* out [[buffer(0)]], constant float4& a [[buffer(1)]]) {
++    out[0] = tint(a * 2.0);
++}
++"#;
++    translate_msl(source, &TargetProfile::vulkan_1_3())
++        .expect("a const reference takes a temporary");
++}
++
++/// Only a `const` reference may: a mutable one would write to nothing.
++#[test]
++fn source_msl_refuses_a_temporary_for_a_mutable_reference() {
++    let source = r#"
++#include <metal_stdlib>
++using namespace metal;
++void brighten(thread float4& color) { color *= 2.0; }
++kernel void k(device float4* out [[buffer(0)]], constant float4& a [[buffer(1)]]) {
++    brighten(a * 2.0);
++    out[0] = a;
++}
++"#;
++    assert!(translate_msl(source, &TargetProfile::vulkan_1_3()).is_err());
 +}
 +
 +/// MSL's `fabs` is `abs` restricted to floating point; CapCut's render
@@ -8114,7 +8280,12 @@ index 251f932e..296900b1 100644
 +        .flat_map(|f| &f.blocks)
 +        .flat_map(|b| &b.instructions)
 +        .filter(|i| i.class.opcode == Op::ExtInst)
-+        .filter(|i| matches!(i.operands.get(1), Some(rspirv::dr::Operand::LiteralExtInstInteger(4))))
++        .filter(|i| {
++            matches!(
++                i.operands.get(1),
++                Some(rspirv::dr::Operand::LiteralExtInstInteger(4))
++            )
++        })
 +        .count();
 +    assert_eq!(abs, 2, "two GLSL.std.450 FAbs");
 +}
@@ -8137,10 +8308,24 @@ index 251f932e..296900b1 100644
 +}
 +"#;
 +    let module = parse_msl(source).unwrap();
-+    let mut located: Vec<_> = module.entries[0].resources.iter().map(|r| (r.kind, r.index)).collect();
++    let mut located: Vec<_> = module.entries[0]
++        .resources
++        .iter()
++        .map(|r| (r.kind, r.index))
++        .collect();
 +    located.sort_by_key(|(kind, index)| (format!("{kind:?}"), *index));
 +    use metal_translate::ir::ResourceKind::{Buffer, Sampler, Texture};
-+    assert_eq!(located, [(Buffer, 0), (Buffer, 1), (Sampler, 0), (Sampler, 1), (Texture, 0), (Texture, 1)]);
++    assert_eq!(
++        located,
++        [
++            (Buffer, 0),
++            (Buffer, 1),
++            (Sampler, 0),
++            (Sampler, 1),
++            (Texture, 0),
++            (Texture, 1)
++        ]
++    );
 +    translate_msl(source, &TargetProfile::vulkan_1_3()).unwrap();
 +}
 +
@@ -8388,3 +8573,42 @@ index c48b026d..ac3a7b25 100644
      /// The layout claim every function here rests on, which a wrong answer would
      /// violate silently.
      #[test]
+diff --git a/crates/videotoolbox/src/compression.rs b/crates/videotoolbox/src/compression.rs
+index 1f27af51..538c23a9 100644
+--- a/crates/videotoolbox/src/compression.rs
++++ b/crates/videotoolbox/src/compression.rs
+@@ -82,8 +82,17 @@ pub unsafe extern "C" fn VTDecompressionSessionCanAcceptFormatDescription(
+     false
+ }
+ 
++/// `Boolean VTIsHardwareDecodeSupported(CMVideoCodecType codecType)`.
++///
++/// False for every codec: no decoder here runs on video hardware, and a caller
++/// asks so that it can choose a software path instead.
++pub extern "C" fn VTIsHardwareDecodeSupported(_codec_type: u32) -> u8 {
++    0
++}
++
+ exports::exports! {
+     functions {
++        "VTIsHardwareDecodeSupported" => VTIsHardwareDecodeSupported,
+         "VTDecompressionSessionCreate" => VTDecompressionSessionCreate,
+         "VTDecompressionSessionDecodeFrame" => VTDecompressionSessionDecodeFrame,
+         "VTDecompressionSessionInvalidate" => VTDecompressionSessionInvalidate,
+@@ -91,3 +100,16 @@ exports::exports! {
+         "VTDecompressionSessionCanAcceptFormatDescription" => VTDecompressionSessionCanAcceptFormatDescription,
+     }
+ }
++
++#[cfg(test)]
++mod hardware_tests {
++    use super::*;
++
++    /// `kCMVideoCodecType_H264`, `'avc1'`.
++    const H264: u32 = u32::from_be_bytes(*b"avc1");
++
++    #[test]
++    fn no_codec_reports_hardware_decoding() {
++        assert_eq!(VTIsHardwareDecodeSupported(H264), 0);
++    }
++}

@@ -1186,13 +1186,42 @@ index 8b30b91b..78140241 100644
  ///
  /// The task's threads park where they are, and it answers for its memory
 diff --git a/crates/darwin/src/mach/wire.rs b/crates/darwin/src/mach/wire.rs
-index 2c9cf27d..2923cef4 100644
+index 2c9cf27d..575b1750 100644
 --- a/crates/darwin/src/mach/wire.rs
 +++ b/crates/darwin/src/mach/wire.rs
-@@ -583,6 +583,19 @@ fn receive_control_len() -> usize {
+@@ -491,6 +491,27 @@ fn socket() -> std::io::Result<c_int> {
+     }
+ }
+ 
++/// The send buffer asked for plain Mach messages: room for thousands of
++/// unread wakeups. The host caps it at `net.core.wmem_max`.
++const PLAIN_SEND_BUFFER: c_int = 4 << 20;
++
++/// `fd`, with as large a send buffer as the host allows up to
++/// [`PLAIN_SEND_BUFFER`]. Failing leaves the default, which is still correct.
++fn with_large_send_buffer(fd: c_int) -> c_int {
++    let size = PLAIN_SEND_BUFFER;
++    // SAFETY: an option of a socket this module made, with a `c_int` value.
++    unsafe {
++        libc::setsockopt(
++            fd,
++            libc::SOL_SOCKET,
++            libc::SO_SNDBUF,
++            (&raw const size).cast(),
++            core::mem::size_of::<c_int>() as libc::socklen_t,
++        )
++    };
++    fd
++}
++
+ /// Wait for `fd` to have a datagram. `timeout_ms` of `-1` waits forever.
+ fn poll_one(fd: c_int, timeout_ms: i32) -> bool {
+     let mut entry = libc::pollfd {
+@@ -583,14 +604,40 @@ fn receive_control_len() -> usize {
  /// own copy once the send has succeeded, and one that failed still holds the
  /// right it was asked to move.
  pub fn send(destination: Address, bytes: &[u8], fds: &[c_int]) -> std::io::Result<()> {
+-    /// One sending socket for the whole process.
 +    send_with_timeout(destination, bytes, fds, None)
 +}
 +
@@ -1206,10 +1235,35 @@ index 2c9cf27d..2923cef4 100644
 +    fds: &[c_int],
 +    timeout_ms: Option<i32>,
 +) -> std::io::Result<()> {
-     /// One sending socket for the whole process.
++    /// The sending sockets, one for messages carrying descriptors and one for
++    /// the rest, each shared by the whole process.
      ///
      /// Unbound: a reply travels to a port named inside the message, never back
-@@ -630,17 +643,33 @@ pub fn send(destination: Address, bytes: &[u8], fds: &[c_int]) -> std::io::Resul
+     /// to the source address of the datagram, so this end never needs a name.
+-    /// `sendmsg` is atomic per datagram, so the descriptor is shared freely.
+-    static SENDER: std::sync::OnceLock<Option<c_int>> = std::sync::OnceLock::new();
+-
+-    let Some(sender) = *SENDER.get_or_init(|| socket().ok()) else {
++    /// `sendmsg` is atomic per datagram, so the descriptors are shared freely.
++    ///
++    /// Linux charges every unread datagram to the socket that sent it, about
++    /// two kilobytes even for an empty message, and on a Mac a hundred ports
++    /// each holding a wakeup is ordinary. Plain messages therefore get a large
++    /// send buffer. Messages moving rights keep the default one, which is what
++    /// bounds descriptors in flight: their count is limited per *user*, and
++    /// past it every program of the user fails to pass descriptors.
++    static RIGHTS_SENDER: std::sync::OnceLock<Option<c_int>> = std::sync::OnceLock::new();
++    static PLAIN_SENDER: std::sync::OnceLock<Option<c_int>> = std::sync::OnceLock::new();
++
++    let sender = match fds.is_empty() {
++        true => *PLAIN_SENDER.get_or_init(|| socket().ok().map(with_large_send_buffer)),
++        false => *RIGHTS_SENDER.get_or_init(|| socket().ok()),
++    };
++    let Some(sender) = sender else {
+         return Err(std::io::Error::other("no Mach sending socket"));
+     };
+     if fds.len() > MAX_FDS {
+@@ -630,17 +677,33 @@ pub fn send(destination: Address, bytes: &[u8], fds: &[c_int]) -> std::io::Resul
          }
      }
  
@@ -1245,6 +1299,35 @@ index 2c9cf27d..2923cef4 100644
          return Err(error);
      }
  }
+@@ -753,6 +816,28 @@ unsafe fn admit(msg: &libc::msghdr) -> Option<Vec<c_int>> {
+ mod tests {
+     use super::*;
+ 
++    /// A hundred ports each holding a wakeup is ordinary on a Mac. Linux
++    /// charges each unread datagram to its sender, so they must not fill the
++    /// sending socket and stall every later send.
++    #[test]
++    fn unread_wakeups_on_many_ports_do_not_block_later_sends() {
++        let ports: Vec<Receiver> = (0..300).map(|_| Receiver::bind().expect("bind")).collect();
++        let addresses: Vec<Address> = ports.iter().map(Receiver::address).collect();
++        let (done, sent) = std::sync::mpsc::channel();
++        std::thread::spawn(move || {
++            for address in addresses {
++                send(address, &[0u8; 40], &[]).expect("send");
++            }
++            let _ = done.send(());
++        });
++        assert!(
++            sent.recv_timeout(std::time::Duration::from_secs(10))
++                .is_ok(),
++            "a send blocked on wakeups other ports had not read"
++        );
++        drop(ports);
++    }
++
+     #[test]
+     fn a_message_sent_to_a_bound_port_arrives_whole() {
+         let port = Receiver::bind().expect("bind");
 diff --git a/crates/darwin/src/net/resolve.rs b/crates/darwin/src/net/resolve.rs
 index 2afb73cc..b6798f9e 100644
 --- a/crates/darwin/src/net/resolve.rs
