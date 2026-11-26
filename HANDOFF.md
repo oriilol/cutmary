@@ -260,3 +260,30 @@ Metal del reproductor apiladas en el mismo sitio. Siguiente: volcar el contenido
   construye la respuesta de error de `URLRequest`) para ver qué código `net::ERR_*` se devuelve
   antes de la resolución DNS.
 
+**Red de CapCut: RESUELTO (26-nov, tarde) — tres fallos encadenados**
+
+1. **`kevent64` ignoraba `KEVENT_FLAG_IMMEDIATE`** (`darwin/src/kqueue.rs`). El `MessagePumpKqueue`
+   de Chromium (hilo `TTNet-AN-IO` de `libsscronet`) sondea con ese flag y timeout nulo; Rosemary lo
+   trataba como "esperar para siempre". El hilo de red se dormía tras el primer despertar y Chromium,
+   creyendo que ya había un `ScheduleWork` pendiente, no volvía a enviar el mensaje Mach: ~40 peticiones
+   `Cronet_UrlRequest_Start` aceptadas y ninguna procesada. Diagnóstico: gdb desde el arranque sobre
+   `darwin::kqueue::kevent64` y `darwin::mach::msg::mach_msg` (puerto de despertar `EVFILT_MACHPORT`
+   + `MACH_RCV_MSG`). Test `kevent64_with_immediate_flag_polls_despite_a_null_timeout`.
+2. **`dlsym(dlopen(NULL), "dladdr")` devolvía NULL** (`rosemary/src/dyld.rs`). `libVECreator` resuelve
+   `dladdr` así (puntero ofuscado con XOR 0x7e7) y lo llama al procesar respuestas: SIGSEGV en 0x0.
+   `global_lookup` ahora consulta la tabla de funciones de dyld de Rosemary (`entries()`) antes del
+   host (que rechaza `dladdr` por el `Dl_info` de glibc). Test `dlsym_finds_dyld_functions_in_the_global_scope`.
+3. **`SecKeyCreateWithData` sin implementar**: nuevo `security/src/key.rs` con claves públicas RSA
+   (PKCS#1 o SPKI), `SecKeyCreateEncryptedData` (`kSecKeyAlgorithmRSAEncryptionPKCS1`) y
+   `SecKeyVerifySignature` (`kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA256`), con el crate `rsa` 0.10
+   (solo operaciones de clave pública). Otros tipos/algoritmos se rechazan con `CFError`. Las constantes
+   `kSecAttrKey*` y esos dos `kSecKeyAlgorithm*` pasan de `capcut_globals.rs` (valores de relleno) a
+   `security` con los valores reales de Apple (`"type"`, `"42"`, `"kcls"`, `"0"`, `"algid:..."`). 3 tests.
+
+Verificado en vivo (sin interacción): CapCut sigue vivo, 11 conexiones HTTPS a los servidores de
+CapCut, `[TTC2PA_SDK] update local cert success`, aparece `User Data/TTNet` y se descargan
+modelos en `Cache/effect/model`. Falta comprobar a mano Efectos/Animaciones/Exportar.
+
+Nota: `kqueue::sources::tests::a_negative_interval_fires_once_at_once` es inestable al ejecutar solo
+los tests de `kqueue` (también sin estos cambios); la suite completa de `darwin` pasa (923/923).
+

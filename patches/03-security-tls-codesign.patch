@@ -1,8 +1,8 @@
 diff --git a/crates/security/Cargo.toml b/crates/security/Cargo.toml
-index 7574d66f..625dec80 100644
+index 7574d66f..779847af 100644
 --- a/crates/security/Cargo.toml
 +++ b/crates/security/Cargo.toml
-@@ -14,6 +14,7 @@ darwin.workspace = true
+@@ -14,9 +14,11 @@ darwin.workspace = true
  machish.workspace = true
  foundation.workspace = true
  getrandom.workspace = true
@@ -10,6 +10,10 @@ index 7574d66f..625dec80 100644
  rustls-pki-types.workspace = true
  webpki.workspace = true
  webpki-roots.workspace = true
++rsa.workspace = true
+ 
+ [lints]
+ workspace = true
 diff --git a/crates/security/src/codesign.rs b/crates/security/src/codesign.rs
 index 179e028e..cdfc2f4a 100644
 --- a/crates/security/src/codesign.rs
@@ -169,8 +173,395 @@ index 179e028e..cdfc2f4a 100644
      }
  }
  
+diff --git a/crates/security/src/key.rs b/crates/security/src/key.rs
+new file mode 100644
+index 00000000..8bf21761
+--- /dev/null
++++ b/crates/security/src/key.rs
+@@ -0,0 +1,381 @@
++//! `SecKey`: RSA public keys, for encrypting to them and verifying their
++//! signatures. Other key types and private keys are refused with an error.
++
++#![allow(non_snake_case)]
++
++use corefoundation::base::CFTypeRef;
++use rsa::pkcs1::DecodeRsaPublicKey;
++use rsa::pkcs8::DecodePublicKey;
++use rsa::sha2::Sha256;
++
++type OSStatus = i32;
++
++/// `kSecAttrKeyType`, `kSecAttrKeyClass` and their values, and the algorithms
++/// implemented here, as (Mach-O name, value). The values are Apple's, which is
++/// what a dictionary built with them is keyed by.
++pub const KEYS: &[(&str, &str)] = &[
++    ("_kSecAttrKeyType", ATTR_KEY_TYPE),
++    ("_kSecAttrKeyTypeRSA", KEY_TYPE_RSA),
++    ("_kSecAttrKeyTypeECSECPrimeRandom", "73"),
++    ("_kSecAttrKeyClass", ATTR_KEY_CLASS),
++    ("_kSecAttrKeyClassPublic", KEY_CLASS_PUBLIC),
++    ("_kSecAttrKeyClassPrivate", "1"),
++    ("_kSecAttrKeySizeInBits", "bsiz"),
++    ("_kSecKeyAlgorithmRSAEncryptionPKCS1", RSA_ENCRYPTION_PKCS1),
++    (
++        "_kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA256",
++        RSA_SIGNATURE_DIGEST_PKCS1V15_SHA256,
++    ),
++];
++
++const ATTR_KEY_TYPE: &str = "type";
++const ATTR_KEY_CLASS: &str = "kcls";
++const KEY_TYPE_RSA: &str = "42";
++const KEY_CLASS_PUBLIC: &str = "0";
++const RSA_ENCRYPTION_PKCS1: &str = "algid:encrypt:RSA:PKCS1";
++const RSA_SIGNATURE_DIGEST_PKCS1V15_SHA256: &str = "algid:sign:RSA:digest-PKCS1v15:SHA256";
++
++/// `errSecParam`.
++const PARAM: OSStatus = -50;
++/// `errSecUnimplemented`.
++const UNIMPLEMENTED: OSStatus = -4;
++/// `errSecVerifyFailed`.
++const VERIFY_FAILED: OSStatus = -67808;
++
++/// Store an `NSOSStatusErrorDomain` error in `out`, as Security reports a
++/// failed `SecKey` operation.
++///
++/// # Safety
++///
++/// `out` is null or a writable `CFErrorRef`.
++unsafe fn fail(out: *mut CFTypeRef, status: OSStatus, description: &str) {
++    if out.is_null() {
++        return;
++    }
++    let error = foundation::error::create("NSOSStatusErrorDomain", status.into(), description, &[]);
++    // SAFETY: the caller's guarantee; the error is handed over owned.
++    unsafe { out.write(error as CFTypeRef) };
++}
++
++/// The bytes of `data`, or `None` for null.
++///
++/// # Safety
++///
++/// `data` is null or a live `CFData`.
++unsafe fn bytes(data: CFTypeRef) -> Option<Vec<u8>> {
++    if data.is_null() {
++        return None;
++    }
++    // SAFETY: a live `CFData`, whose bytes stay put while it does.
++    unsafe {
++        let length = corefoundation::api::CFDataGetLength(data);
++        let base = corefoundation::api::CFDataGetBytePtr(data);
++        if length <= 0 || base.is_null() {
++            return Some(Vec::new());
++        }
++        Some(std::slice::from_raw_parts(base, length as usize).to_vec())
++    }
++}
++
++/// `algorithm`'s text, which is how a `SecKeyAlgorithm` is compared.
++///
++/// # Safety
++///
++/// `algorithm` is null or a live `CFString`.
++unsafe fn algorithm_of(algorithm: CFTypeRef) -> Option<String> {
++    if algorithm.is_null() {
++        return None;
++    }
++    // SAFETY: the caller's guarantee.
++    let text = unsafe { foundation::string::bytes(algorithm as objc::object::Id) };
++    Some(String::from_utf8_lossy(&text).into_owned())
++}
++
++/// The RSA public key in `der`: a PKCS#1 `RSAPublicKey`, which is Apple's
++/// format, or the X.509 `SubjectPublicKeyInfo` wrapping one, which macOS also
++/// accepts.
++fn rsa_public_key(der: &[u8]) -> Option<rsa::PublicKey> {
++    rsa::PublicKey::from_pkcs1_der(der)
++        .ok()
++        .or_else(|| rsa::PublicKey::from_public_key_der(der).ok())
++}
++
++/// `SecKeyRef SecKeyCreateWithData(CFDataRef keyData, CFDictionaryRef attributes, CFErrorRef *error)`.
++///
++/// # Safety
++///
++/// `data` is null or a live `CFData`, `attributes` null or a live
++/// `CFDictionary`, and `error` null or writable.
++pub unsafe extern "C" fn SecKeyCreateWithData(
++    data: CFTypeRef,
++    attributes: CFTypeRef,
++    error: *mut CFTypeRef,
++) -> CFTypeRef {
++    // SAFETY: the caller's guarantees.
++    let (key_type, key_class) = unsafe {
++        if attributes.is_null() {
++            (None, None)
++        } else {
++            (
++                crate::keychain::attribute(attributes, ATTR_KEY_TYPE),
++                crate::keychain::attribute(attributes, ATTR_KEY_CLASS),
++            )
++        }
++    };
++    if key_type.as_deref() != Some(KEY_TYPE_RSA) || key_class.as_deref() != Some(KEY_CLASS_PUBLIC) {
++        // SAFETY: the caller's guarantee for `error`.
++        unsafe {
++            fail(
++                error,
++                UNIMPLEMENTED,
++                &format!(
++                    "SecKeyCreateWithData: only RSA public keys are supported (type {key_type:?}, class {key_class:?})"
++                ),
++            )
++        };
++        return std::ptr::null();
++    }
++    // SAFETY: the caller's guarantee for `data`.
++    let Some(key) = unsafe { bytes(data) }.and_then(|der| rsa_public_key(&der)) else {
++        // SAFETY: the caller's guarantee for `error`.
++        unsafe { fail(error, PARAM, "RSA public key creation from data failed") };
++        return std::ptr::null();
++    };
++    crate::trust::new_rsa_public_key(key)
++}
++
++/// `CFDataRef SecKeyCreateEncryptedData(SecKeyRef key, SecKeyAlgorithm algorithm, CFDataRef plaintext, CFErrorRef *error)`.
++///
++/// # Safety
++///
++/// `key` is null or a live object, `algorithm` null or a `CFString`,
++/// `plaintext` null or a `CFData`, and `error` null or writable.
++pub unsafe extern "C" fn SecKeyCreateEncryptedData(
++    key: CFTypeRef,
++    algorithm: CFTypeRef,
++    plaintext: CFTypeRef,
++    error: *mut CFTypeRef,
++) -> CFTypeRef {
++    // SAFETY: the caller's guarantees.
++    let (public, algorithm, plaintext) = unsafe {
++        (
++            crate::trust::rsa_public_key(key),
++            algorithm_of(algorithm),
++            bytes(plaintext),
++        )
++    };
++    let (Some(public), Some(plaintext)) = (public, plaintext) else {
++        // SAFETY: the caller's guarantee for `error`.
++        unsafe {
++            fail(
++                error,
++                PARAM,
++                "SecKeyCreateEncryptedData: no RSA public key or no data",
++            )
++        };
++        return std::ptr::null();
++    };
++    if algorithm.as_deref() != Some(RSA_ENCRYPTION_PKCS1) {
++        // SAFETY: the caller's guarantee for `error`.
++        unsafe {
++            fail(
++                error,
++                UNIMPLEMENTED,
++                &format!("SecKeyCreateEncryptedData: algorithm {algorithm:?} is not supported"),
++            )
++        };
++        return std::ptr::null();
++    }
++    match public.pkcs1v15_encrypt(&plaintext) {
++        // SAFETY: a fresh copy of bytes this call owns.
++        Ok(sealed) => unsafe {
++            corefoundation::api::CFDataCreate(std::ptr::null(), sealed.as_ptr(), sealed.len() as _)
++        },
++        Err(reason) => {
++            // SAFETY: the caller's guarantee for `error`.
++            unsafe {
++                fail(
++                    error,
++                    PARAM,
++                    &format!("RSA PKCS#1 encryption failed: {reason}"),
++                )
++            };
++            std::ptr::null()
++        }
++    }
++}
++
++/// `Boolean SecKeyVerifySignature(SecKeyRef key, SecKeyAlgorithm algorithm, CFDataRef signedData, CFDataRef signature, CFErrorRef *error)`.
++///
++/// # Safety
++///
++/// `key` is null or a live object, `algorithm` null or a `CFString`, both data
++/// arguments null or `CFData`, and `error` null or writable.
++pub unsafe extern "C" fn SecKeyVerifySignature(
++    key: CFTypeRef,
++    algorithm: CFTypeRef,
++    signed: CFTypeRef,
++    signature: CFTypeRef,
++    error: *mut CFTypeRef,
++) -> u8 {
++    // SAFETY: the caller's guarantees.
++    let (public, algorithm, signed, signature) = unsafe {
++        (
++            crate::trust::rsa_public_key(key),
++            algorithm_of(algorithm),
++            bytes(signed),
++            bytes(signature),
++        )
++    };
++    let (Some(public), Some(signed), Some(signature)) = (public, signed, signature) else {
++        // SAFETY: the caller's guarantee for `error`.
++        unsafe {
++            fail(
++                error,
++                PARAM,
++                "SecKeyVerifySignature: no RSA public key or no data",
++            )
++        };
++        return 0;
++    };
++    if algorithm.as_deref() != Some(RSA_SIGNATURE_DIGEST_PKCS1V15_SHA256) {
++        // SAFETY: the caller's guarantee for `error`.
++        unsafe {
++            fail(
++                error,
++                UNIMPLEMENTED,
++                &format!("SecKeyVerifySignature: algorithm {algorithm:?} is not supported"),
++            )
++        };
++        return 0;
++    }
++    match public.pkcs1v15_verify_prehash::<Sha256>(&signed, &signature) {
++        Ok(()) => 1,
++        Err(_) => {
++            // SAFETY: the caller's guarantee for `error`.
++            unsafe { fail(error, VERIFY_FAILED, "RSA signature verification failed") };
++            0
++        }
++    }
++}
++
++exports::exports! {
++    functions {
++        "SecKeyCreateWithData" => SecKeyCreateWithData,
++        "SecKeyCreateEncryptedData" => SecKeyCreateEncryptedData,
++        "SecKeyVerifySignature" => SecKeyVerifySignature,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use corefoundation::callbacks::Policy;
++    use rsa::Generate;
++    use rsa::pkcs1::EncodeRsaPublicKey;
++    use rsa::sha2::Digest;
++
++    fn string(text: &str) -> CFTypeRef {
++        foundation::string::from_str(text) as CFTypeRef
++    }
++
++    fn data(bytes: &[u8]) -> CFTypeRef {
++        // SAFETY: a fresh copy of `bytes`.
++        unsafe {
++            corefoundation::api::CFDataCreate(std::ptr::null(), bytes.as_ptr(), bytes.len() as _)
++        }
++    }
++
++    fn attributes(key_type: &str, key_class: &str) -> CFTypeRef {
++        corefoundation::collections::new_dictionary(
++            &[
++                (string(ATTR_KEY_TYPE), string(key_type)),
++                (string(ATTR_KEY_CLASS), string(key_class)),
++            ],
++            Policy::from_key_callbacks(),
++            Policy::from_type_callbacks(),
++            false,
++        )
++    }
++
++    fn key_pair() -> (rsa::PrivateKey, CFTypeRef) {
++        foundation::bootstrap();
++        let private = rsa::PrivateKey::generate();
++        let der = private
++            .to_public_key()
++            .to_pkcs1_der()
++            .expect("a PKCS#1 public key");
++        let mut error = std::ptr::null();
++        // SAFETY: live CoreFoundation objects and a writable error slot.
++        let key = unsafe {
++            SecKeyCreateWithData(
++                data(der.as_bytes()),
++                attributes(KEY_TYPE_RSA, KEY_CLASS_PUBLIC),
++                &mut error,
++            )
++        };
++        assert!(
++            !key.is_null() && error.is_null(),
++            "an RSA public key is created"
++        );
++        (private, key)
++    }
++
++    #[test]
++    fn data_encrypted_to_an_rsa_public_key_decrypts_with_its_private_key() {
++        let (private, key) = key_pair();
++        let mut error = std::ptr::null();
++        // SAFETY: live objects and a writable error slot.
++        let sealed = unsafe {
++            SecKeyCreateEncryptedData(
++                key,
++                string(RSA_ENCRYPTION_PKCS1),
++                data(b"capcut"),
++                &mut error,
++            )
++        };
++        assert!(error.is_null());
++        // SAFETY: the `CFData` just returned.
++        let sealed = unsafe { bytes(sealed) }.expect("ciphertext");
++        assert_eq!(
++            private.pkcs1v15_decrypt(&sealed).expect("decrypts"),
++            b"capcut"
++        );
++    }
++
++    #[test]
++    fn a_digest_signature_verifies_only_for_its_digest() {
++        let (private, key) = key_pair();
++        let signature = private
++            .pkcs1v15_sign::<Sha256>(b"message")
++            .expect("a signature");
++        let digest = Sha256::digest(b"message");
++        let algorithm = string(RSA_SIGNATURE_DIGEST_PKCS1V15_SHA256);
++        let mut error = std::ptr::null();
++        // SAFETY: live objects and a writable error slot.
++        unsafe {
++            assert_eq!(
++                SecKeyVerifySignature(key, algorithm, data(&digest), data(&signature), &mut error),
++                1
++            );
++            assert!(error.is_null());
++            let other = Sha256::digest(b"another message");
++            assert_eq!(
++                SecKeyVerifySignature(key, algorithm, data(&other), data(&signature), &mut error),
++                0
++            );
++            assert!(!error.is_null(), "a failed verification reports an error");
++        }
++    }
++
++    #[test]
++    fn a_key_type_other_than_rsa_is_refused() {
++        foundation::bootstrap();
++        let mut error = std::ptr::null();
++        // SAFETY: live objects and a writable error slot.
++        let key =
++            unsafe { SecKeyCreateWithData(data(&[0x30, 0]), attributes("73", "0"), &mut error) };
++        assert!(key.is_null());
++        assert!(!error.is_null());
++    }
++}
 diff --git a/crates/security/src/keychain.rs b/crates/security/src/keychain.rs
-index 5d855a56..52f549ae 100644
+index 5d855a56..1489f962 100644
 --- a/crates/security/src/keychain.rs
 +++ b/crates/security/src/keychain.rs
 @@ -50,6 +50,13 @@ pub const KEYS: &[(&str, &str)] = &[
@@ -187,6 +578,15 @@ index 5d855a56..52f549ae 100644
  ];
  
  /// What identifies an item: its class, its service and its account.
+@@ -137,7 +144,7 @@ fn from_hex(text: &str) -> Option<Vec<u8>> {
+ /// # Safety
+ ///
+ /// `query` must be null or a `CFDictionary`.
+-unsafe fn attribute(query: CFTypeRef, key: &str) -> Option<String> {
++pub(crate) unsafe fn attribute(query: CFTypeRef, key: &str) -> Option<String> {
+     let name = foundation::string::from_str(key);
+     // SAFETY: the caller's obligation for `query`; `name` is a live string.
+     let value = unsafe { corefoundation::api::CFDictionaryGetValue(query, name as CFTypeRef) };
 @@ -301,12 +308,128 @@ pub unsafe extern "C" fn SecItemUpdate(query: CFTypeRef, changes: CFTypeRef) ->
      SUCCESS
  }
@@ -317,34 +717,37 @@ index 5d855a56..52f549ae 100644
  }
  
 diff --git a/crates/security/src/lib.rs b/crates/security/src/lib.rs
-index 2a805b1b..43eff63d 100644
+index 2a805b1b..34200981 100644
 --- a/crates/security/src/lib.rs
 +++ b/crates/security/src/lib.rs
-@@ -1,6 +1,7 @@
+@@ -1,13 +1,17 @@
  pub mod codesign;
++pub mod key;
  pub mod keychain;
  mod requirement;
 +pub mod ssl;
  pub mod status;
  pub mod task;
  pub mod trust;
-@@ -8,6 +9,7 @@ pub mod trust;
+ 
  exports::group! {
      codesign,
++    key,
      keychain,
 +    ssl,
      status,
      task,
      trust,
-@@ -19,6 +21,7 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+@@ -19,6 +23,8 @@ pub fn data_symbols() -> Vec<(String, u64)> {
      let mut symbols: Vec<_> = keychain::KEYS
          .iter()
          .chain(trust::KEYS)
++        .chain(key::KEYS)
 +        .chain(ssl::KEYS)
          .map(|(symbol, text)| {
              (
                  (*symbol).to_string(),
-@@ -35,5 +38,8 @@ pub fn data_symbols() -> Vec<(String, u64)> {
+@@ -35,5 +41,8 @@ pub fn data_symbols() -> Vec<(String, u64)> {
          random.to_string(),
          corefoundation::base::global_cell(random, 0),
      ));
@@ -1410,10 +1813,10 @@ index 00000000..90cbe154
 +    }
 +}
 diff --git a/crates/security/src/trust.rs b/crates/security/src/trust.rs
-index 498fb631..9e4848e0 100644
+index 498fb631..c0a14f22 100644
 --- a/crates/security/src/trust.rs
 +++ b/crates/security/src/trust.rs
-@@ -61,9 +61,16 @@ enum Payload {
+@@ -61,9 +61,18 @@ enum Payload {
      /// `SecPolicyCreateBasicX509`: a chain to a trusted root, no name and no
      /// extended key usage required.
      BasicX509,
@@ -1422,6 +1825,8 @@ index 498fb631..9e4848e0 100644
 +        hostname: Option<String>,
 +    },
 +    Revocation,
++    /// A `SecKeyRef` for an RSA public key, made by `SecKeyCreateWithData`.
++    RsaPublicKey(rsa::PublicKey),
      Trust {
          chain: Vec<Vec<u8>>,
          options: u32,
@@ -1430,10 +1835,28 @@ index 498fb631..9e4848e0 100644
      },
  }
  
-@@ -110,6 +117,17 @@ fn new(payload: Payload) -> CFTypeRef {
+@@ -110,6 +119,35 @@ fn new(payload: Payload) -> CFTypeRef {
      body as CFTypeRef
  }
  
++/// An owned `SecKeyRef` holding `key`.
++pub(crate) fn new_rsa_public_key(key: rsa::PublicKey) -> CFTypeRef {
++    new(Payload::RsaPublicKey(key))
++}
++
++/// The RSA public key `object` holds, if it is a `SecKeyRef` holding one.
++///
++/// # Safety
++///
++/// `object` is null or a live CoreFoundation object, live for `'a`.
++pub(crate) unsafe fn rsa_public_key<'a>(object: CFTypeRef) -> Option<&'a rsa::PublicKey> {
++    // SAFETY: the caller's guarantee.
++    match unsafe { payload(object) }? {
++        Payload::RsaPublicKey(key) => Some(key),
++        _ => None,
++    }
++}
++
 +/// Build an owned `SecTrustRef` from a DER certificate chain and optional peer
 +/// hostname, for `SSLCopyPeerTrust`.
 +pub(crate) fn new_trust(chain: Vec<Vec<u8>>, hostname: Option<String>) -> CFTypeRef {
@@ -1448,7 +1871,7 @@ index 498fb631..9e4848e0 100644
  /// The payload of one of these handles, or `None` for anything else.
  ///
  /// # Safety
-@@ -270,11 +288,14 @@ pub unsafe extern "C" fn SecTrustSettingsCopyTrustSettings(
+@@ -270,11 +308,14 @@ pub unsafe extern "C" fn SecTrustSettingsCopyTrustSettings(
  /// `policy` is null or an object.
  pub unsafe extern "C" fn SecPolicyCopyProperties(policy: CFTypeRef) -> CFTypeRef {
      // SAFETY: as the caller states.
@@ -1467,7 +1890,7 @@ index 498fb631..9e4848e0 100644
      corefoundation::collections::new_dictionary(
          &[(key, oid)],
          corefoundation::callbacks::Policy::from_key_callbacks(),
-@@ -343,16 +364,59 @@ pub unsafe extern "C" fn SecPolicyCreateBasicX509() -> CFTypeRef {
+@@ -343,16 +384,59 @@ pub unsafe extern "C" fn SecPolicyCreateBasicX509() -> CFTypeRef {
      new(Payload::BasicX509)
  }
  
@@ -1535,7 +1958,7 @@ index 498fb631..9e4848e0 100644
  pub unsafe extern "C" fn SecTrustCreateWithCertificates(
      certificates: CFTypeRef,
      policies: CFTypeRef,
-@@ -370,21 +434,37 @@ pub unsafe extern "C" fn SecTrustCreateWithCertificates(
+@@ -370,21 +454,37 @@ pub unsafe extern "C" fn SecTrustCreateWithCertificates(
              _ => return PARAM,
          }
      }
@@ -1579,7 +2002,7 @@ index 498fb631..9e4848e0 100644
      SUCCESS
  }
  
-@@ -465,10 +545,32 @@ fn evaluate(chain: &[Vec<u8>], options: u32) -> u32 {
+@@ -465,10 +565,32 @@ fn evaluate(chain: &[Vec<u8>], options: u32) -> u32 {
  /// `trust` is null or a live object, and `out` is null or writable.
  pub unsafe extern "C" fn SecTrustEvaluate(trust: CFTypeRef, out: *mut u32) -> OSStatus {
      // SAFETY: the caller's guarantee.
@@ -1614,7 +2037,7 @@ index 498fb631..9e4848e0 100644
      if !out.is_null() {
          // SAFETY: writable, per the caller.
          unsafe { out.write(verdict) };
-@@ -476,6 +578,228 @@ pub unsafe extern "C" fn SecTrustEvaluate(trust: CFTypeRef, out: *mut u32) -> OS
+@@ -476,6 +598,228 @@ pub unsafe extern "C" fn SecTrustEvaluate(trust: CFTypeRef, out: *mut u32) -> OS
      SUCCESS
  }
  
@@ -1843,7 +2266,7 @@ index 498fb631..9e4848e0 100644
  /// `int SecRandomCopyBytes(SecRandomRef, size_t, void *)`. The generator
  /// argument is `kSecRandomDefault` - null - in every caller.
  ///
-@@ -500,10 +824,33 @@ pub unsafe extern "C" fn SecRandomCopyBytes(_rnd: CFTypeRef, count: usize, bytes
+@@ -500,10 +844,33 @@ pub unsafe extern "C" fn SecRandomCopyBytes(_rnd: CFTypeRef, count: usize, bytes
  exports::exports! {
      functions {
          "SecCertificateCreateWithData" => SecCertificateCreateWithData,

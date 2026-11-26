@@ -253,10 +253,10 @@ index 9f459b6a..26746c61 100644
      methods!(window, {
 diff --git a/crates/appkit/src/capcut_globals.rs b/crates/appkit/src/capcut_globals.rs
 new file mode 100644
-index 00000000..cb5c401b
+index 00000000..5241c04c
 --- /dev/null
 +++ b/crates/appkit/src/capcut_globals.rs
-@@ -0,0 +1,506 @@
+@@ -0,0 +1,498 @@
 +//! Additional Apple framework constant globals needed by CEF and CapCut.
 +
 +pub const STRING_GLOBALS: &[(&str, &str)] = &[
@@ -591,12 +591,6 @@ index 00000000..cb5c401b
 +    ("_kSecAttrCreationDate", "kSecAttrCreationDate"),
 +    ("_kSecAttrGeneric", "kSecAttrGeneric"),
 +    ("_kSecAttrIsPermanent", "kSecAttrIsPermanent"),
-+    ("_kSecAttrKeyClass", "kSecAttrKeyClass"),
-+    ("_kSecAttrKeyClassPublic", "kSecAttrKeyClassPublic"),
-+    ("_kSecAttrKeySizeInBits", "kSecAttrKeySizeInBits"),
-+    ("_kSecAttrKeyType", "kSecAttrKeyType"),
-+    ("_kSecAttrKeyTypeECSECPrimeRandom", "kSecAttrKeyTypeECSECPrimeRandom"),
-+    ("_kSecAttrKeyTypeRSA", "kSecAttrKeyTypeRSA"),
 +    ("_kSecAttrSynchronizable", "kSecAttrSynchronizable"),
 +    ("_kSecAttrTokenID", "kSecAttrTokenID"),
 +    ("_kSecAttrTokenIDSecureEnclave", "kSecAttrTokenIDSecureEnclave"),
@@ -617,9 +611,7 @@ index 00000000..cb5c401b
 +    ("_kSecKeyAlgorithmECDSASignatureDigestX962SHA384", "kSecKeyAlgorithmECDSASignatureDigestX962SHA384"),
 +    ("_kSecKeyAlgorithmECDSASignatureDigestX962SHA512", "kSecKeyAlgorithmECDSASignatureDigestX962SHA512"),
 +    ("_kSecKeyAlgorithmECDSASignatureMessageX962SHA256", "kSecKeyAlgorithmECDSASignatureMessageX962SHA256"),
-+    ("_kSecKeyAlgorithmRSAEncryptionPKCS1", "kSecKeyAlgorithmRSAEncryptionPKCS1"),
 +    ("_kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA1", "kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA1"),
-+    ("_kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA256", "kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA256"),
 +    ("_kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA384", "kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA384"),
 +    ("_kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA512", "kSecKeyAlgorithmRSASignatureDigestPKCS1v15SHA512"),
 +    ("_kSecKeyAlgorithmRSASignatureDigestPSSSHA256", "kSecKeyAlgorithmRSASignatureDigestPSSSHA256"),
@@ -3979,7 +3971,7 @@ index f5fe44f7..38554e1b 100644
          "launchApplicationAtURL:options:configuration:error:" => launch_application,
              c"@48@0:8@16Q24@32^@40";
 diff --git a/crates/rosemary/src/abi/table.rs b/crates/rosemary/src/abi/table.rs
-index 8f85a506..8367c7c4 100644
+index 8f85a506..351c98a8 100644
 --- a/crates/rosemary/src/abi/table.rs
 +++ b/crates/rosemary/src/abi/table.rs
 @@ -437,6 +437,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
@@ -4021,8 +4013,13 @@ index 8f85a506..8367c7c4 100644
      sig!("CVPixelBufferGetBaseAddress", P, P),
      sig!("CVPixelBufferGetBytesPerRow", U64, P),
      sig!("CVPixelBufferGetHeight", U64, P),
-@@ -1615,6 +1626,33 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -1613,8 +1624,38 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+     sig!("SecItemDelete", I32, P),
+     sig!("SecItemUpdate", I32, P, P),
      sig!("SecCertificateCreateWithData", P, P, P),
++    sig!("SecKeyCreateWithData", P, P, P, P),
++    sig!("SecKeyCreateEncryptedData", P, P, P, P, P),
++    sig!("SecKeyVerifySignature", U8, P, P, P, P, P),
      sig!("SecPolicyCreateBasicX509", P),
      sig!("SecTrustCreateWithCertificates", I32, P, P, P),
 +    sig!("SSLCreateContext", P, P, I32, I32),
@@ -4055,7 +4052,7 @@ index 8f85a506..8367c7c4 100644
      sig!("SecTrustSetOptions", I32, P, U32),
      sig!("SecTrustEvaluate", I32, P, P),
      sig!("SecRandomCopyBytes", I32, P, U64, P),
-@@ -3265,6 +3303,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -3265,6 +3306,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
      sig!("posix_spawnattr_setpgroup", I32, P, I32),
      sig!("posix_spawnattr_setbinpref_np", I32, P, U64, P, P),
      sig!("posix_spawnattr_setarchpref_np", I32, P, U64, P, P, P),
@@ -4063,7 +4060,7 @@ index 8f85a506..8367c7c4 100644
      // `short flags`, which SysV passes in the low half of a register and
      // AAPCS64 reads back out of one: narrower than the slot on both sides.
      sig!("posix_spawnattr_setflags", I32, P, U32),
-@@ -4018,6 +4057,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
+@@ -4018,6 +4060,7 @@ pub static SIGNATURES: &[FunctionAbi] = &[
          U64,
          P
      ),
@@ -4071,7 +4068,7 @@ index 8f85a506..8367c7c4 100644
      sig!("CVMetalTextureGetTexture", P, P),
      sig!("CVPixelBufferCreate", I32, P, U64, U64, U32, P, P),
      sig!("CVPixelBufferGetBaseAddressOfPlane", P, P, U64),
-@@ -4456,6 +4496,9 @@ pub static REFUSED: &[(&str, &str)] = &[
+@@ -4456,6 +4499,9 @@ pub static REFUSED: &[(&str, &str)] = &[
      // native backend calls both directly, with no marshaller in the way.
      ("CFAbsoluteTimeGetGregorianDate", AGGREGATE),
      ("CFGregorianDateGetAbsoluteTime", AGGREGATE),

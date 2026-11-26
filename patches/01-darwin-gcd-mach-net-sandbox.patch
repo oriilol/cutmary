@@ -636,18 +636,23 @@ index a117644e..07339932 100644
  ///
  /// The block is copied, as `dispatch_async` copies one, and run through the
 diff --git a/crates/darwin/src/kqueue.rs b/crates/darwin/src/kqueue.rs
-index d641e342..4a231c31 100644
+index d641e342..62d7657a 100644
 --- a/crates/darwin/src/kqueue.rs
 +++ b/crates/darwin/src/kqueue.rs
-@@ -115,6 +115,7 @@ const SOCKEV_DISCONNECTED: isize = 0x2;
+@@ -115,6 +115,12 @@ const SOCKEV_DISCONNECTED: isize = 0x2;
  /// `MACH_RCV_MSG` in an `EVFILT_MACHPORT` registration's `fflags`: receive the
  /// message into the event. Only `kevent64`/`kevent_qos` have room for it.
  const MACH_RCV_MSG: u32 = 0x0000_0002;
 +const MACH_RCV_TIMEOUT: u32 = 0x0000_0100;
++
++/// `KEVENT_FLAG_IMMEDIATE`, from `<sys/event.h>`: poll, whatever `timeout`
++/// says. Chromium's `MessagePumpKqueue` checks for wakeups this way with a
++/// null timeout, which on its own would mean waiting forever.
++const KEVENT_FLAG_IMMEDIATE: u32 = 0x0000_0001;
  
  /// What one `EV_ADD` recorded.
  #[derive(Clone, Copy)]
-@@ -170,6 +171,9 @@ struct Queue<B: ReadinessBackend> {
+@@ -170,6 +176,9 @@ struct Queue<B: ReadinessBackend> {
      /// keeps the descriptor open, so its number cannot be reused while the
      /// host still watches it.
      port_watch: HashMap<c_int, Arc<Receiver>>,
@@ -657,7 +662,7 @@ index d641e342..4a231c31 100644
      /// Triggered `EVFILT_USER` idents, in the order they were triggered, and
      /// the set form of the same thing - a second trigger before the first is
      /// delivered is one event, not two.
-@@ -194,6 +198,7 @@ impl<B: ReadinessBackend> Queue<B> {
+@@ -194,6 +203,7 @@ impl<B: ReadinessBackend> Queue<B> {
          Self {
              registrations: Registrations::new(),
              port_watch: HashMap::new(),
@@ -665,7 +670,7 @@ index d641e342..4a231c31 100644
              triggered: VecDeque::new(),
              triggered_set: HashSet::new(),
              sources: HashMap::new(),
-@@ -2069,13 +2074,160 @@ fn signals_pending<B: ReadinessBackend>(state: &Queue<B>) -> bool {
+@@ -2069,13 +2079,168 @@ fn signals_pending<B: ReadinessBackend>(state: &Queue<B>) -> bool {
          .any(|r| r.enabled && state.backend.signals(r.ident as i32) > r.seen)
  }
  
@@ -693,9 +698,17 @@ index d641e342..4a231c31 100644
 +    nchanges: c_int,
 +    events: *mut Kevent64,
 +    nevents: c_int,
-+    _flags: u32,
++    flags: u32,
 +    timeout: *const libc::timespec,
 +) -> c_int {
++    const POLL: libc::timespec = libc::timespec {
++        tv_sec: 0,
++        tv_nsec: 0,
++    };
++    let timeout = match flags & KEVENT_FLAG_IMMEDIATE {
++        0 => timeout,
++        _ => &POLL,
++    };
 +    if nchanges < 0
 +        || nevents < 0
 +        || (nchanges != 0 && changes.is_null())
@@ -828,6 +841,50 @@ index d641e342..4a231c31 100644
      }
  }
  
+@@ -2903,6 +3068,43 @@ mod tests {
+         }
+     }
+ 
++    /// Chromium's `MessagePumpKqueue` polls with `KEVENT_FLAG_IMMEDIATE` and a
++    /// null timeout; blocking there leaves its network thread asleep forever.
++    #[test]
++    fn kevent64_with_immediate_flag_polls_despite_a_null_timeout() {
++        let queue = kqueue();
++        let (done, polled) = std::sync::mpsc::channel();
++        std::thread::spawn(move || {
++            let mut event = Kevent64 {
++                ident: 0,
++                filter: 0,
++                flags: 0,
++                fflags: 0,
++                data: 0,
++                udata: 0,
++                ext: [0; 2],
++            };
++            // SAFETY: no changes and room for one event.
++            let rc = unsafe {
++                kevent64(
++                    queue,
++                    std::ptr::null(),
++                    0,
++                    &raw mut event,
++                    1,
++                    KEVENT_FLAG_IMMEDIATE,
++                    std::ptr::null(),
++                )
++            };
++            let _ = done.send(rc);
++        });
++        assert_eq!(
++            polled.recv_timeout(std::time::Duration::from_secs(5)),
++            Ok(0),
++            "an immediate kevent64 waited"
++        );
++    }
++
+     /// Crashpad's `ChildPortHandshake` registers its port set this way and
+     /// aborts on any failure.
+     #[test]
 diff --git a/crates/darwin/src/mach/mod.rs b/crates/darwin/src/mach/mod.rs
 index 38dc8bc9..a111771c 100644
 --- a/crates/darwin/src/mach/mod.rs
